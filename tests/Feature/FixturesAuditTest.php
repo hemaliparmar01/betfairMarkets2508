@@ -8,6 +8,7 @@ use App\Http\Controllers\Users\Football\FootballSyncController;
 use App\Models\Customer;
 use App\Models\Favorite;
 use App\Models\PredictionVote;
+use App\Services\CustomerAuthService;
 use App\Traits\FootballTrait;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
@@ -432,5 +433,28 @@ class FixturesAuditTest extends TestCase
         unset($empty['timeline']);
         $sync->storeTimeline($empty);
         $this->assertSame(['g2'], array_column($empty['timeline']['home_goals'], 'id'));
+    }
+
+    public function test_pinnacle_uses_shared_team_similarity_and_keeps_ambiguous_matches_unmatched(): void
+    {
+        $this->withoutMiddleware(CustomerAuthService::class);
+        $this->app['auth']->guard('customers')->setUser(new Customer(['trial_ends_at' => now()->addDay()]));
+        app()->instance(FootballSyncController::class, $this->sync());
+        $start = time() + 3600;
+        $match = ['unique_key' => 'matched', 'team1' => 'Galatasaray FC', 'team2' => 'Chennaiyin FC', 'timestamp' => $start, 'data_sync_complete' => true, 'result_status' => 'Prematch', 'markets' => [[['marketType' => 'MATCH_ODDS', 'runner' => 'Galatasaray', 'currentBackOdds' => 1.54, 'layOdds' => 1.56, 'backSize' => 10]]]];
+        $matches = [$match];
+        $alerts = [['id' => 1, 'sport' => 'soccer', 'home' => 'Galatasaray', 'away' => 'Chennaiyin', 'starts' => $start, 'sect' => 'moneyline', 'outcome' => 'home', 'is_live' => false, 'period' => 0, 'from_price' => 1.8, 'to_price' => 1.47, 'nvp' => 1.52]];
+        Redis::shouldReceive('get')->andReturnUsing(function (string $key) use (&$matches, $alerts): ?string {
+            return match ($key) {
+                'Football:matches' => json_encode($matches),
+                'Pinnacle:drops' => json_encode(['alerts' => $alerts]),
+                default => null,
+            };
+        });
+        $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonPath('data.0.bf_back', 1.54);
+        $matches[] = array_replace($match, ['unique_key' => 'ambiguous']);
+        $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonPath('data.0.bf_back', null);
+        $matches = [array_replace($match, ['timestamp' => $start + 7200])];
+        $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonPath('data.0.bf_back', null);
     }
 }

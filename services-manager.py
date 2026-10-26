@@ -79,7 +79,10 @@ class Manager:
     def definition(self, name, spec):
         directory = Path(spec.get('working_directory', self.root))
         cwd = str((directory if directory.is_absolute() else self.root / directory).resolve())
-        args = [self.php, str(Path(cwd) / 'artisan')] + spec['command']
+        command = list(spec['command'])
+        if command[0] == 'queue:work' and not any(arg.startswith('--memory=') for arg in command):
+            command.append('--memory=0')
+        args = [self.php, '-d', 'memory_limit=-1', str(Path(cwd) / 'artisan')] + command
         logs = Path(spec.get('log_directory', self.logs)).resolve()
         restart = spec.get('restart', 'always')
         if self.mac:
@@ -228,12 +231,16 @@ class Manager:
                 print('Installed (not started): ' + key)
             elif action == 'stop' or not spec['enabled']:
                 self.stop(spec, disable=not spec['enabled'])
+                if known.get(key, {}).get('definition_hash'):
+                    spec['definition_hash'] = known[key]['definition_hash']
             else:
                 if action == 'restart':
                     self.stop(spec)
                     loaded = False
                 previous = known.get(key, {})
-                if action == 'reload' and previous.get('definition_hash'):
+                if action == 'reload' and (previous.get('definition_hash') or self.mac):
+                    if not previous.get('definition_hash'):
+                        self.verify_existing(spec)
                     content = self.definition(key, spec)
                     if self.destination(spec).read_bytes() != content:
                         self.stop(spec)

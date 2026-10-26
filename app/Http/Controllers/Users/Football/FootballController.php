@@ -69,6 +69,8 @@ class FootballController extends Controller
                 }
             }
 
+            $matchingController = app(FootballSyncController::class);
+            $availableMatches = array_merge([], ...array_values($footballMatches));
             $pinnacleEvents = array_column($pinnacleAlerts, null, 'id');
 
             foreach ($pinnacleAlerts as &$alert) {
@@ -109,16 +111,22 @@ class FootballController extends Controller
                     default => null,
                 };
                 $runners = [];
+                $matchedHome = (string) ($alert['home'] ?? '');
+                $matchedAway = (string) ($alert['away'] ?? '');
                 if (($alert['sport'] ?? null) === 'soccer' && $marketType !== null) {
-                    $candidates = $footballMatches[$normalizeName((string) ($alert['home'] ?? '')).'|'.$normalizeName((string) ($alert['away'] ?? ''))] ?? [];
-                    $starts = $alert['starts'] ?? null;
+                    $candidates = $availableMatches;
+                    $starts = $alert['starts'] ?? $alert['start'] ?? null;
                     $startTimestamp = is_numeric($starts) ? (int) $starts : (is_string($starts) ? strtotime($starts) : false);
                     if ($startTimestamp && $startTimestamp > 100_000_000_000) {
                         $startTimestamp = (int) floor($startTimestamp / 1000);
                     }
                     $candidates = array_values(array_filter($candidates, static fn (array $match): bool => (($alert['is_live'] ?? false) ? 'Live' : 'Prematch') === $match['result_status']
-                        && (! $startTimestamp || abs((int) $match['timestamp'] - $startTimestamp) <= 3600)));
+                        && (! $startTimestamp || abs((int) $match['timestamp'] - $startTimestamp) <= 3600)
+                        && $matchingController->teamSimilarity((string) ($match['team1'] ?? ''), $matchedHome) >= 80
+                        && $matchingController->teamSimilarity((string) ($match['team2'] ?? ''), $matchedAway) >= 80));
                     if (count($candidates) === 1) {
+                        $matchedHome = (string) $candidates[0]['team1'];
+                        $matchedAway = (string) $candidates[0]['team2'];
                         foreach ($candidates[0]['markets'] ?? [] as $marketRunners) {
                             if (is_array($marketRunners) && ($marketRunners[array_key_first($marketRunners)]['marketType'] ?? null) === $marketType) {
                                 $runners = array_values($marketRunners);
@@ -126,7 +134,7 @@ class FootballController extends Controller
                                     $homeHandicap = isset($alert['point']) && (in_array($outcome, ['away', '2'], true) || $normalizeName($outcome) === $normalizeName((string) ($alert['away'] ?? '')))
                                         ? -(float) $line
                                         : (float) $line;
-                                    $runners = array_values(array_filter($runners, static fn (array $runner): bool => abs((float) ($runner['handicap'] ?? 0) - ($normalizeName((string) ($runner['runner'] ?? '')) === $normalizeName((string) ($alert['home'] ?? '')) ? $homeHandicap : -$homeHandicap)) < 0.0001));
+                                    $runners = array_values(array_filter($runners, static fn (array $runner): bool => abs((float) ($runner['handicap'] ?? 0) - ($normalizeName((string) ($runner['runner'] ?? '')) === $normalizeName($matchedHome) ? $homeHandicap : -$homeHandicap)) < 0.0001));
                                     if ($runners === []) {
                                         continue;
                                     }
@@ -136,12 +144,12 @@ class FootballController extends Controller
                         }
                     }
                 }
-                $matchesOutcome = static function (array $runner, string $selection) use ($alert, $normalizeName): bool {
+                $matchesOutcome = static function (array $runner, string $selection) use ($matchedHome, $matchedAway, $normalizeName, $matchingController): bool {
                     $name = $normalizeName((string) ($runner['runner'] ?? ''));
 
                     return match (strtolower($selection)) {
-                        'home', '1' => $name === $normalizeName((string) ($alert['home'] ?? '')),
-                        'away', '2' => $name === $normalizeName((string) ($alert['away'] ?? '')),
+                        'home', '1' => $matchingController->teamSimilarity((string) ($runner['runner'] ?? ''), $matchedHome) >= 80,
+                        'away', '2' => $matchingController->teamSimilarity((string) ($runner['runner'] ?? ''), $matchedAway) >= 80,
                         'draw', 'x' => in_array($name, ['draw', 'the draw'], true),
                         'over' => str_starts_with($name, 'over '),
                         'under' => str_starts_with($name, 'under '),

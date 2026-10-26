@@ -1914,7 +1914,7 @@ class FootballSyncController extends Controller
         return null;
     }
 
-    private function teamSimilarity(string $teamA, string $teamB): float
+    public function teamSimilarity(string $teamA, string $teamB): float
     {
         $teamA = $this->normalizeTeamName($teamA);
         $teamB = $this->normalizeTeamName($teamB);
