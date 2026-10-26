@@ -180,9 +180,6 @@ class ListenSportsApiPro extends Command
             $httpClient = (new HttpClientBuilder)->retry(0)->build();
             $backoff = 5;
             $initialRecoveryQueued = false;
-            if ($sport === 'football') {
-                app(FootballSyncController::class)->migrateTimelineCache();
-            }
 
             while (! $shutdown->isRequested()) {
                 while (! $hasListenerLock && ! $shutdown->isRequested()) {
@@ -649,7 +646,7 @@ class ListenSportsApiPro extends Command
                 return false;
             }
             $previousMatch = $match;
-            $timelineChanged = app(FootballSyncController::class)->applyTimelineFrame($match, 'match:'.$matchId, $event, $frameType);
+            $timelineChanged = app(FootballSyncController::class)->storeTimeline($match, 'match:'.$matchId, $event, $frameType);
             if (($match['result_status'] ?? null) === 'Finished') {
                 return $timelineChanged;
             }
@@ -770,7 +767,7 @@ class ListenSportsApiPro extends Command
             if ($frameType !== 'snapshot' && ! str_ends_with($channel, ':reconciliation') && ($match['result_status'] ?? '') === 'Live'
                 && isset($previousState['home_score'], $previousState['away_score'])
                 && ((int) ($match['home_score'] ?? 0) > (int) $previousState['home_score'] || (int) ($match['away_score'] ?? 0) > (int) $previousState['away_score'])) {
-                $match['goal_highlight_until'] = time() + (int) config('services.fixtures.goal_highlight_seconds', 40);
+                $match['timeline']['goal_highlight_until'] = time() + (int) config('services.fixtures.goal_highlight_seconds', 40);
             }
             $lifecycleChanged = MatchBackup::observe($match, 'football', $event, $channel, $previousMatch);
 
@@ -800,8 +797,8 @@ class ListenSportsApiPro extends Command
                 continue;
             }
 
-            $incidentsWereInitialized = ($match['incidents_initialized'] ?? false) === true;
-            app(FootballSyncController::class)->applyTimelineFrame($match, $channel, $frameData, $frameType);
+            $incidentsWereInitialized = ($match['timeline']['initialized'] ?? false) === true;
+            app(FootballSyncController::class)->storeTimeline($match, $channel, $frameData, $frameType);
             if (($match['result_status'] ?? null) === 'Finished') {
                 return;
             }
@@ -844,7 +841,7 @@ class ListenSportsApiPro extends Command
                             $match[$side.'_score'] = (int) $incident[$side.'Score'];
                         }
                     }
-                    unset($match['goal_highlight_until']);
+                    unset($match['timeline']['goal_highlight_until']);
 
                     continue;
                 }
@@ -872,7 +869,7 @@ class ListenSportsApiPro extends Command
                     $latestGoal['awayScore'] ?? 0,
                     ! empty($latestGoal['isHome']) ? 'home' : 'away',
                 ]));
-                $previousGoal = $match['last_goal'] ?? null;
+                $previousGoal = $match['timeline']['last_goal'] ?? null;
                 $previousScoreTotal = ($previousGoal['home_score'] ?? 0) + ($previousGoal['away_score'] ?? 0);
                 $latestScoreTotal = ($latestGoal['homeScore'] ?? 0) + ($latestGoal['awayScore'] ?? 0);
 
@@ -882,10 +879,10 @@ class ListenSportsApiPro extends Command
                     && ($previousGoal['id'] ?? null) !== $latestGoalId
                     && ($previousGoal === null || $latestScoreTotal > $previousScoreTotal)
                 ) {
-                    $match['goal_highlight_until'] = time() + (int) config('services.fixtures.goal_highlight_seconds', 40);
+                    $match['timeline']['goal_highlight_until'] = time() + (int) config('services.fixtures.goal_highlight_seconds', 40);
                 }
 
-                $match['last_goal'] = [
+                $match['timeline']['last_goal'] = [
                     'id' => $latestGoalId,
                     'is_home' => (bool) ($latestGoal['isHome'] ?? false),
                     'time' => $latestGoal['time'] ?? null,
@@ -900,10 +897,10 @@ class ListenSportsApiPro extends Command
                     $match['away_score'] = $latestGoal['awayScore'];
                 }
             } else {
-                unset($match['last_goal']);
+                unset($match['timeline']['last_goal']);
             }
 
-            $match['incidents_initialized'] = true;
+            $match['timeline']['initialized'] = true;
             $match['added_time'] = $addedTime;
 
             return;

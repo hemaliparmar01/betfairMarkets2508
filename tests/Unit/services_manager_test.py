@@ -37,15 +37,38 @@ class ServiceManagerTest(unittest.TestCase):
         self.assertEqual(10, job['ThrottleInterval'])
         self.assertTrue(job['RunAtLoad'])
 
-    def test_production_scheduler_disabled_and_realtime_workers_configured(self):
+    def test_production_scheduler_enabled_and_realtime_workers_configured(self):
         with patch.object(module.platform, 'system', return_value='Linux'), patch.dict(os.environ, {'SERVICES_ENV': 'production'}):
             manager = module.Manager()
-            self.assertFalse(manager.instances['scheduler']['enabled'])
+            self.assertTrue(manager.instances['scheduler']['enabled'])
             self.assertEqual(9, len([name for name in manager.instances if name.startswith('queue-realtime-')]))
             unit = manager.definition('betfair', manager.instances['betfair']).decode()
             self.assertIn('Restart=always', unit)
             self.assertIn('KillSignal=SIGTERM', unit)
             self.assertIn('WantedBy=multi-user.target', unit)
+
+    def test_local_names_and_log_paths_do_not_depend_on_username_or_project_path(self):
+        self.assertEqual('com.bfmarkets2508.reverb', self.manager.instances['reverb']['label'])
+        job = plistlib.loads(self.manager.definition('reverb', self.manager.instances['reverb']))
+        self.assertEqual(str(Path.home() / 'Library/Logs/bfmarkets2508/reverb.log'), job['StandardOutPath'])
+        self.assertEqual(str(self.root), job['WorkingDirectory'])
+
+    def test_linux_defaults_keep_existing_production_units_and_project_logs(self):
+        with patch.object(module.platform, 'system', return_value='Linux'), patch.dict(os.environ, {}, clear=True), patch.dict(os.environ, {'SERVICES_ROOT': str(self.root), 'SERVICES_PHP': '/bin/sh', 'SERVICES_USER': 'www'}):
+            manager = module.Manager()
+            self.assertEqual('production', manager.environment)
+            self.assertEqual('bfmarkets-reverb.service', manager.instances['reverb']['unit'])
+            self.assertEqual('bfmarkets-betfair.service', manager.instances['betfair']['unit'])
+            self.assertEqual('bfmarkets-realtime@football.service', manager.instances['queue-realtime-football']['unit'])
+            self.assertEqual(self.root / 'storage/app/service-manager/logs', manager.logs)
+            self.assertNotIn('/Users/', manager.definition('reverb', manager.instances['reverb']).decode())
+
+    def test_explicit_prefix_override_is_validated(self):
+        with patch.dict(os.environ, {'SERVICES_PREFIX': 'custom-project'}):
+            self.assertEqual('com.custom-project.reverb', module.Manager().instances['reverb']['label'])
+        with patch.dict(os.environ, {'SERVICES_PREFIX': '../invalid'}):
+            with self.assertRaisesRegex(ValueError, 'Invalid service prefix'):
+                module.Manager()
 
     def test_queue_arguments_match_each_dispatched_sport_queue(self):
         for sport in ['football', 'cricket', 'icehockey', 'americanfootball', 'baseball', 'basketball', 'tennis', 'greyhounds', 'horseracing']:
@@ -111,7 +134,7 @@ class ServiceManagerTest(unittest.TestCase):
     def test_stop_uses_graceful_supervisor_stop(self):
         with patch.object(self.manager, 'inspect', return_value=(True, 'running')), patch.object(self.manager, 'verify_existing'), patch.object(module, 'run') as run:
             self.manager.execute('stop', 'betfair')
-            self.assertEqual(['launchctl', 'bootout', self.manager.domain + '/com.bfmarkets.betfair'], run.call_args.args[0])
+            self.assertEqual(['launchctl', 'bootout', self.manager.domain + '/' + self.manager.instances['betfair']['label']], run.call_args.args[0])
 
     def test_reload_updates_only_changed_owned_definition(self):
         self.manager.state.mkdir(parents=True)
@@ -132,7 +155,7 @@ class ServiceManagerTest(unittest.TestCase):
         with patch.object(module, 'run') as run:
             self.manager.execute('prepare', 'betfair')
             run.assert_not_called()
-            self.assertTrue((self.manager.state / 'com.bfmarkets.betfair.plist').exists())
+            self.assertTrue((self.manager.state / (self.manager.instances['betfair']['label'] + '.plist')).exists())
 
     def test_production_install_preserves_existing_units(self):
         self.manager.mac = False

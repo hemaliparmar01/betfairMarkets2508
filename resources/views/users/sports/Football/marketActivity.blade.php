@@ -102,7 +102,35 @@
                         return;
                     }
 
-                    const header = state.view === 'simple' ? `<div class="grid min-w-[760px] grid-cols-[80px_minmax(240px,1fr)_130px_100px_100px_110px] gap-3 border-b border-[#dbe7f2] bg-[#f5f9fc] px-4 py-2 text-[10px] font-extrabold uppercase tracking-wide text-[#6a8aaa] dark:border-[#2a3f50] dark:bg-[#1f3444]"><span>Drop</span><span>Match · Market</span><span class="text-center">Pinnacle Odds</span><span class="text-center">NVP</span><span class="text-center">Betfair</span><span class="text-center">Edge %</span></div>` : '';
+                    // const header = state.view === 'simple' ? `<div class="grid min-w-[760px] grid-cols-[80px_minmax(240px,1fr)_130px_100px_100px_110px] gap-3 border-b border-[#dbe7f2] bg-[#f5f9fc] px-4 py-2 text-[10px] font-extrabold uppercase tracking-wide text-[#6a8aaa] dark:border-[#2a3f50] dark:bg-[#1f3444]"><span>Drop</span><span>Match · Market</span><span class="text-center">Pinnacle Odds</span><span class="text-center">NVP</span><span class="text-center">Betfair</span><span class="text-center">Edge %</span></div>` : '';
+                    const header = state.view === 'simple' ? `
+                        <div class="grid min-w-[760px] grid-cols-[80px_minmax(240px,1fr)_130px_100px_100px_110px] gap-3 border-b border-[#dbe7f2] bg-[#f5f9fc] px-4 py-2 text-[10px] font-extrabold uppercase tracking-wide text-[#6a8aaa] dark:border-[#2a3f50] dark:bg-[#1f3444]">
+
+                            <span>Drop</span>
+                            <span>Match · Market</span>
+                            <span class="text-center">Pinnacle Odds</span>
+
+                            <span class="flex items-center justify-center gap-1">
+                                NVP
+                                <span class="inline-flex h-4 w-4 cursor-pointer items-center justify-center rounded-full border border-current text-[10px] normal-case"
+                                    onmouseenter="showOddsTooltip(event, 'nvp')"
+                                    onmouseleave="hideOddsTooltip()">
+                                    i
+                                </span>
+                            </span>
+
+                            <span class="text-center">Betfair</span>
+
+                            <span class="flex items-center justify-center gap-1">
+                                Edge %
+                                <span class="inline-flex h-4 w-4 cursor-pointer items-center justify-center rounded-full border border-current text-[10px] normal-case"
+                                    onmouseenter="showOddsTooltip(event, 'edge')"
+                                    onmouseleave="hideOddsTooltip()">
+                                    i
+                                </span>
+                            </span>
+
+                        </div>` : '';
                     const html = [...groups.values()].map((alerts, groupIndex) => {
                         const first = alerts[0];
                         const groupKey = matchKey(first);
@@ -193,6 +221,84 @@
                 bindRealtime();
                 window.setInterval(() => { if (!document.hidden) scheduleRefresh(); }, 30000);
                 document.addEventListener('visibilitychange', () => { if (!document.hidden) scheduleRefresh(); });
+
+                const tooltipTexts = {
+                    nvp: "NVP (No-Vig Price) is the 'fair' or 'true' odds for an outcome. It is calculated by removing the bookmaker's margin (vigorish) from the Pinnacle odds. It represents the true probability of the event without the bookmaker's built-in profit.",
+
+                    edge: "Edge % represents the percentage difference between the current odds (Pinnacle or Betfair) and the fair NVP odds. A positive (+) Edge % means you are getting better odds than the fair price (Value Bet). A negative (-) Edge % means the odds are lower than the fair price."
+                };
+
+                // window.showOddsTooltip = function(event, type) {
+                //     let tooltip = document.getElementById('odds-info-tooltip');
+
+                //     if (!tooltip) {
+                //         tooltip = document.createElement('div');
+                //         tooltip.id = 'odds-info-tooltip';
+                //         tooltip.className = 'fixed z-[99999] w-[280px] max-w-[calc(100vw-24px)] rounded-md bg-[#1e293b] p-3 text-left text-[11px] font-normal normal-case tracking-normal leading-relaxed text-white shadow-xl pointer-events-none';
+                //         document.body.appendChild(tooltip);
+                //     }
+
+                //     tooltip.textContent = tooltipTexts[type];
+
+                //     const rect = event.currentTarget.getBoundingClientRect();
+                //     const width = tooltip.offsetWidth;
+                //     const height = tooltip.offsetHeight;
+
+                //     tooltip.style.left = `${Math.max(12, Math.min(rect.left + rect.width / 2 - width / 2, window.innerWidth - width - 12))}px`;
+                //     tooltip.style.top = `${rect.top - height - 8}px`;
+                //     tooltip.style.display = 'block';
+                // };
+
+                // window.hideOddsTooltip = function() {
+                //     const tooltip = document.getElementById('odds-info-tooltip');
+                //     if (tooltip) tooltip.style.display = 'none';
+                // };
+                window.showOddsTooltip = function(event, type) {
+                let tooltip = document.getElementById('odds-info-tooltip');
+
+                if (!tooltip) {
+                    tooltip = document.createElement('div');
+                    tooltip.id = 'odds-info-tooltip';
+                    tooltip.className = 'fixed z-[99999] w-[280px] max-w-[calc(100vw-24px)] rounded-md bg-[#1e293b] p-3 text-left text-[11px] font-normal normal-case tracking-normal leading-relaxed text-white shadow-xl pointer-events-none';
+                    document.body.appendChild(tooltip);
+                }
+
+                tooltip.textContent = tooltipTexts[type];
+
+                // Reset previous positioning before measuring
+                tooltip.style.display = 'block';
+                tooltip.style.visibility = 'hidden';
+                tooltip.style.left = '0px';
+                tooltip.style.top = '0px';
+
+                const rect = event.currentTarget.getBoundingClientRect();
+                const width = tooltip.offsetWidth;
+                const height = tooltip.offsetHeight;
+
+                // Center horizontally above the info icon
+                const left = Math.max(
+                    12,
+                    Math.min(
+                        rect.left + rect.width / 2 - width / 2,
+                        window.innerWidth - width - 12
+                    )
+                );
+
+                // Always position above the icon
+                const top = rect.top - height - 8;
+
+                tooltip.style.left = `${left}px`;
+                tooltip.style.top = `${top}px`;
+                tooltip.style.visibility = 'visible';
+            };
+
+            window.hideOddsTooltip = function() {
+                const tooltip = document.getElementById('odds-info-tooltip');
+
+                if (tooltip) {
+                    tooltip.style.display = 'none';
+                }
+            };
             })();
         </script>
     @endpush

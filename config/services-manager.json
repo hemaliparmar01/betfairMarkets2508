@@ -167,5 +167,10 @@
       ],
       "unit": "bfmarkets-scheduler.service"
     }
+  },
+  "overrides": {
+    "local": {
+      "prefix": "bfmarkets2508"
+    }
   }
 }

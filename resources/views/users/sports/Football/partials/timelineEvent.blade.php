@@ -16,6 +16,8 @@
     ])>
     @if ($incident['kind'] === 'goal')
         <span class="flex h-2.5 w-2.5 items-center justify-center text-[9px] leading-none" aria-hidden="true">⚽</span>
+    @elseif ($incident['kind'] === 'corner')
+        <span class="text-[10px] leading-none" aria-hidden="true">⚑</span>
     @else
         <span class="h-3 w-2 rounded-[1px] shadow-sm {{ $incident['kind'] === 'yellow' ? 'bg-[#e6b422]' : 'bg-[#c74e4e]' }}" aria-hidden="true"></span>
     @endif

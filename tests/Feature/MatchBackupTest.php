@@ -241,7 +241,7 @@ class MatchBackupTest extends TestCase
     public function test_football_websocket_final_score_recovers_backup_and_rejects_later_live_frames(): void
     {
         $controller = Mockery::mock(FootballSyncController::class);
-        $controller->shouldReceive('applyTimelineFrame')->andReturn(false);
+        $controller->shouldReceive('storeTimeline')->andReturn(false);
         $this->app->instance(FootballSyncController::class, $controller);
         $listener = (new \ReflectionClass(ListenSportsApiPro::class))->newInstanceWithoutConstructor();
         $method = new \ReflectionMethod($listener, 'updateLiveMatch');

@@ -1,7 +1,9 @@
 <?php
 
+use App\Http\Controllers\Users\Football\FootballSyncController;
 use App\Services\MatchBackup;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
@@ -594,6 +596,23 @@ if (! function_exists('storeInRedis')) {
             }
             unset($match);
         }
+        if ($cacheKey === 'Football:matches') {
+            $timelineController = app(FootballSyncController::class);
+            $savedTimelines = collect();
+            try {
+                $matchIds = array_values(array_filter(array_column($mergedData, 'sportsApiPro_match_id'), static fn (mixed $id): bool => is_scalar($id) && preg_match('/^[1-9][0-9]*$/', (string) $id)));
+                if ($matchIds !== []) {
+                    $savedTimelines = DB::table('football_timeline')->whereIn('match_id', $matchIds)->get(['match_id', 'timeline'])->keyBy('match_id');
+                }
+            } catch (Throwable $exception) {
+                Log::warning('Football timeline cache fallback unavailable', ['exception' => $exception::class]);
+            }
+            foreach ($mergedData as $matchKey => &$match) {
+                $saved = $savedTimelines->get((string) ($match['sportsApiPro_match_id'] ?? ''));
+                $timelineController->storeTimeline($match, frameType: 'normalize', previous: $existingData[$matchKey] ?? [], storedTimeline: json_decode($saved->timeline ?? '[]', true) ?? []);
+            }
+            unset($match);
+        }
         Redis::set($cacheKey, json_encode($mergedData));
         Redis::expire($cacheKey, $ttlMinutes * 60);
     }
@@ -604,7 +623,31 @@ if (! function_exists('getInRedis')) {
     {
         $cachedData = Redis::get($cacheKey);
 
-        return $cachedData === null ? null : json_decode($cachedData, true);
+        $matches = $cachedData === null ? null : json_decode($cachedData, true);
+        if ($cacheKey === 'Football:matches' && is_array($matches) && $matches !== []) {
+            try {
+                $matchIds = array_values(array_filter(array_column($matches, 'sportsApiPro_match_id'), static fn (mixed $id): bool => is_scalar($id) && preg_match('/^[1-9][0-9]*$/', (string) $id)));
+                $savedTimelines = $matchIds === [] ? collect() : DB::table('football_timeline')->whereIn('match_id', $matchIds)->get(['match_id', 'timeline'])->keyBy('match_id');
+                $before = $matches;
+                $controller = null;
+                foreach ($matches as &$match) {
+                    $saved = $savedTimelines->get((string) ($match['sportsApiPro_match_id'] ?? ''));
+                    $timeline = json_decode($saved->timeline ?? '[]', true) ?? [];
+                    if ($timeline !== []) {
+                        $controller ??= app(FootballSyncController::class);
+                        $controller->storeTimeline($match, frameType: 'restore', storedTimeline: $timeline);
+                    }
+                }
+                unset($match);
+                if ($matches !== $before) {
+                    Redis::eval('if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("SET", KEYS[1], ARGV[2], "KEEPTTL") end return 0', 1, $cacheKey, $cachedData, json_encode($matches));
+                }
+            } catch (Throwable $exception) {
+                Log::warning('Football timeline read fallback unavailable', ['exception' => $exception::class]);
+            }
+        }
+
+        return $matches;
     }
 }
 

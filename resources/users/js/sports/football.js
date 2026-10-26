@@ -33,7 +33,7 @@ const restoreFootballTimeline = () => {
         detail.classList.toggle('flex', Boolean(selected));
         panel.querySelector('[data-timeline-goals]')?.classList.toggle('hidden', Boolean(selected));
         panel.querySelector('[data-timeline-detail-icon]').textContent = selected
-            ? ({ goal: '⚽', yellow: '🟨', red: '🟥' }[selected.dataset.eventKind] || '') : '';
+            ? ({ goal: '⚽', yellow: '🟨', red: '🟥', corner: '⚑' }[selected.dataset.eventKind] || '') : '';
         panel.querySelector('[data-timeline-detail-player]').textContent = selected?.dataset.eventSurname || selected?.dataset.eventPlayer || '';
         panel.querySelector('[data-timeline-detail-kind]').textContent = selected?.dataset.eventLabel || '';
     });

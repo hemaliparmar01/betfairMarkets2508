@@ -32,10 +32,12 @@ class Manager:
             raise ValueError('SERVICES_ENV must be local or production')
         self.root = Path(os.environ.get('SERVICES_ROOT', ROOT)).resolve()
         self.config = json.loads(Path(os.environ.get('SERVICES_CONFIG', ROOT / 'config/services-manager.json')).read_text())
+        self.config.update(self.config.get('overrides', {}).get(self.environment, {}))
         self.state = self.root / 'storage/app/service-manager'
-        self.prefix = self.config.get('prefix', 'bfmarkets')
+        self.prefix = os.environ.get('SERVICES_PREFIX', self.config.get('prefix', 'bfmarkets'))
         if not re.fullmatch(r'[a-z][a-z0-9-]*', self.prefix):
             raise ValueError('Invalid service prefix')
+        self.logs = Path.home() / 'Library/Logs' / self.prefix if self.mac and self.environment == 'local' else self.state / 'logs'
         self.php = os.environ.get('SERVICES_PHP') or shutil.which('php')
         if not self.php and os.environ.get('SERVICES_CONTAINER'):
             self.php = 'php'
@@ -78,7 +80,7 @@ class Manager:
         directory = Path(spec.get('working_directory', self.root))
         cwd = str((directory if directory.is_absolute() else self.root / directory).resolve())
         args = [self.php, str(Path(cwd) / 'artisan')] + spec['command']
-        logs = Path(spec.get('log_directory', self.state / 'logs')).resolve()
+        logs = Path(spec.get('log_directory', self.logs)).resolve()
         restart = spec.get('restart', 'always')
         if self.mac:
             return plistlib.dumps({
@@ -166,7 +168,7 @@ class Manager:
         if action == 'logs':
             if not self.mac:
                 os.execvp('journalctl', ['journalctl', '-f', '-n', '100'] + [part for spec in selected.values() for part in ['-u', spec['unit']]])
-            files = [str(Path(spec.get('log_directory', self.state / 'logs')).resolve() / (key + suffix)) for key, spec in selected.items() for suffix in ('.log', '.error.log')]
+            files = [str(Path(spec.get('log_directory', self.logs)).resolve() / (key + suffix)) for key, spec in selected.items() for suffix in ('.log', '.error.log')]
             files = [path for path in files if Path(path).exists()]
             if not files:
                 print('No logs yet')
@@ -181,7 +183,7 @@ class Manager:
 
     def reconcile(self, action, selected, name):
         self.state.mkdir(parents=True, exist_ok=True)
-        (self.state / 'logs').mkdir(exist_ok=True)
+        self.logs.mkdir(parents=True, exist_ok=True)
         registry = self.state / ('managed-' + self.environment + '.json')
         known = json.loads(registry.read_text()) if registry.exists() else {}
         # Validate all selected units before performing any service mutations.
@@ -218,7 +220,7 @@ class Manager:
                     raise ValueError('Existing definition differs; review manually: ' + str(path))
                 path.parent.mkdir(parents=True, exist_ok=True)
                 if self.mac:
-                    Path(spec.get('log_directory', self.state / 'logs')).resolve().mkdir(parents=True, exist_ok=True)
+                    Path(spec.get('log_directory', self.logs)).resolve().mkdir(parents=True, exist_ok=True)
                 path.write_bytes(content)
                 spec['definition_hash'] = hashlib.sha256(content).hexdigest()
                 if not self.mac:

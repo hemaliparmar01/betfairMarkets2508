@@ -19,6 +19,7 @@
 /public/hot
 /public/images/football/teams
 /public/images/football/tournaments
+/public/images/*
 /public/storage
 /storage/*.key
 /storage/pail

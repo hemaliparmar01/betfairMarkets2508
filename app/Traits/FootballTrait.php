@@ -333,9 +333,8 @@ trait FootballTrait
                 ? $this->footballOddsMarkets($data, $type ?? 'all', $marketName, $liveOddsCache['Football:bet365:live:'.$matchId] ?? [], $pinnacleAlerts)
                 : [];
             if ($canBackfillTimeline && in_array($data['result_status'], ['Live', 'Finished'], true)) {
-                app(FootballSyncController::class)->queueTimelineBackfill($matchId, $data['result_status'] === 'Finished', isset($data['home_score'], $data['away_score']) ? [
-                    'home' => (int) ($data['home_score'] ?? 0), 'away' => (int) ($data['away_score'] ?? 0),
-                ] : null, $timeline);
+                app(FootballSyncController::class)->storeTimeline($data, frameType: 'history');
+                $timeline = $data['timeline'];
             }
             $predictionVotes = [];
 
@@ -360,6 +359,20 @@ trait FootballTrait
                     'matches' => [],
                 ];
             }
+            $counts = ['home' => [], 'away' => []];
+            foreach (['home', 'away'] as $side) {
+                foreach (['yellow_cards', 'red_cards', 'corners'] as $stat) {
+                    $group = $side.'_'.$stat;
+                    $count = max(count($timeline[$group] ?? []), (int) ($timeline['reported_counts'][$group] ?? 0));
+                    $data['live_stats'][$stat][$side] = ($timeline['initialized'] ?? false) || isset($timeline['reported_counts'][$group]) || $count > 0 ? $count : null;
+                }
+                $counts[$side] = [
+                    'yellow' => $data['live_stats']['yellow_cards'][$side],
+                    'total_red' => $data['live_stats']['red_cards'][$side],
+                    'second_yellow' => count(array_filter($timeline[$side.'_red_cards'] ?? [], static fn (array $event): bool => ($event['incident_class'] ?? '') === 'yellowRed')),
+                ];
+                $counts[$side]['direct_red'] = max(0, (int) $counts[$side]['total_red'] - $counts[$side]['second_yellow']);
+            }
             $matchTimeline = $this->footballTimeline($data, $timeline);
             $mainArray[$leagueKey]['matches'][] = [
                 'unique_key' => $data['unique_key'],
@@ -379,15 +392,15 @@ trait FootballTrait
                 'timestamp' => $data['timestamp'],
                 'minutes' => $data['result_status'] === 'Prematch' ? $this->calculateMinutes('Prematch', (int) $data['timestamp'], 'Prematch') : rtrim($matchTimeline['minute_label'], "'"),
                 // 'status_type' => $data['status_type'] ?? null,
-                'cards' => $data['cards'] ?? [],
-                'card_counts' => $data['card_counts'] ?? [],
-                'card_counts_from_timeline' => isset($data['timeline']['events']),
-                'card_counts_updated_at' => $data['card_counts_updated_at'] ?? 0,
-                'card_stats_updated_at' => $data['card_stats_updated_at'] ?? 0,
-                'last_goal' => $data['last_goal'] ?? null,
-                'goal_highlight_until' => $data['goal_highlight_until'] ?? null,
+                'cards' => array_map(static fn (array $counts): ?string => ($counts['total_red'] ?? 0) > 0 ? 'red' : (($counts['yellow'] ?? 0) > 0 ? 'yellow' : null), $counts),
+                'card_counts' => $counts,
+                'card_counts_from_timeline' => (bool) ($timeline['initialized'] ?? false),
+                'card_counts_updated_at' => $timeline['incidents_updated_at'] ?? 0,
+                'card_stats_updated_at' => 0,
+                'last_goal' => $timeline['last_goal'] ?? null,
+                'goal_highlight_until' => $timeline['goal_highlight_until'] ?? null,
                 'added_time' => $data['added_time'] ?? [],
-                'corners' => $data['corners'] ?? [],
+                'corners' => $data['live_stats']['corners'] ?? [],
                 'live_stats' => $data['live_stats'] ?? [],
                 'live_stats_meta' => $data['live_stats_meta'] ?? [],
                 'statistics_periods' => $canDisplayOdds ? ($data['statistics_periods'] ?? []) : [],
@@ -603,7 +616,20 @@ trait FootballTrait
             $running = false;
         }
         $events = array_values($timeline['events'] ?? []);
-        foreach ($timeline['unplaced_card_counts'] ?? [] as $side => $cards) {
+        foreach (['home', 'away'] as $side) {
+            foreach (['goals' => 'goal', 'yellow_cards' => 'yellow', 'red_cards' => 'red', 'corners' => 'corner'] as $suffix => $kind) {
+                foreach ($timeline[$side.'_'.$suffix] ?? [] as $event) {
+                    $events[] = array_replace($event, ['kind' => $kind, 'is_home' => $side === 'home']);
+                }
+            }
+        }
+        $unplacedCards = $timeline['unplaced_card_counts'] ?? [];
+        foreach (['home', 'away'] as $side) {
+            foreach (['yellow' => 'yellow_cards', 'red' => 'red_cards'] as $kind => $suffix) {
+                $unplacedCards[$side][$kind] = max($unplacedCards[$side][$kind] ?? 0, (int) ($timeline['reported_counts'][$side.'_'.$suffix] ?? 0) - count($timeline[$side.'_'.$suffix] ?? []));
+            }
+        }
+        foreach ($unplacedCards as $side => $cards) {
             foreach ($cards as $kind => $count) {
                 for ($index = 0; $index < $count; $index++) {
                     $events[] = [
@@ -683,6 +709,7 @@ trait FootballTrait
             $event['label'] = match ($event['kind']) {
                 'goal' => __('Goal'),
                 'yellow' => __('Yellow card'),
+                'corner' => __('Corner'),
                 default => __('Red card'),
             };
             $event['player'] = trim((string) ($event['player'] ?? ''));
