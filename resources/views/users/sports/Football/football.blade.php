@@ -1,90 +1,285 @@
-@extends('users.layouts.app',['activeHeaderUrl' => 'fixtures', 'fixtuesUrl' => route('home.en'),'moneywayUrl' => route('football.moneyway.page')])
+@extends('users.layout.main')
 
-@section('title', 'BF Markets | Fixtures')
-@section('meta_description', 'BF Markets fixtures overview.')
-
-@push('css')
-    @include('users.layouts.partials.fixtures.theme-styles')
-@endpush
-
+@section('title', 'Fixtures · BF Markets')
 
 @section('content')
-    @php
-        $matchTabs = [
-            ['key' => 'live', 'label' => __('Live')],
-            ['key' => 'upcoming', 'label' => __('Upcoming')],
-            ['key' => 'finished', 'label' => __('Finished')],
-            ['key' => 'favorites', 'label' => __('Favorites')],
-            ['key' => 'by_time', 'label' => __('By time')],
-            ['key' => 'ht_0_0', 'label' => 'HT 0-0'],
-            ['key' => '0_0@70', 'label' => "0-0 @ 70'"],
-            ['key' => 'fav_losing', 'label' => 'Fav Losing'],
-            ['key' => 'prematch_drops', 'label' => 'Prematch Drops'],
-            ['key' => 'market_shock_detector', 'label' => 'Market Shock Detector'],
+    {{-- @php
+        $sportMarkets = [
+            'default' => '1X2',
+            'options' => [
+                [
+                    'value' => '1X2',
+                    'label' => 'Match Odds / 1X2',
+                    'oddsCount' => 3,
+                ],
+                [
+                    'value' => 'OU2.5',
+                    'label' => 'Over/Under 2.5',
+                    'oddsCount' => 2,
+                ],
+                [
+                    'value' => 'OU0.5',
+                    'label' => 'Over/Under 0.5',
+                    'oddsCount' => 2,
+                ],
+                [
+                    'value' => 'OU1.5',
+                    'label' => 'Over/Under 1.5',
+                    'oddsCount' => 2,
+                ],
+                [
+                    'value' => 'OU3.5',
+                    'label' => 'Over/Under 3.5',
+                    'oddsCount' => 2,
+                ],
+                [
+                    'value' => 'BTTS',
+                    'label' => 'Both Teams To Score',
+                    'oddsCount' => 2,
+                ],
+            ],
         ];
-    @endphp
+        $events = [
+            [
+                'id' => 'e1',
+                'sport' => 'Soccer',
+                'league' => 'Premier League',
+                'home' => 'Liverpool',
+                'away' => 'Arsenal',
+                'status' => 'Live',
+                'time' => '45\'',
+                'score' => '2-1',
+                'odds' => [2.1, 3.4, 3.8],
+                'oddsType' => '1X2',
+                'cards' => [
+                    'home' => 'yellow',
+                    'away' => null,
+                ],
+                'corners' => [
+                    'home' => 4,
+                    'away' => 2,
+                ],
+            ],
+            [
+                'id' => 'e2',
+                'sport' => 'Soccer',
+                'league' => 'Premier League',
+                'home' => 'Chelsea',
+                'away' => 'Tottenham',
+                'status' => 'Live',
+                'time' => '38\'',
+                'score' => '0-0',
+                'odds' => [2.3, 3.2, 3.1],
+                'oddsType' => '1X2',
+                'cards' => [
+                    'home' => null,
+                    'away' => 'yellow',
+                ],
+                'corners' => [
+                    'home' => 3,
+                    'away' => 1,
+                ],
+            ],
+            [
+                'id' => 'e3',
+                'sport' => 'Soccer',
+                'league' => 'La Liga',
+                'home' => 'Barcelona',
+                'away' => 'Real Madrid',
+                'status' => 'Upcoming',
+                'time' => '20:45',
+                'score' => null,
+                'odds' => [1.7, 3.8, 5.2],
+                'oddsType' => '1X2',
+                'cards' => [
+                    'home' => null,
+                    'away' => null,
+                ],
+                'corners' => [
+                    'home' => 0,
+                    'away' => 0,
+                ],
+            ],
+            [
+                'id' => 'e4',
+                'sport' => 'Soccer',
+                'league' => 'La Liga',
+                'home' => 'Atletico Madrid',
+                'away' => 'Sevilla',
+                'status' => 'Upcoming',
+                'time' => '22:00',
+                'score' => null,
+                'odds' => [1.9, 3.4, 4.2],
+                'oddsType' => '1X2',
+                'cards' => [
+                    'home' => null,
+                    'away' => null,
+                ],
+                'corners' => [
+                    'home' => 0,
+                    'away' => 0,
+                ],
+            ],
+            [
+                'id' => 'e5',
+                'sport' => 'Soccer',
+                'league' => 'Bundesliga',
+                'home' => 'Bayern',
+                'away' => 'Dortmund',
+                'status' => 'Finished',
+                'time' => 'FT',
+                'score' => '3-2',
+                'odds' => [1.45, 4.5, 6],
+                'oddsType' => '1X2',
+                'cards' => [
+                    'home' => 'red',
+                    'away' => 'yellow',
+                ],
+                'corners' => [
+                    'home' => 7,
+                    'away' => 3,
+                ],
+            ],
+            [
+                'id' => 'e6',
+                'sport' => 'Soccer',
+                'league' => 'Bundesliga',
+                'home' => 'Leverkusen',
+                'away' => 'Leipzig',
+                'status' => 'Finished',
+                'time' => 'FT',
+                'score' => '1-1',
+                'odds' => [2.2, 3.6, 3],
+                'oddsType' => '1X2',
+                'cards' => [
+                    'home' => 'yellow',
+                    'away' => null,
+                ],
+                'corners' => [
+                    'home' => 5,
+                    'away' => 6,
+                ],
+            ],
+            [
+                'id' => 'e7',
+                'sport' => 'Soccer',
+                'league' => 'Serie A',
+                'home' => 'Inter',
+                'away' => 'Milan',
+                'status' => 'Live',
+                'time' => '72\'',
+                'score' => '1-1',
+                'odds' => [2.3, 3.2, 3.1],
+                'oddsType' => '1X2',
+                'cards' => [
+                    'home' => null,
+                    'away' => 'yellow',
+                ],
+                'corners' => [
+                    'home' => 5,
+                    'away' => 6,
+                ],
+            ],
+            [
+                'id' => 'e8',
+                'sport' => 'Soccer',
+                'league' => 'Serie A',
+                'home' => 'Juventus',
+                'away' => 'Napoli',
+                'status' => 'Upcoming',
+                'time' => '19:30',
+                'score' => null,
+                'odds' => [2.1, 3.3, 3.5],
+                'oddsType' => '1X2',
+                'cards' => [
+                    'home' => null,
+                    'away' => null,
+                ],
+                'corners' => [
+                    'home' => 0,
+                    'away' => 0,
+                ],
+            ],
+            [
+                'id' => 'e9',
+                'sport' => 'Soccer',
+                'league' => 'Umaglesi Liga',
+                'home' => 'FC Spaeri',
+                'away' => 'FC Rustavi',
+                'status' => 'Live',
+                'time' => '19:00',
+                'score' => '0-0',
+                'odds' => [4, 3.75, 2.06],
+                'oddsType' => '1X2',
+                'cards' => [
+                    'home' => null,
+                    'away' => null,
+                ],
+                'corners' => [
+                    'home' => 0,
+                    'away' => 0,
+                ],
+            ],
+        ];
+        $initialGroups = collect($events)->filter(fn($event) => $event['status'] === 'Live')->groupBy('league')->sortKeys();
+    @endphp --}}
 
-    @php
-        $countrySlugs = collect($countries ?? [])
-            ->pluck('key')
-            ->filter()
-            ->map(fn($key) => strtolower((string) $key))
-            ->values()
-            ->all();
-    @endphp
+    <!-- Yandex.Metrika counter -->
+    <script type="text/javascript">
+        (function(m, e, t, r, i, k, a) {
+            m[i] = m[i] || function() {
+                (m[i].a = m[i].a || []).push(arguments)
+            };
+            m[i].l = 1 * new Date();
+            for (var j = 0; j < document.scripts.length; j++) {
+                if (document.scripts[j].src === r) {
+                    return;
+                }
+            }
+            k = e.createElement(t), a = e.getElementsByTagName(t)[0], k.async = 1, k.src = r, a.parentNode.insertBefore(
+                k, a)
+        })(window, document, 'script', 'https://mc.yandex.ru/metrika/tag.js?id=109087271', 'ym');
 
-    <div data-match-cards-page data-sport="football" data-football-realtime-view="fixtures" data-refresh-url="{{ route('football.home.match-cards.partial') }}" data-request-method="POST" data-page-size="6" class="betwatch-home">
-    {{-- <div data-match-cards-page data-sport="football" data-refresh-url='{{ route('football.home.match-cards.partial') }}' class="betwatch-home"> --}}
-        @include('users.layouts.partials.fixtures.sports-strip', ['activeSport' => 'football'])
-        <section class="betwatch-main-shell">
-            <div class="betwatch-main-grid">
-                <article class="betwach-countries betwatch-leagues-card">
-                    <h2 class="betwatch-leagues-title">{{ __('All leagues') }}</h2>
+        ym(109087271, 'init', {
+            ssr: true,
+            webvisor: true,
+            clickmap: true,
+            ecommerce: "dataLayer",
+            referrer: document.referrer,
+            url: location.href,
+            accurateTrackBounce: true,
+            trackLinks: true
+        });
+    </script>
+    <noscript>
+        <div><img src="https://mc.yandex.ru/watch/109087271" style="position:absolute; left:-9999px;" alt="" /></div>
+    </noscript>
 
-                    <div class="betwatch-filter-box">
-                        <svg class="betwatch-filter-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor"
-                            stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <path d="M3.5 5.5h13" />
-                            <path d="M6.5 10h7" />
-                            <path d="M8.75 14.5h2.5" />
-                        </svg>
+    <div class="min-w-0 overflow-hidden">
+        @include('users.layout.sports')
 
-                        <input data-country-search type="text" class="betwatch-filter-input" placeholder="{{ __('Filter') }}">
-                    </div>
+        @include('users.sports.football.football_filter')
 
-                    {{-- @include('users.layouts.partials.fixtures.countryLists.shared', [
-                        'countries' => $countries,
-                    ]) --}}
-                    @include('users.sports.Football.Layouts.country', ['countries' => $countries])
+        {{-- <div class="market-selector-wrap flex flex-wrap items-center gap-2.5 py-3.5   [gap:14px] [margin:4px_0_12px_0] [padding:6px_0_4px_0] [border-top:1px_solid_#e3ecf5] [padding-top:12px] [transition:border-color_0.3s] [justify-content:end] dark:[border-top-color:#2a3f50] dark:[&.hidden]:[display:none] [&.hidden]:[display:none]! max-[480px]:justify-between max-[480px]:gap-2" id="marketSelectorWrap">
+            <span class="market-label font-semibold [color:#1e4763] [font-size:14px] [transition:color_0.3s]" id="marketLabel">{{ __('Market:') }}</span>
+            <select class="market-dropdown min-w-[200px] rounded-lg border px-3 py-2 bg-white [border:1px_solid_#ccdbe9] [border-radius:40px] [padding:5px_20px_5px_18px] font-medium [font-size:14px] [color:#0b2a40] cursor-pointer [outline:none] [background:#fafdff] [transition:0.3s] [min-width:180px] dark:[background:#1f3444] dark:[border-color:#3a5568] dark:[color:#e8edf2] max-[800px]:[min-width:140px] max-[480px]:min-w-0 max-[480px]:flex-1 max-[480px]:text-xs" id="marketDropdown">
+                @foreach ($getAllMarkets['options'] as $option)
+                    <option value="{{ $option['value'] }}" data-odds-count="{{ $option['oddsCount'] }}">{{ $option['label'] }}</option>
+                @endforeach
+            </select>
+        </div> --}}
 
-                </article>
+        @include('users.sports.football.footballDetails',["data" => $data])
 
-                <section class="betwatch-center-column">
-                    <article class="betwatch-toolbar">
-                        @include('users.layouts.partials.fixtures.football-toolbar-day-head')
-
-                        <div class="betwatch-toolbar-tabs">
-                            @foreach ($matchTabs as $tab)
-                                <button type="button" class="betwatch-toolbar-pill betwatch-ui-pill" data-match-tab="{{ $tab['key'] }}">
-                                    {{ $tab['label'] }}
-                                </button>
-                            @endforeach
-                        </div>
-                    </article>
-
-                    <div data-matchcards-container class="betwatch-center-column football-match-cards"
-                        data-football-matchcards-container></div>
-                    {{-- @include('users.layouts.partials.fixtures.matchCard.football', ['matchGroups' => $resolvedMatchGroups]) --}}
-                    <div data-matchcards-sentinel class="betwatch-sentinel" data-football-matchcards-sentinel></div>
-                    @include('users.layouts.partials.fixtures.matchCard.card-loader')
-
-                </section>
-            </div>
-        </section>
+        <div
+            class="flex items-center justify-center py-10 text-sm font-semibold text-slate-300 dark:text-slate-600 {{ $hasMore ? '' : 'hidden' }}"
+            data-football-lazy-loader
+            data-has-more="{{ $hasMore ? 'true' : 'false' }}"
+            data-next-page="{{ $nextPage }}"
+        >
+            <span data-lazy-loader-text>?~F~S {{ __('Scroll for more matches') }} ?~F~S</span>
+        </div>
     </div>
     @include('popup')
 @endsection
 
-@push('js')
-    @vite('resources/js/frontend/sports/football.js')
-@endpush
