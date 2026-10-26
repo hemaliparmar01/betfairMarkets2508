@@ -80,7 +80,6 @@ Route::prefix('football')->name('football.')->group(function () {
     Route::get('sync/sportsApiPro/live-feed', [FootballSyncController::class, 'syncSportsApiProLiveData'])->name('sync.prematch.data');
     Route::get('sync/sportsApiPro/prematch-feed', [FootballSyncController::class, 'syncSportsApiProPrematchData'])->name('sync.sports-api-pro.prematch');
     Route::post('websocket-football', [FootballController::class, 'websocketFootball']);
-    Route::get('get-cache-store-data', [FootballSyncController::class, 'getCacheStoreData']);
 });
 
 Route::prefix('cricket')->name('cricket.')->group(function () {
@@ -141,6 +140,7 @@ Route::prefix('tennis')->name('tennis.')->group(function () {
     Route::get('sync/betfair/prematch-feed', [TennisSyncController::class, 'syncBetFairPrematchData'])->name('sync.prematch.data');
     Route::get('sync/sportsApiPro/live-feed', [TennisSyncController::class, 'syncSportsApiProLiveData'])->name('sync.sports-api-pro.live');
     Route::get('sync/sportsApiPro/prematch-feed', [TennisSyncController::class, 'syncSportsApiProPrematchData'])->name('sync.sports-api-pro.prematch');
+    Route::get('get-cache-store-data', [TennisController::class, 'getCacheStoreData']);
 });
 
 Route::prefix('greyhounds')->name('greyhounds.')->group(function () {
@@ -208,3 +208,14 @@ Route::post('subscriptions/payments/webhooks/{gateway}', [SubscriptionPaymentCon
 
 Route::post('subscriptions/payment/return', [SubscriptionPaymentController::class, 'returnedPost'])
     ->withoutMiddleware([PreventRequestForgery::class, StartSession::class, ShareErrorsFromSession::class, CustomerAuthService::class]);
+
+Route::get('get-sport-data/{cache_key_name}', function (string $cache_key_name) {
+    $data = getInRedis($cache_key_name);
+    if (!is_array($data)) {
+        dd('No data found', $data);
+    }
+    foreach ($data as $key => $value) {
+        dump($key, $value);
+    }
+    dd('Done');
+});

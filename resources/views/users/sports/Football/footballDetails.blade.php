@@ -28,7 +28,7 @@
                     <img src="{{ $matches['tournament_logo'] }}" alt="" width="18" height="18" loading="lazy"
                         decoding="async" onerror="this.remove()" class="h-[18px] w-[18px] shrink-0 object-contain">
                 @endif
-                <span>{{ $matches['tournament_name'] }}</span>
+                <span>{{ $matches['tournament_country'] }} : {{ $matches['tournament_name'] }}</span>
             </span>
         </div>
         @foreach ($matches['matches'] as $event)

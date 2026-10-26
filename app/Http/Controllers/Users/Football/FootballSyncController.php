@@ -140,19 +140,22 @@ class FootballSyncController extends Controller
                         continue;
                     }
                     $kind = $incident['incidentType'] ?? null;
-                    $class = $incident['incClass'] ?? $incident['incidentClass'] ?? '';
+                    $class = ($incident['incClass'] ?? '') ?: ($incident['incidentClass'] ?? $incident['from'] ?? '');
                     $home = filter_var($incident['isHome'] ?? null, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
                     if (! array_key_exists('isHome', $incident) || $home === null || (! is_numeric($incident['time'] ?? null) && ! isset($incident['id']))
                         || ! in_array($kind, ['goal', 'card', 'corner'], true)
                         || ($kind === 'card' && ! in_array($class, ['yellow', 'red', 'yellowRed'], true))) {
                         continue;
                     }
-                    $incidentMinute = (int) ($incident['time'] ?? -1);
+                    $incidentTime = (string) ($incident['time'] ?? '-1');
+                    $stoppage = [];
+                    preg_match('/^(\d+)\+(\d+)$/', $incidentTime, $stoppage);
+                    $incidentMinute = (int) ($stoppage[1] ?? $incidentTime);
                     $incidentSeconds = is_numeric($incident['timeSeconds'] ?? null) ? (int) $incident['timeSeconds'] : null;
                     $timeKnown = $incidentMinute >= 0 || $incidentSeconds > 0;
                     $minute = $incidentMinute >= 0 ? $incidentMinute : ($incidentSeconds > 0 ? (int) floor($incidentSeconds / 60) : 0);
-                    $added = max(0, (int) ($incident['addedTime'] ?? 0));
-                    $player = trim((string) ($incident['player']['name'] ?? ''));
+                    $added = max(0, (int) ($incident['addedTime'] ?? $stoppage[2] ?? 0));
+                    $player = trim((string) ($incident['player']['name'] ?? $incident['playerName'] ?? ''));
                     if ($player === '') {
                         $player = trim(($incident['player']['firstName'] ?? '').' '.($incident['player']['lastName'] ?? ''));
                     }
@@ -288,7 +291,7 @@ class FootballSyncController extends Controller
                 if ($reported !== null) {
                     $timeline['reported_counts'][$group] = (int) $reported;
                 }
-                if (isset($timeline['reported_counts'][$group]) && $timeline['reported_counts'][$group] <= count($timeline[$group]) && ($timeline['initialized'] ?? false)) {
+                if (isset($timeline['reported_counts'][$group]) && $timeline['reported_counts'][$group] <= count(array_filter($timeline[$group], static fn (array $event): bool => (bool) ($event['time_known'] ?? false))) && ($timeline['initialized'] ?? false)) {
                     unset($timeline['reported_counts'][$group]);
                 }
             }
@@ -325,17 +328,25 @@ class FootballSyncController extends Controller
                 Log::warning('Football timeline persistence failed', ['match_id' => $matchId, 'exception' => $exception::class]);
             }
         }
-        if ($frameType === 'history') {
+        $missingTimedEvents = array_any($groups, static fn (string $group): bool => array_any($match['timeline'][$group], static fn (array $event): bool => ! ($event['time_known'] ?? false)));
+        foreach ($match['timeline']['reported_counts'] ?? [] as $group => $count) {
+            if (in_array($group, $groups, true) && count(array_filter($match['timeline'][$group], static fn (array $event): bool => (bool) ($event['time_known'] ?? false))) < (int) $count) {
+                $missingTimedEvents = true;
+                break;
+            }
+        }
+        if ($frameType === 'history' || ($frameType === 'update' && $missingTimedEvents)) {
             $matchId = (string) ($match['sportsApiPro_match_id'] ?? '');
             $finished = ($match['result_status'] ?? '') === 'Finished';
             $goalsComplete = count($timeline['home_goals']) === (int) ($match['home_score'] ?? 0) && count($timeline['away_goals']) === (int) ($match['away_score'] ?? 0);
-            if (ctype_digit($matchId) && (int) $matchId > 0 && (! ($timeline['initialized'] ?? false) || ! $goalsComplete || ($finished && ! ($timeline['finalized'] ?? false)))) {
+            if (ctype_digit($matchId) && (int) $matchId > 0 && (! ($timeline['initialized'] ?? false) || ! $goalsComplete || $missingTimedEvents || ($finished && ! ($timeline['finalized'] ?? false)))) {
+                $onlyIncidents = $goalsComplete && ! empty($timeline['clock']);
                 $key = 'Football:timeline-backfill:'.$matchId;
                 try {
                     if (Cache::store('redis')->add($key, true, 60)) {
-                        dispatch(static function () use ($matchId): void {
+                        dispatch(static function () use ($matchId, $onlyIncidents): void {
                             try {
-                                foreach (['', '/incidents', '/odds'] as $suffix) {
+                                foreach ($onlyIncidents ? ['/incidents'] : ['', '/incidents', '/odds'] as $suffix) {
                                     if ($suffix === '/odds') {
                                         $current = array_find(getInRedis('Football:matches') ?? [], static fn (array $match): bool => (string) ($match['sportsApiPro_match_id'] ?? '') === $matchId);
                                         if (($current['result_status'] ?? '') !== 'Live' || Cache::store('redis')->has('Football:bet365:live:'.$matchId)) {

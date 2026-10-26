@@ -353,6 +353,7 @@ trait FootballTrait
                     'tournament_name' => $tournamentName,
                     'tournament_id' => $data['tournament_id'] ?? null,
                     'tournament_logo' => $data['tournament_logo'] ?? null,
+                    'tournament_country' => $data['tournament_country'] ?? null,
                     'country_id' => $data['country_id'] ?? null,
                     'unique_key' => $data['unique_key'],
                     'status' => $data['result_status'],
