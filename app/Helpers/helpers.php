@@ -596,6 +596,44 @@ if (! function_exists('storeInRedis')) {
             }
             unset($match);
         }
+        if ($sport !== null && $sport !== 'football') {
+            $tennisCountries = null;
+            foreach ($mergedData as $matchKey => &$match) {
+                $field = in_array($sport, ['greyhounds', 'horseracing'], true) ? 'country' : 'tournament_country';
+                if ($sport === 'tennis' && (! filled($match[$field] ?? null) || in_array($match[$field], ['ATP', 'WTA', 'ITF', 'Challenger'], true)) && class_exists(ResourceBundle::class)) {
+                    if ($tennisCountries === null) {
+                        $regions = ResourceBundle::create('en', 'ICUDATA-region')?->get('Countries');
+                        $tennisCountries = $regions === null ? [] : array_change_key_case(array_flip(iterator_to_array($regions)), CASE_LOWER);
+                    }
+                    if ($tennisCountries !== []) {
+                        foreach (array_slice(explode(',', (string) ($match['tournament'] ?? '')), 1) as $part) {
+                            $name = trim($part);
+                            $name = ['USA' => 'United States', 'UK' => 'United Kingdom'][$name] ?? $name;
+                            $code = $tennisCountries[strtolower($name)] ?? null;
+                            if ($code !== null) {
+                                $match[$field] = Locale::getDisplayRegion('und_'.$code, 'en');
+                                break;
+                            }
+                        }
+                    }
+                    if (in_array($match[$field] ?? null, ['ATP', 'WTA', 'ITF', 'Challenger'], true)) {
+                        unset($match[$field]);
+                    }
+                }
+                $country = array_find([$match[$field] ?? null, $match['country'] ?? null, $match['country_code'] ?? null, $match['countryCode'] ?? null, $existingData[$matchKey][$field] ?? null, $existingData[$matchKey]['country'] ?? null], static fn (mixed $value): bool => (is_array($value) || (is_string($value) && trim($value) !== '')) && ($sport !== 'tennis' || ! in_array($value, ['ATP', 'WTA', 'ITF', 'Challenger'], true)));
+                if (is_array($country)) {
+                    $country = $country['name'] ?? $country['code'] ?? $country['alpha2'] ?? null;
+                }
+                if (is_string($country) && trim($country) !== '') {
+                    $country = trim($country);
+                    if (preg_match('/^[a-z]{2}$/i', $country) && class_exists(Locale::class)) {
+                        $country = Locale::getDisplayRegion('und_'.strtoupper($country), 'en');
+                    }
+                    $match[$field] = $country;
+                }
+            }
+            unset($match);
+        }
         if ($cacheKey === 'Football:matches') {
             $timelineController = app(FootballSyncController::class);
             $savedTimelines = collect();

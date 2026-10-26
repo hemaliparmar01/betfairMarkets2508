@@ -191,6 +191,10 @@ class BaseballSyncController extends Controller
             $tempArray['team1'] ??= $team1;
             $tempArray['team2'] ??= $team2;
             $tempArray['tournament'] ??= $payload['tournament'] ?? 'Baseball';
+            $country = data_get($payload, 'country.name') ?? data_get($payload, 'country.code') ?? data_get($payload, 'country.alpha2') ?? $payload['tournament_country'] ?? $payload['country'] ?? $payload['countryCode'] ?? $payload['country_code'] ?? null;
+            if (is_string($country) && trim($country) !== '') {
+                $tempArray['tournament_country'] = trim($country);
+            }
             $tempArray['result_status'] = $result_status;
             $tempArray['minutes_status'] = $this->alignMinuteStatusWithResult(
                 $tempArray['minutes_status'] ?? null,
@@ -494,6 +498,19 @@ class BaseballSyncController extends Controller
             return false;
         }
         $before = $match;
+        $country = $this->eventValue($event, 'tournament.category.country.name')
+            ?? $this->eventValue($event, 'tournament.uniqueTournament.category.country.name')
+            ?? $this->eventValue($event, 'tournament.country.name')
+            ?? $this->eventValue($event, 'tournament.category.country.alpha2')
+            ?? $this->eventValue($event, 'tournament.uniqueTournament.category.country.alpha2')
+            ?? $this->eventValue($event, 'tournament.category.name')
+            ?? $this->eventValue($event, 'tournament_country')
+            ?? $this->eventValue($event, 'country.name')
+            ?? $this->eventValue($event, 'countryCode');
+        if (is_string($country) && trim($country) !== '') {
+            $match['tournament_country'] = trim($country);
+        }
+
         $type = $this->eventValue($event, 'status.type');
         $code = $this->eventValue($event, 'status.code');
         $changeTimestamp = $this->eventValue($event, 'changes.changeTimestamp');

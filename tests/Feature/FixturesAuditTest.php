@@ -503,4 +503,34 @@ class FixturesAuditTest extends TestCase
         $this->assertCount(5, $restored['timeline']['away_yellow_cards']);
         $this->assertDatabaseCount('football_timeline', 1);
     }
+
+    public function test_all_team_sports_preserve_tournament_country_from_rest_and_websocket_fields(): void
+    {
+        foreach (['Cricket', 'IceHockey', 'AmericanFootball', 'Baseball', 'Basketball', 'Tennis'] as $sport) {
+            $class = "App\\Http\\Controllers\\Users\\{$sport}\\{$sport}SyncController";
+            $sync = (new ReflectionClass($class))->newInstanceWithoutConstructor();
+            $match = ['team1' => 'Home', 'team2' => 'Away', 'result_status' => 'Prematch', 'timestamp' => time() + 3600];
+            $sync->applySportsApiEvent($match, ['tournament' => ['category' => ['country' => ['name' => 'Japan']]]], 'rest');
+            $this->assertSame('Japan', $match['tournament_country'], $sport);
+            $sync->applySportsApiEvent($match, ['tournament.category.country.name' => 'England'], 'match:123');
+            $this->assertSame('England', $match['tournament_country'], $sport);
+            $sync->applySportsApiEvent($match, ['homeScore.current' => 1], 'match:123');
+            $this->assertSame('England', $match['tournament_country'], $sport);
+        }
+    }
+
+    public function test_sport_league_headers_display_country_without_an_empty_separator(): void
+    {
+        foreach (['cricket', 'icehockey', 'americanfootball', 'baseball', 'basketball', 'tennis', 'horsecacing'] as $sport) {
+            $name = $sport === 'horsecacing' ? 'horseracing' : $sport;
+            $group = ['tournament_name' => 'Test League', 'tournament_country' => 'Japan', 'status' => 'Prematch', 'matches' => []];
+            $html = view("users.sports.{$sport}.{$name}Details", ['data' => [$group], 'append' => true])->render();
+            $this->assertStringContainsString('Japan : Test League', preg_replace('/\s+/', ' ', strip_tags($html)), $sport);
+            unset($group['tournament_country']);
+            $html = view("users.sports.{$sport}.{$name}Details", ['data' => [$group], 'append' => true])->render();
+            $this->assertStringNotContainsString(': Test League', strip_tags($html), $sport);
+        }
+        $html = view('users.sports.greyhounds.greyhoundsDetails', ['data' => [['country' => 'United Kingdom', 'tournament_name' => 'Hove', 'matches' => []]], 'append' => true])->render();
+        $this->assertStringContainsString('United Kingdom : Hove', strip_tags($html));
+    }
 }

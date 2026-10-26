@@ -1,75 +1,26 @@
-@extends('users.layouts.app',['activeHeaderUrl' => 'fixtures', 'fixtuesUrl' => route('cricket'),'moneywayUrl' => route('cricket.moneyway.page')])
-
-@section('title', 'BF Markets | Cricket Fixtures')
-@section('meta_description', 'BF Markets cricket fixtures overview.')
-
-@push('css')
-    @include('users.layouts.partials.fixtures.theme-styles')
-@endpush
-
+@extends('users.layout.main')
+@section('title', 'Cricket Fixtures · BF Markets')
 @section('content')
-    @php
-        $matchTabs = [
-            ['key' => 'live', 'label' => __('Live')],
-            ['key' => 'upcoming', 'label' => __('Upcoming')],
-            ['key' => 'finished', 'label' => __('Finished')],
-            ['key' => 'favorites', 'label' => __('Favorites')],
-            ['key' => 'by_time', 'label' => __('By time')],
-        ];
-
-        $countrySlugs = collect($countries ?? [])
-            ->pluck('key')
-            ->filter()
-            ->map(fn ($key) => strtolower((string) $key))
-            ->values()
-            ->all();
-    @endphp
-
-    <div data-match-cards-page data-sport="cricket" data-refresh-url='{{ route('cricket.home.match-cards.partial') }}' class="betwatch-home">
-        @include('users.layouts.partials.fixtures.sports-strip', ['activeSport' => 'cricket'])
-
-        <section class="betwatch-main-shell">
-            <div class="betwatch-main-grid">
-                <article class="betwatch-leagues-card">
-                    <h2 class="betwatch-leagues-title">{{ __('All leagues') }}</h2>
-
-                    <div class="betwatch-filter-box">
-                        <svg class="betwatch-filter-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor"
-                            stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <path d="M3.5 5.5h13" />
-                            <path d="M6.5 10h7" />
-                            <path d="M8.75 14.5h2.5" />
-                        </svg>
-
-                        <input data-country-search type="text" class="betwatch-filter-input" placeholder="{{ __('Filter') }}">
-                    </div>
-
-                    @include('users.sports.Cricket.partials.country', ['countries' => $countries])
-                </article>
-
-                <section class="betwatch-center-column">
-                    <article class="betwatch-toolbar">
-                        @include('users.layouts.partials.fixtures.cricket-toolbar-day-head')
-
-                        <div class="betwatch-toolbar-tabs">
-                            @foreach ($matchTabs as $tab)
-                                <button type="button" class="betwatch-toolbar-pill betwatch-ui-pill"
-                                    data-match-tab="{{ $tab['key'] }}">
-                                    {{ $tab['label'] }}
-                                </button>
-                            @endforeach
-                        </div>
-                    </article>
-
-
-                    <div data-matchcards-container class="betwatch-center-column" data-cricket-matchcards-container></div>
-                    <div data-matchcards-sentinel class="betwatch-sentinel" data-cricket-matchcards-sentinel></div>
-
-                    @include('users.layouts.partials.fixtures.matchCard.card-loader')
-                </section>
-            </div>
-        </section>
+    @include('users.layout.sports')
+    @include('users.sports.cricket.cricket_filter')
+    <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <h1 class="text-xl font-extrabold text-[#12324a] dark:text-[#e8edf2]">🏏 {{ __('Cricket Fixtures') }}</h1>
+        <label class="flex items-center gap-2 text-sm font-semibold text-[#2a4d66]">{{ __('Market:') }}
+            <select id="marketDropdown" class="market-dropdown max-w-[260px] rounded-lg border border-[#d4e0ec] bg-[#fafdff] p-2 dark:border-[#3a5568] dark:bg-[#1f3444] dark:text-[#e8edf2]">
+                @foreach ($getAllMarkets['options'] as $option)
+                    <option value="{{ $option['value'] }}">{{ $option['label'] }}</option>
+                @endforeach
+            </select>
+        </label>
     </div>
+    <section id="cricketDashboard" data-login-url="{{ route('login') }}" data-favorite-url="{{ route('favorites.toggle') }}" data-source-url="{{ route('cricket.filter-cricket') }}" data-source-method="POST" data-source-kind="fixtures" class="min-w-0 rounded-2xl border border-[#dbe7f2] bg-white p-3 dark:border-[#2a3f50] dark:bg-[#1a2a38]">
+        @include('users.sports.cricket.cricketDetails', ['data' => $data])
+        <div class="flex justify-center py-8 text-sm font-semibold text-slate-300 {{ $hasMore ? '' : 'hidden' }}" data-cricket-lazy-loader data-has-more="{{ $hasMore ? 'true' : 'false' }}" data-next-page="{{ $nextPage }}">
+            <span data-lazy-loader-text>↓ {{ __('Scroll for more matches') }} ↓</span>
+        </div>
+    </section>
     @include('popup')
 @endsection
-
+@push('js')
+    @vite('resources/users/js/sports/cricket.js')
+@endpush

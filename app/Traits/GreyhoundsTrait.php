@@ -102,11 +102,11 @@ trait GreyhoundsTrait
                 $match['prediction_counts'] = [];
                 $match['prediction_vote'] = null;
             }
-            $key = $match['country'];
+            $key = $match['country'].'|'.($match['tournament'] ?? '');
             if ($type === 'by_time') {
                 $key .= '|'.$match['timestamp'];
             }
-            $groups[$key] ??= ['country' => $match['country'], 'matches' => []];
+            $groups[$key] ??= ['country' => $match['country'], 'tournament_name' => $match['tournament'] ?? '', 'matches' => []];
             $groups[$key]['matches'][] = $match;
             $preparedMatches[] = $match;
         }

@@ -105,11 +105,11 @@ trait CricketTrait
             if ($customerId !== null && $customerVote !== null) {
                 request()->session()->put($sessionKey, $customerVote);
             }
-            $groupKey = ($match['tournament'] ?? 'Cricket').'|'.$match['result_status'];
+            $groupKey = ($match['tournament_country'] ?? '').'|'.($match['tournament'] ?? 'Cricket').'|'.$match['result_status'];
             if ($type === 'by_time') {
                 $groupKey .= '|'.$match['timestamp'];
             }
-            $groups[$groupKey] ??= ['tournament_name' => $match['tournament'] ?? 'Cricket', 'tournament_logo' => $match['tournament_logo'] ?? null, 'status' => $match['result_status'], 'matches' => []];
+            $groups[$groupKey] ??= ['tournament_name' => $match['tournament'] ?? 'Cricket', 'tournament_logo' => $match['tournament_logo'] ?? null, 'tournament_country' => $match['tournament_country'] ?? null, 'status' => $match['result_status'], 'matches' => []];
             $groups[$groupKey]['matches'][] = array_replace($match, [
                 'status' => $match['result_status'],
                 'is_favorite' => isset($favoriteKeys[$match['unique_key']]),

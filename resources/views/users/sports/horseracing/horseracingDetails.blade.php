@@ -1,7 +1,7 @@
 @php $append = $append ?? false; $checkAuthAndSubscription = checkAuthAndSubscription(); @endphp
 @if (! $append)<div class="fixtures-container overflow-x-auto [scrollbar-width:thin]">@endif
 @forelse ($data as $group)
-    <h2 data-league-header="{{ $group['tournament_name'].'|'.$group['status'] }}" class="mb-2 mt-5 border-b border-[#e3ecf5] pb-2 text-xs font-bold uppercase tracking-wide text-[#1e4763] dark:border-[#2a3f50] dark:text-[#b0c8dd]">{{ $group['tournament_name'] }}</h2>
+    <h2 data-league-header="{{ ($group['tournament_country'] ?? '').'|'.$group['tournament_name'].'|'.$group['status'] }}" class="mb-2 mt-5 border-b border-[#e3ecf5] pb-2 text-xs font-bold uppercase tracking-wide text-[#1e4763] dark:border-[#2a3f50] dark:text-[#b0c8dd]">@if (filled($group['tournament_country'] ?? null)){{ $group['tournament_country'] }} : @endif{{ $group['tournament_name'] }}</h2>
     @foreach ($group['matches'] as $race)
         @php
             $choices = array_column($race['win_runners'], 'runner', 'runnerId');

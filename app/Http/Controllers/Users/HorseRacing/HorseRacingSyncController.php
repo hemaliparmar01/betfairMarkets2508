@@ -101,6 +101,10 @@ class HorseRacingSyncController extends Controller
                     'team1' => $event['team1'] ?? $before['team1'] ?? '', 'team2' => $event['team2'] ?? $before['team2'] ?? '',
                     'tournament' => $event['tournament'] ?? $before['tournament'] ?? '', 'timestamp' => Carbon::parse($event['openTimestamp'])->timestamp,
                     'result_status' => 'Prematch', 'minutes_status' => 'Prematch', 'feed_available' => true, 'market_status' => $event['win_market_status'] ?? 'OPEN']);
+                $country = data_get($event, 'country.name') ?? data_get($event, 'country.code') ?? data_get($event, 'country.alpha2') ?? $event['country'] ?? $event['countryCode'] ?? $event['country_code'] ?? null;
+                if (is_string($country) && trim($country) !== '') {
+                    $race['country'] = trim($country);
+                }
                 if (! empty($event['status'])) {
                     $race['market_status'] = $event['status'];
                     if (($event['win_market_status'] ?? null) === 'CLOSED') {
@@ -265,7 +269,7 @@ class HorseRacingSyncController extends Controller
                 $before = $race;
                 $candidate = $candidates[0];
                 $race['sportsApiPro_match_id'] = $candidate['league']['leagueId'].'|'.$candidate['timestamp'];
-                $race['country'] = $candidate['league']['country'] ?? null;
+                $race['country'] = $candidate['league']['country'] ?? $race['country'] ?? null;
                 $race['race_name'] = $candidate['league']['name'] ?? $race['team2'];
                 foreach ($race['markets'] as &$selections) {
                     foreach ($selections as &$runner) {

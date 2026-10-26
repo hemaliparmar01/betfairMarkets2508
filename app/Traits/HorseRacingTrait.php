@@ -91,11 +91,11 @@ trait HorseRacingTrait
             if ($match['prediction_vote'] !== null) {
                 request()->session()->put($sessionKey, $match['prediction_vote']);
             }
-            $key = $match['tournament'].'|'.$match['status'];
+            $key = ($match['country'] ?? '').'|'.$match['tournament'].'|'.$match['status'];
             if ($type === 'by_time') {
                 $key .= '|'.$match['timestamp'];
             }
-            $groups[$key] ??= ['tournament_name' => $match['tournament'], 'status' => $match['status'], 'matches' => []];
+            $groups[$key] ??= ['tournament_name' => $match['tournament'], 'tournament_country' => $match['country'] ?? null, 'status' => $match['status'], 'matches' => []];
             $groups[$key]['matches'][] = $match;
             $preparedMatches[] = $match;
         }

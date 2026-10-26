@@ -331,4 +331,18 @@ class MatchBackupTest extends TestCase
         storeInRedis('Football:matches', ['match-1' => $match]);
         $this->assertSame([], getInRedis('Football:matches'));
     }
+
+    public function test_country_codes_and_names_are_stored_in_each_sport_cache_without_losing_history(): void
+    {
+        storeInRedis('Tennis:matches', ['tennis-1' => ['tournament' => 'Basel, Switzerland', 'tournament_country' => 'ATP']], 10, false);
+        $this->assertSame('Switzerland', getInRedis('Tennis:matches')['tennis-1']['tournament_country']);
+        foreach (['Cricket', 'IceHockey', 'AmericanFootball', 'Baseball', 'Basketball', 'Tennis', 'HorseRacing', 'Greyhounds'] as $sport) {
+            $field = in_array($sport, ['HorseRacing', 'Greyhounds'], true) ? 'country' : 'tournament_country';
+            storeInRedis($sport.':matches', ['match-1' => ['country_code' => 'JP', $field => '', 'tournament' => 'Test League']], 10, false);
+            $match = getInRedis($sport.':matches')['match-1'];
+            $this->assertSame('Japan', $match[$field], $sport);
+            storeInRedis($sport.':matches', ['match-1' => ['team1' => 'Updated']], 10, false);
+            $this->assertSame('Japan', getInRedis($sport.':matches')['match-1'][$field], $sport);
+        }
+    }
 }
