@@ -11,7 +11,7 @@
             $restrictedPremiumUrls = array_map(static fn (string $name): string => route($name), $premiumRoutes);
         @endphp
         <dialog id="premiumAccess" aria-labelledby="premiumAccessTitle" aria-describedby="premiumAccessMessage"
-            class="fixed inset-0 m-auto max-h-[calc(100dvh_-_2rem)] w-[calc(100%_-_2rem)] max-w-md overflow-y-auto rounded-2xl border-0 bg-white p-6 text-[#0b2a40] shadow-xl backdrop:bg-black/60 dark:bg-[#1a2a38] dark:text-[#e8edf2]">
+            class="fixed inset-0 m-auto max-h-[calc(100dvh_-_2rem)] w-[calc(100%_-_2rem)] max-w-md overflow-x-hidden overflow-y-auto overscroll-contain rounded-2xl border-0 bg-white p-6 text-[#0b2a40] shadow-xl backdrop:bg-black/60 dark:bg-[#1a2a38] dark:text-[#e8edf2]">
             <form method="dialog" class="absolute right-3 top-3">
                 <button type="submit" autofocus aria-label="{{ __('Close') }}" class="flex size-9 cursor-pointer items-center justify-center rounded-full text-xl text-[#5a7d99] hover:bg-[#edf6fc] dark:text-[#b0c8dd] dark:hover:bg-[#29465b]">&times;</button>
             </form>
@@ -28,14 +28,26 @@
             (() => {
                 const dialog = document.getElementById('premiumAccess');
                 const restrictedUrls = @json($restrictedPremiumUrls);
+                const openPremiumDialog = () => {
+                    if (dialog.open) return;
+                    dialog.showModal();
+                    document.body.classList.add('!overflow-hidden');
+                    document.documentElement.classList.add('!overflow-hidden');
+                };
+                dialog.addEventListener('close', () => {
+                    if (!document.querySelector('dialog[open], #subscriptionModal, [aria-modal="true"]:not(.hidden), .panel-expanded')) {
+                        document.body.classList.remove('!overflow-hidden');
+                        document.documentElement.classList.remove('!overflow-hidden');
+                    }
+                });
                 document.addEventListener('click', (event) => {
                     const link = event.target.closest('a[href]');
                     if (!event.target.closest('[data-premium-required]') && !restrictedUrls.includes(link?.href)) return;
                     event.preventDefault();
-                    if (!dialog.open) dialog.showModal();
+                    openPremiumDialog();
                 });
                 @if (request()->routeIs(...$premiumRoutes) || request()->routeIs('horseracing.matches.show', 'greyhounds.matches.show'))
-                    dialog.showModal();
+                    openPremiumDialog();
                 @endif
             })();
         </script>
@@ -52,9 +64,9 @@
     </head>
 
     <body class="m-0 p-0">
-        <div id="subscriptionModal" class="fixed inset-0 z-50 flex items-end justify-center bg-black/60">
-            <div class="relative w-full max-w-md rounded-lg bg-white p-6 text-[#0b2a40] shadow-xl dark:bg-[#1a2a38] dark:text-[#e8edf2]">
-                <button type="button" onclick="document.getElementById('subscriptionModal')?.remove()" class="absolute cursor-pointer top-4 right-4 text-[#5b7c99] hover:text-[#0b2a40] dark:text-[#b0c8dd] dark:hover:text-[#e8edf2] text-xl font-bold">
+        <div id="subscriptionModal" class="fixed inset-0 z-50 flex items-end justify-center overflow-hidden bg-black/60">
+            <div class="relative max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-x-hidden overflow-y-auto overscroll-contain rounded-lg bg-white p-6 text-[#0b2a40] shadow-xl dark:bg-[#1a2a38] dark:text-[#e8edf2]">
+                <button type="button" data-close-subscription class="absolute cursor-pointer top-4 right-4 text-[#5b7c99] hover:text-[#0b2a40] dark:text-[#b0c8dd] dark:hover:text-[#e8edf2] text-xl font-bold">
                     &times;
                 </button>
                 <div class="mx-auto mb-4 h-1.5 w-12 rounded-full bg-[#d4e0ec] dark:bg-[#3a5568]"></div>
@@ -95,6 +107,20 @@
                 </div>
             </div>
         </div>
+        <script>
+            (() => {
+                const modal = document.getElementById('subscriptionModal');
+                document.body.classList.add('!overflow-hidden');
+                document.documentElement.classList.add('!overflow-hidden');
+                modal.querySelector('[data-close-subscription]').addEventListener('click', () => {
+                    modal.remove();
+                    if (!document.querySelector('dialog[open], #subscriptionModal, [aria-modal="true"]:not(.hidden), .panel-expanded')) {
+                        document.body.classList.remove('!overflow-hidden');
+                        document.documentElement.classList.remove('!overflow-hidden');
+                    }
+                });
+            })();
+        </script>
     </body>
 
     </html>

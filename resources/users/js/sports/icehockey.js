@@ -126,7 +126,17 @@ if (dashboard) {
         });
         if (Number.isFinite(nextExpiry)) highlightTimer = window.setTimeout(expireHighlights, nextExpiry + 50);
     }
-    function closeModal() { const modal = dashboard.querySelector('#icehockeyModal'); modal?.classList.add('hidden'); modal?.classList.remove('flex'); activeModal = null; document.body.style.overflow = ''; }
+    function closeModal() {
+        const modal = dashboard.querySelector('#icehockeyModal');
+        const wasOpen = activeModal !== null || (modal && !modal.classList.contains('hidden'));
+        modal?.classList.add('hidden');
+        modal?.classList.remove('flex');
+        activeModal = null;
+        if (wasOpen && !document.querySelector('dialog[open], #subscriptionModal, [aria-modal="true"]:not(.hidden), .panel-expanded')) {
+            document.body.classList.remove('!overflow-hidden');
+            document.documentElement.classList.remove('!overflow-hidden');
+        }
+    }
     function renderModal() {
         const rows = [...dashboard.querySelectorAll('[data-match-id]')];
         const row = rows.find((candidate) => candidate.dataset.matchId === activeModal.matchId && (!activeModal.marketId || candidate.dataset.marketId === activeModal.marketId));
@@ -161,7 +171,10 @@ if (dashboard) {
         hideOddsTooltip();
         panel.innerHTML = `<div class="mb-5 flex items-center justify-between gap-3"><h2 id="icehockeyModalTitle" class="text-lg font-extrabold">${escape(title)}</h2><button type="button" data-action="close-modal" aria-label="Close" class="px-2 text-2xl">×</button></div>${body}`;
         panel.scrollTop = scrollTop;
-        modal.classList.remove('hidden'); modal.classList.add('flex'); document.body.style.overflow = 'hidden';
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+        document.body.classList.add('!overflow-hidden');
+        document.documentElement.classList.add('!overflow-hidden');
     }
     filters?.addEventListener('click', (event) => {
         const button = event.target.closest('[data-filter]'); if (!button) return;

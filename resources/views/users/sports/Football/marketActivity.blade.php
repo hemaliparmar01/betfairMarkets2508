@@ -92,8 +92,8 @@
         </div>
     </section>
 
-    <div id="pinnacleModal" class="fixed inset-0 z-[10000] hidden items-center justify-center bg-black/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="pinnacleModalTitle">
-        <div class="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl dark:bg-[#1a2a38]" data-modal-panel></div>
+    <div id="pinnacleModal" class="fixed inset-0 z-[10000] hidden items-center justify-center overflow-hidden bg-black/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="pinnacleModalTitle">
+        <div class="max-h-[calc(100dvh-2rem)] w-full max-w-3xl overflow-x-hidden overflow-y-auto overscroll-contain rounded-2xl bg-white p-5 shadow-2xl dark:bg-[#1a2a38]" data-modal-panel></div>
     </div>
 
     @push('js')
@@ -212,6 +212,8 @@
                     const recent = state.alerts.filter(item => matchKey(item) === matchKey(alert)).sort((a, b) => (number(b.alerted) || 0) - (number(a.alerted) || 0)).slice(0, 5);
                     modal.querySelector('[data-modal-panel]').innerHTML = `<div class="flex items-start justify-between gap-4"><div><h2 id="pinnacleModalTitle" class="text-xl font-extrabold text-[#12324a] dark:text-[#e8edf2]">${escapeHtml(alert.home)} v ${escapeHtml(alert.away)}</h2><p class="mt-1 text-xs font-bold uppercase text-[#6a8aaa]">${isLive(alert) ? 'LIVE' : 'PREMATCH'} · ${escapeHtml(alert.sport)} · ${escapeHtml(alert.league)}</p></div><button type="button" data-close-modal class="flex size-9 shrink-0 items-center justify-center rounded-full border border-[#d4e0ec] text-[#5a7d99]">✕</button></div><div class="mt-5 grid gap-3 rounded-xl border border-[#dbe7f2] bg-[#f8fbfe] p-4 sm:grid-cols-2 dark:border-[#2a3f50] dark:bg-[#1f3444]"><div class="text-3xl font-black text-[#dc4c64]">−${Math.abs(dropValue).toFixed(1)}%</div><div class="grid grid-cols-2 gap-3 text-xs"><span>Pinnacle<br><b>${price(alert.from_price)} → ${price(alert.to_price)}</b></span><span>NVP<br><b>${nvpPrice(fairPrice(alert))}</b></span><span>Pinnacle Edge<br><b class="${edgeClass(pinnacleEdgeValue)}">${edgeText(pinnacleEdgeValue)}</b></span><span>Betfair Back / Lay<br><b class="text-[#1a6b9c]">${price(betfairPrice(alert))} / ${price(alert.bf_lay)}</b></span><span>Betfair Sizes<br><b>${price(alert.bf_back_size)} / ${price(alert.bf_lay_size)}</b></span><span>Betfair Edge<br><b class="${edgeClass(edgeValue)}">${betfairEdgeText(alert)}</b></span></div></div><h3 class="mb-2 mt-5 text-xs font-extrabold uppercase tracking-wide text-[#6a8aaa]">Full Market</h3><div class="overflow-x-auto"><table class="w-full min-w-[520px] text-sm"><thead class="border-b border-[#dbe7f2] text-left text-[10px] uppercase text-[#6a8aaa]"><tr><th class="p-2">Outcome</th><th class="p-2 text-right">Pinnacle</th><th class="p-2 text-right">NVP</th><th class="p-2 text-right">Betfair</th><th class="p-2 text-right">Edge</th></tr></thead><tbody>${(alert.full_market?.length ? alert.full_market : [alert]).map(selection => `<tr class="border-b border-[#e6eff8]"><td class="p-2 font-bold">${escapeHtml(selection.outcome || '—')}</td><td class="p-2 text-right font-bold text-[#dc4c64]">${price(selection.to_price)}</td><td class="p-2 text-right">${nvpPrice(selection.nvp)}</td><td class="p-2 text-right font-bold text-[#1a6b9c]">${price(betfairPrice(selection))}</td><td class="p-2 text-right font-bold ${edgeClass(edge(selection))}">${betfairEdgeText(selection)}</td></tr>`).join('')}</tbody></table></div><h3 class="mb-2 mt-5 text-xs font-extrabold uppercase tracking-wide text-[#6a8aaa]">Recent Alerts</h3><div class="divide-y divide-[#e6eff8]">${recent.map(item => `<div class="flex items-center justify-between gap-3 py-2 text-xs"><span class="text-[#6a8aaa]">${alertTime(item.alerted)}</span><span class="flex-1">${escapeHtml(marketLabel(item))} · ${price(item.from_price)} → ${price(item.to_price)}</span><b class="${edgeClass(edge(item))}">${edgeText(edge(item))}</b></div>`).join('')}</div>`;
                     modal.classList.remove('hidden'); modal.classList.add('flex');
+                    document.body.classList.add('!overflow-hidden');
+                    document.documentElement.classList.add('!overflow-hidden');
                 };
 
                 root.addEventListener('click', event => {
@@ -225,8 +227,18 @@
                     if (alertButton) { openModal(state.alerts[Number(alertButton.dataset.alertIndex)]); scheduleRefresh(); }
                 });
                 root.addEventListener('keydown', event => { if (event.target.matches('[data-alert-index]') && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); event.target.click(); } });
-                modal.addEventListener('click', event => { if (event.target === modal || event.target.closest('[data-close-modal]')) { state.openAlertKey = null; modal.classList.add('hidden'); modal.classList.remove('flex'); } });
-                document.addEventListener('keydown', event => { if (event.key === 'Escape') { state.openAlertKey = null; modal.classList.add('hidden'); modal.classList.remove('flex'); } });
+                const closeModal = () => {
+                    if (modal.classList.contains('hidden')) return;
+                    state.openAlertKey = null;
+                    modal.classList.add('hidden');
+                    modal.classList.remove('flex');
+                    if (!document.querySelector('dialog[open], #subscriptionModal, [aria-modal="true"]:not(.hidden), .panel-expanded')) {
+                        document.body.classList.remove('!overflow-hidden');
+                        document.documentElement.classList.remove('!overflow-hidden');
+                    }
+                };
+                modal.addEventListener('click', event => { if (event.target === modal || event.target.closest('[data-close-modal]')) closeModal(); });
+                document.addEventListener('keydown', event => { if (event.key === 'Escape') closeModal(); });
 
                 const status = root.querySelector('#pinnacleConnection');
                 const updateStatus = () => {
@@ -520,7 +532,7 @@
 
     </div>
 
-    <div class="terminal grid min-w-0 gap-4 [grid-template-columns:1fr] [gap:16px] [transition:grid-template-columns_0.35s_ease] [&.with-panel]:[grid-template-columns:1fr_460px] [&.panel-expanded]:[grid-template-columns:1fr_0px] [&.panel-expanded_.detail-panel]:[position:fixed] [&.panel-expanded_.detail-panel]:[top:0] [&.panel-expanded_.detail-panel]:[left:0] [&.panel-expanded_.detail-panel]:[right:0] [&.panel-expanded_.detail-panel]:[bottom:0] [&.panel-expanded_.detail-panel]:[width:100vw] [&.panel-expanded_.detail-panel]:[height:100vh] [&.panel-expanded_.detail-panel]:[z-index:99999] [&.panel-expanded_.detail-panel]:[border-radius:0] [&.panel-expanded_.detail-panel]:[overflow-y:auto] [&.panel-expanded_.detail-panel]:[animation:expandIn_0.3s_ease] max-[1200px]:[&.with-panel]:[grid-template-columns:1fr] [&.panel-expanded_.detail-body]:[max-width:1200px] [&.panel-expanded_.detail-body]:[margin:0_auto] [&.panel-expanded_.detail-body]:[padding:24px_32px] max-[1024px]:[&.with-panel]:[grid-template-columns:1fr] max-[480px]:[&.panel-expanded_.detail-body]:[padding:16px]" id="terminal">
+    <div class="terminal grid min-w-0 gap-4 [grid-template-columns:1fr] [gap:16px] [transition:grid-template-columns_0.35s_ease] [&.with-panel]:[grid-template-columns:1fr_460px] [&.panel-expanded]:[grid-template-columns:1fr_0px] [&.panel-expanded_.detail-panel]:[position:fixed] [&.panel-expanded_.detail-panel]:[top:0] [&.panel-expanded_.detail-panel]:[left:0] [&.panel-expanded_.detail-panel]:[right:0] [&.panel-expanded_.detail-panel]:[bottom:0] [&.panel-expanded_.detail-panel]:[width:100vw] [&.panel-expanded_.detail-panel]:[height:100dvh] [&.panel-expanded_.detail-panel]:[max-height:100dvh] [&.panel-expanded_.detail-panel]:[z-index:99999] [&.panel-expanded_.detail-panel]:[border-radius:0] [&.panel-expanded_.detail-panel]:[overflow:hidden] [&.panel-expanded_#detailContent]:max-h-dvh [&.panel-expanded_#detailContent]:overflow-y-auto [&.panel-expanded_#detailContent]:overscroll-contain [&.panel-expanded_.detail-panel]:[animation:expandIn_0.3s_ease] max-[1200px]:[&.with-panel]:[grid-template-columns:1fr] [&.panel-expanded_.detail-body]:[max-width:1200px] [&.panel-expanded_.detail-body]:[margin:0_auto] [&.panel-expanded_.detail-body]:[padding:24px_32px] max-[1024px]:[&.with-panel]:[grid-template-columns:1fr] max-[480px]:[&.panel-expanded_.detail-body]:[padding:16px]" id="terminal">
         <div class="events-table-wrap min-w-0 overflow-x-auto rounded-[14px] [border-radius:14px] [border:1px_solid_#e6eff8] [transition:border-color_0.3s] dark:[border-color:#2a3f50] max-[768px]:overflow-visible max-[768px]:border-0 max-[768px]:[&_.events-table]:!min-w-0 max-[768px]:[&_.events-table]:block max-[768px]:[&_thead]:hidden max-[768px]:[&_tbody]:grid max-[768px]:[&_tbody]:gap-3 max-[768px]:[&_tbody]:bg-transparent max-[768px]:[&_tbody_tr]:grid max-[768px]:[&_tbody_tr]:grid-cols-2 max-[768px]:[&_tbody_tr]:overflow-hidden max-[768px]:[&_tbody_tr]:rounded-xl max-[768px]:[&_tbody_tr]:border max-[768px]:[&_tbody_tr]:border-[#dce7f1] max-[768px]:[&_tbody_tr]:bg-white max-[768px]:dark:[&_tbody_tr]:border-[#2a3f50] max-[768px]:dark:[&_tbody_tr]:bg-[#1f3444] max-[768px]:[&_tbody_td]:flex max-[768px]:[&_tbody_td]:min-w-0 max-[768px]:[&_tbody_td]:items-center max-[768px]:[&_tbody_td]:justify-between max-[768px]:[&_tbody_td]:gap-2 max-[768px]:[&_tbody_td]:whitespace-normal max-[768px]:[&_tbody_td]:border-b max-[768px]:[&_tbody_td]:border-[#eef2f8] max-[768px]:[&_tbody_td]:px-3! max-[768px]:[&_tbody_td]:py-2! max-[768px]:[&_tbody_td]:before:shrink-0 max-[768px]:[&_tbody_td]:before:text-[10px] max-[768px]:[&_tbody_td]:before:font-bold max-[768px]:[&_tbody_td]:before:uppercase max-[768px]:[&_tbody_td]:before:tracking-wide max-[768px]:[&_tbody_td]:before:text-[#8aaccc] max-[768px]:[&_tbody_td]:before:content-[attr(data-label)] max-[768px]:[&_tbody_td.col-match]:col-span-2 max-[768px]:[&_tbody_td.col-match]:text-right max-[768px]:[&_tbody_td.col-odds]:text-right max-[768px]:[&_tbody_td:last-child]:col-span-2 max-[480px]:[&_tbody_tr]:grid-cols-1 max-[480px]:[&_tbody_td.col-match]:col-span-1 max-[480px]:[&_tbody_td:last-child]:col-span-1" id="eventsWrap">
             <table class="events-table table-fixed w-full min-w-[1800px] border-separate text-[13px] [border-collapse:separate] [border-spacing:0] [font-size:13px] bg-white [transition:background_0.3s] dark:[background:#1f3444] [&_thead]:[background:linear-gradient(135deg,_#0b2a40,_#1a6b9c)] [&_thead]:[color:white] [&_thead]:[position:sticky] [&_thead]:[top:0] [&_thead]:[z-index:5] [&_thead_th]:[padding:10px_12px] [&_thead_th]:[text-align:left] [&_thead_th]:[font-weight:700] [&_thead_th]:[font-size:11px] [&_thead_th]:[letter-spacing:0.5px] [&_thead_th]:[text-transform:uppercase] [&_thead_th]:[white-space:nowrap] [&_tbody_td]:[padding:10px_12px] [&_tbody_td]:[border-bottom:1px_solid_#eef2f8] [&_tbody_td]:[color:#2a4d66] [&_tbody_td]:[white-space:nowrap] [&_tbody_td]:[transition:color_0.3s,_border-color_0.3s] dark:[&_tbody_td]:[border-bottom-color:#2a3f50] dark:[&_tbody_td]:[color:#b0c8dd] [&_tbody_tr]:[cursor:pointer] [&_tbody_tr]:[transition:background_0.2s] [&_tbody_tr:hover]:[background:#f8fbfe] dark:[&_tbody_tr:hover]:[background:#1a2e44] [&_tbody_tr.selected]:[background:#e8f2fc] dark:[&_tbody_tr.selected]:[background:#1a2e44] [&_td.col-odds]:[text-align:center] [&_td.col-odds]:[padding:6px_4px]! max-[768px]:[font-size:12px] max-[768px]:[min-width:1000px] max-[768px]:[&_thead_th]:[padding:8px_10px] max-[768px]:[&_tbody_td]:[padding:8px_10px]">
                 <colgroup>
@@ -673,7 +685,7 @@
             </div>
         </div>
 
-        <div class="detail-panel overflow-y-auto rounded-2xl border hidden [background:#f8fbfe] [border:1px_solid_#e6eff8] [border-radius:16px] p-0 overflow-hidden [transition:0.3s] [height:fit-content] [position:sticky] [top:20px] [max-height:calc(100vh_-_40px)] [overflow-y:auto] dark:[background:#1f3444] dark:[border-color:#2a3f50] [&.open]:[display:block] [&.open]:[animation:slideIn_0.3s_ease] max-[1024px]:[position:static] max-[480px]:[padding:0]" id="detailPanel">
+        <div class="detail-panel overflow-y-auto overscroll-contain rounded-2xl border hidden [background:#f8fbfe] [border:1px_solid_#e6eff8] [border-radius:16px] p-0 overflow-hidden [transition:0.3s] [height:fit-content] [position:sticky] [top:20px] [max-height:calc(100dvh_-_40px)] [overflow-y:auto] dark:[background:#1f3444] dark:[border-color:#2a3f50] [&.open]:[display:block] [&.open]:[animation:slideIn_0.3s_ease] max-[1024px]:[position:static] max-[480px]:[padding:0]" id="detailPanel">
             <div class="empty-panel flex flex-col items-center justify-center [padding:60px_20px] text-center [color:#8aaccc] [&_i]:[font-size:40px] [&_i]:[margin-bottom:12px] [&_i]:[opacity:0.5] [&_p]:[font-size:14px]" id="emptyPanel">
                 <i class="fas fa-mouse-pointer"></i>
                 <p>{{ __('Select an event to view detailed data') }}</p>
@@ -1055,17 +1067,21 @@
                     document.getElementById('eventsWrap').scrollLeft = scrollLeft;
 
                     if (detailWasOpen && events.some(function(ev) { return String(ev.id) === String(selectedEventId) && !ev.locked; })) {
-                        const scrollTop = detailPanel.scrollTop;
+                        const scrollContainer = detailWasExpanded ? detailContent : detailPanel;
+                        const scrollTop = scrollContainer.scrollTop;
                         const termsOpen = !document.getElementById('termsSection')?.classList.contains('collapsed');
                         openDetail(selectedEventId);
                         if (detailWasExpanded) toggleExpand();
                         if (termsOpen) document.getElementById('termsSection')?.classList.remove('collapsed');
-                        detailPanel.scrollTop = scrollTop;
+                        scrollContainer.scrollTop = scrollTop;
                     } else {
                         currentEventId = null;
                         detailPanel.classList.remove('open');
                         terminal.classList.remove('with-panel', 'panel-expanded');
-                        document.body.style.overflow = '';
+                        if (!document.querySelector('dialog[open], #subscriptionModal, [aria-modal="true"]:not(.hidden), .panel-expanded')) {
+                            document.body.classList.remove('!overflow-hidden');
+                            document.documentElement.classList.remove('!overflow-hidden');
+                        }
                         detailContent.style.display = 'none';
                         emptyPanel.style.display = 'flex';
                     }
@@ -1368,14 +1384,18 @@
                             expandBtn.innerHTML = '<i class="fas fa-compress"></i>';
                             expandBtn.classList.add('expand-active');
                         }
-                        document.body.style.overflow = 'hidden';
+                        document.body.classList.add('!overflow-hidden');
+                        document.documentElement.classList.add('!overflow-hidden');
                     } else {
                         terminal.classList.add('with-panel');
                         if (expandBtn) {
                             expandBtn.innerHTML = '<i class="fas fa-expand"></i>';
                             expandBtn.classList.remove('expand-active');
                         }
-                        document.body.style.overflow = '';
+                        if (!document.querySelector('dialog[open], #subscriptionModal, [aria-modal="true"]:not(.hidden), .panel-expanded')) {
+                            document.body.classList.remove('!overflow-hidden');
+                            document.documentElement.classList.remove('!overflow-hidden');
+                        }
                     }
                 }
 
@@ -1383,7 +1403,10 @@
                     detailPanel.classList.remove('open');
                     terminal.classList.remove('with-panel');
                     terminal.classList.remove('panel-expanded');
-                    document.body.style.overflow = '';
+                    if (!document.querySelector('dialog[open], #subscriptionModal, [aria-modal="true"]:not(.hidden), .panel-expanded')) {
+                        document.body.classList.remove('!overflow-hidden');
+                        document.documentElement.classList.remove('!overflow-hidden');
+                    }
                     detailContent.style.display = 'none';
                     emptyPanel.style.display = 'flex';
                     currentEventId = null;

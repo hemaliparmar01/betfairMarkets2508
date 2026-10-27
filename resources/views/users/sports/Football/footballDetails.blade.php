@@ -377,9 +377,9 @@
                 <div id="live-stats-{{ $event['sportsApiPro_match_id'] }}"
                     data-live-stats-panel="{{ $event['sportsApiPro_match_id'] }}" role="dialog" aria-modal="true"
                     aria-label="Live statistics for {{ $event['team1'] }} vs {{ $event['team2'] }}"
-                    class="fixed inset-0 z-[80] hidden overflow-y-auto overscroll-contain bg-slate-950/60 p-3 backdrop-blur-sm sm:p-6">
+                    class="fixed inset-0 z-[80] hidden overflow-hidden bg-slate-950/60 p-3 backdrop-blur-sm sm:p-6">
                     <div
-                        class="relative mx-auto my-4 w-full max-w-4xl overflow-hidden rounded-2xl border border-[#dbe7f2] bg-white shadow-2xl dark:border-[#2a3f50] dark:bg-[#162532] sm:my-8">
+                        class="relative mx-auto my-4 w-full max-w-4xl max-h-[calc(100dvh-3.5rem)] overflow-x-hidden overflow-y-auto overscroll-contain rounded-2xl sm:max-h-[calc(100dvh-7rem)] border border-[#dbe7f2] bg-white shadow-2xl dark:border-[#2a3f50] dark:bg-[#162532] sm:my-8">
                         <div class="px-4 pt-3 text-xs text-slate-500" data-statistics-loading role="status" hidden>{{ __('Loading statistics…') }}</div>
                         <div class="px-4 pt-3 text-xs text-amber-600" data-statistics-error role="alert" hidden></div>
                         <div
@@ -436,9 +436,9 @@
                 <div id="prediction-{{ $event['sportsApiPro_match_id'] }}"
                     data-prediction-panel="{{ $event['sportsApiPro_match_id'] }}" role="dialog" aria-modal="true"
                     aria-label="Predictions for {{ $event['team1'] }} vs {{ $event['team2'] }}"
-                    class="fixed inset-0 z-[80] hidden overflow-y-auto overscroll-contain bg-slate-950/60 p-3 backdrop-blur-sm sm:p-6">
+                    class="fixed inset-0 z-[80] hidden overflow-hidden bg-slate-950/60 p-3 backdrop-blur-sm sm:p-6">
                     <div
-                        class="relative mx-auto my-4 w-full max-w-[700px] overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-[#162532] sm:my-8">
+                        class="relative mx-auto my-4 w-full max-w-[700px] max-h-[calc(100dvh-3.5rem)] overflow-x-hidden overflow-y-auto overscroll-contain rounded-2xl sm:max-h-[calc(100dvh-7rem)] bg-white shadow-2xl dark:bg-[#162532] sm:my-8">
                         <div
                             class="relative bg-gradient-to-br from-[#1a1a2e] to-[#16213e] px-5 py-6 text-center text-white sm:px-7">
                             <button type="button" data-close-prediction

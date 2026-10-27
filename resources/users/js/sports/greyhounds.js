@@ -145,7 +145,17 @@ if (dashboard) {
             if (pendingAction) { const action = pendingAction; pendingAction = null; load(action); } else if (refreshPending && document.visibilityState === 'visible') { refreshPending = false; scheduleRefresh(); }
         }
     }
-    function closeModal() { const modal = dashboard.querySelector('#greyhoundsModal'); modal?.classList.add('hidden'); modal?.classList.remove('flex'); activeModal = null; document.body.style.overflow = ''; }
+    function closeModal() {
+        const modal = dashboard.querySelector('#greyhoundsModal');
+        const wasOpen = activeModal !== null || (modal && !modal.classList.contains('hidden'));
+        modal?.classList.add('hidden');
+        modal?.classList.remove('flex');
+        activeModal = null;
+        if (wasOpen && !document.querySelector('dialog[open], #subscriptionModal, [aria-modal="true"]:not(.hidden), .panel-expanded')) {
+            document.body.classList.remove('!overflow-hidden');
+            document.documentElement.classList.remove('!overflow-hidden');
+        }
+    }
     function renderModal() {
         if (!activeModal) return;
         const rows = [...dashboard.querySelectorAll('[data-match-id]')];
@@ -197,7 +207,10 @@ if (dashboard) {
         }
         panel.innerHTML = `<div class="relative mb-5 flex items-center justify-between gap-3 pr-16"><h2 id="greyhoundsModalTitle" class="text-lg font-extrabold">${escape(title)}</h2><button type="button" data-action="expand-modal" aria-label="Expand" class="absolute right-10 top-0 text-xl">↗</button><button type="button" data-action="close-modal" aria-label="Close" class="absolute right-0 top-0 px-2 text-2xl">×</button></div>${body}`;
         panel.scrollTop = scrollTop;
-        modal.classList.remove('hidden'); modal.classList.add('flex'); document.body.style.overflow = 'hidden';
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+        document.body.classList.add('!overflow-hidden');
+        document.documentElement.classList.add('!overflow-hidden');
     }
     filters?.addEventListener('click', (event) => {
         const button = event.target.closest('[data-filter]'); if (!button) return;
