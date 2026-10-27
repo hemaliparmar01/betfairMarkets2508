@@ -1,6 +1,6 @@
 <div id="statistics-{{ $event['sportsApiPro_match_id'] }}" data-statistics-panel="{{ $event['sportsApiPro_match_id'] }}"
     role="dialog" aria-modal="true" aria-labelledby="statistics-title-{{ $event['sportsApiPro_match_id'] }}" tabindex="-1"
-    class="fixed inset-0 z-[80] hidden overflow-y-auto bg-slate-950/60 p-3 backdrop-blur-sm sm:p-6">
+    class="fixed inset-0 z-[80] hidden overflow-y-auto overscroll-contain bg-slate-950/60 p-3 backdrop-blur-sm sm:p-6">
     <div class="relative mx-auto my-4 w-full max-w-3xl overflow-hidden rounded-2xl border border-[#dbe7f2] bg-white shadow-2xl dark:border-[#2a3f50] dark:bg-[#162532] sm:my-8">
         <header class="relative bg-gradient-to-r from-[#153f5c] to-[#2478a8] px-5 py-5 pr-14 text-white">
             <h2 id="statistics-title-{{ $event['sportsApiPro_match_id'] }}" class="text-sm font-bold">{{ __('Statistics') }}</h2>

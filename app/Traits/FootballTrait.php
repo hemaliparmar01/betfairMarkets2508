@@ -14,7 +14,7 @@ use Illuminate\Support\Str;
 trait FootballTrait
 {
     private const LEAGUE_PRIORITY = [
-        'Premier League', 'La Liga', 'Serie A', 'Bundesliga', 'Ligue 1',
+        'Premier League', 'La Liga', 'Serie A', 'Bundesliga', 'Germany Bundesliga', 'Ligue 1',
         'UEFA Champions League', 'UEFA Europa League', 'UEFA Conference League',
         'Primeira Liga', 'Eredivisie', 'Süper Lig', 'Belgian Pro League',
         'Scottish Premiership', 'Greek Super League', 'Austrian Bundesliga',

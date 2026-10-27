@@ -15,7 +15,7 @@
 <div id="quick-stats-{{ $event['sportsApiPro_match_id'] }}"
     data-quick-stats-panel="{{ $event['sportsApiPro_match_id'] }}" role="dialog" aria-modal="true"
     aria-labelledby="quick-stats-title-{{ $event['sportsApiPro_match_id'] }}" tabindex="-1"
-    class="fixed inset-0 z-[85] hidden overflow-y-auto bg-slate-950/70 p-3 backdrop-blur-sm sm:p-6">
+    class="fixed inset-0 z-[85] hidden overflow-y-auto overscroll-contain bg-slate-950/70 p-3 backdrop-blur-sm sm:p-6">
     <div class="relative mx-auto my-8 w-full max-w-lg overflow-hidden rounded-xl border border-white/15 bg-[#121212] text-slate-100 shadow-2xl sm:my-20">
         <header class="border-b border-white/10 px-4 py-3 pr-12">
             <h2 id="quick-stats-title-{{ $event['sportsApiPro_match_id'] }}" class="text-xs font-semibold text-slate-300">{{ __('Quick Stats') }}</h2>

@@ -179,7 +179,8 @@ const closeStatisticsPanel = (restoreFocus = true) => {
     if (restoreFocus) button?.focus({ preventScroll: true });
     openStatisticsMatchId = null;
     if (openQuickStatsMatchId === null && openLiveStatsMatchId === null && openPredictionMatchId === null) {
-        document.body.classList.remove('overflow-hidden');
+        document.body.classList.remove('!overflow-hidden');
+        document.documentElement.classList.remove('!overflow-hidden');
     }
 };
 
@@ -195,7 +196,8 @@ const restoreStatisticsPanel = () => {
     panel.classList.remove('hidden');
     panel.querySelector('[data-statistics-loading]').hidden = !statisticsRequests.has(openStatisticsMatchId);
     button.setAttribute('aria-expanded', 'true');
-    document.body.classList.add('overflow-hidden');
+    document.body.classList.add('!overflow-hidden');
+    document.documentElement.classList.add('!overflow-hidden');
 };
 
 const loadFootballStatistics = async (button, scope = 'all') => {
@@ -247,7 +249,8 @@ const closeQuickStatsPanel = (restoreFocus = true) => {
     if (restoreFocus) button?.focus({ preventScroll: true });
     openQuickStatsMatchId = null;
     if (openLiveStatsMatchId === null && openPredictionMatchId === null && openStatisticsMatchId === null) {
-        document.body.classList.remove('overflow-hidden');
+        document.body.classList.remove('!overflow-hidden');
+        document.documentElement.classList.remove('!overflow-hidden');
     }
 };
 
@@ -266,7 +269,8 @@ const restoreQuickStatsPanel = () => {
 
     panel.classList.remove('hidden');
     button.setAttribute('aria-expanded', 'true');
-    document.body.classList.add('overflow-hidden');
+    document.body.classList.add('!overflow-hidden');
+    document.documentElement.classList.add('!overflow-hidden');
     if (!panel.contains(document.activeElement)) {
         panel.querySelector('[data-close-quick-stats]')?.focus({ preventScroll: true });
     }
@@ -304,7 +308,8 @@ const closeLiveStatsPanel = () => {
     document.querySelectorAll('[data-live-stats-panel]').forEach((item) => item.classList.add('hidden'));
     document.querySelectorAll('[data-action="livestats"]').forEach((item) => item.setAttribute('aria-expanded', 'false'));
     if (openPredictionMatchId === null && openQuickStatsMatchId === null && openStatisticsMatchId === null) {
-        document.body.classList.remove('overflow-hidden');
+        document.body.classList.remove('!overflow-hidden');
+        document.documentElement.classList.remove('!overflow-hidden');
     }
     openLiveStatsMatchId = null;
 };
@@ -313,7 +318,8 @@ const closePredictionPanel = () => {
     document.querySelectorAll('[data-prediction-panel]').forEach((item) => item.classList.add('hidden'));
     document.querySelectorAll('[data-action="prediction"]').forEach((item) => item.setAttribute('aria-expanded', 'false'));
     if (openLiveStatsMatchId === null && openQuickStatsMatchId === null && openStatisticsMatchId === null) {
-        document.body.classList.remove('overflow-hidden');
+        document.body.classList.remove('!overflow-hidden');
+        document.documentElement.classList.remove('!overflow-hidden');
     }
     openPredictionMatchId = null;
 };
@@ -335,7 +341,8 @@ const restoreLiveStatsPanel = () => {
     const loading = panel.querySelector('[data-statistics-loading]');
     if (loading) loading.hidden = !statisticsRequests.has(openLiveStatsMatchId);
     button.setAttribute('aria-expanded', 'true');
-    document.body.classList.add('overflow-hidden');
+    document.body.classList.add('!overflow-hidden');
+    document.documentElement.classList.add('!overflow-hidden');
 };
 
 const restorePredictionPanel = () => {
@@ -353,7 +360,8 @@ const restorePredictionPanel = () => {
 
     panel.classList.remove('hidden');
     button.setAttribute('aria-expanded', 'true');
-    document.body.classList.add('overflow-hidden');
+    document.body.classList.add('!overflow-hidden');
+    document.documentElement.classList.add('!overflow-hidden');
 };
 
 document.addEventListener('click', (event) => {
@@ -465,7 +473,8 @@ document.addEventListener('click', (event) => {
         if (shouldOpen) {
             panel.classList.remove('hidden');
             predictionButton.setAttribute('aria-expanded', 'true');
-            document.body.classList.add('overflow-hidden');
+            document.body.classList.add('!overflow-hidden');
+            document.documentElement.classList.add('!overflow-hidden');
             openPredictionMatchId = matchId;
         }
         return;
@@ -503,7 +512,8 @@ document.addEventListener('click', (event) => {
     if (shouldOpen) {
         panel.classList.remove('hidden');
         button.setAttribute('aria-expanded', 'true');
-        document.body.classList.add('overflow-hidden');
+        document.body.classList.add('!overflow-hidden');
+        document.documentElement.classList.add('!overflow-hidden');
         openLiveStatsMatchId = matchId;
         loadFootballStatistics(button, 'live');
     } else {
