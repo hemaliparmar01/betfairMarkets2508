@@ -1058,22 +1058,32 @@
                         row.querySelector('[data-market-details]')?.setAttribute('aria-expanded', String(detailsExpanded));
                         if (incoming.hasAttribute('aria-disabled')) row.setAttribute('aria-disabled', incoming.getAttribute('aria-disabled'));
                         else row.removeAttribute('aria-disabled');
+                        @if ($marketActivitySport !== 'football')
                         incoming.replaceWith(row);
+                        @endif
                     }
                     events.splice(0, events.length, ...data);
                     const scrollLeft = document.getElementById('eventsWrap').scrollLeft;
+                    @if ($marketActivitySport === 'football')
+                    const rows = Array.from(body.children, incoming => previousRows.get(incoming.dataset.id) ?? incoming);
+                    rows.forEach((row, index) => {
+                        if (eventsBody.children[index] !== row) eventsBody.insertBefore(row, eventsBody.children[index] ?? null);
+                    });
+                    Array.from(eventsBody.children).slice(rows.length).forEach(row => row.remove());
+                    @else
                     eventsBody.replaceChildren(...body.children);
+                    @endif
                     document.getElementById('eventsWrap').scrollLeft = scrollLeft;
 
                     if (detailWasOpen && events.some(function(ev) { return String(ev.id) === String(selectedEventId) && !ev.locked; })) {
                         const scrollContainer = detailWasExpanded ? detailContent : detailPanel;
                         const scrollTop = scrollContainer.scrollTop;
                         const termsOpen = !document.getElementById('termsSection')?.classList.contains('collapsed');
-                        openDetail(selectedEventId);
-                        if (detailWasExpanded) toggleExpand();
+                        if (@json($marketActivitySport !== 'football') || JSON.stringify(previousEvents.get(String(selectedEventId))) !== JSON.stringify(incomingEvents.get(String(selectedEventId)))) openDetail(selectedEventId);
+                        if (detailWasExpanded && !terminal.classList.contains('panel-expanded')) toggleExpand();
                         if (termsOpen) document.getElementById('termsSection')?.classList.remove('collapsed');
                         scrollContainer.scrollTop = scrollTop;
-                    } else {
+                    } else if (!detailWasOpen || @json($marketActivitySport !== 'football') || incomingEvents.get(String(selectedEventId))?.locked) {
                         currentEventId = null;
                         detailPanel.classList.remove('open');
                         terminal.classList.remove('with-panel', 'panel-expanded');
@@ -1261,6 +1271,7 @@
                         return String(e.id) === String(id);
                     });
                     if (!ev || ev.locked) return;
+                    const updating = @json($marketActivitySport === 'football') && String(currentEventId) === String(id) && detailPanel.classList.contains('open');
                     currentEventId = id;
 
                     document.querySelectorAll('.events-table tbody tr').forEach(function(r) {
@@ -1293,7 +1304,7 @@
                     let metaHtml =
                         `${escapeHtml(ev.sportIcon)} ${escapeHtml(ev.comp)} · ${ev.status === 'LIVE' ? '● LIVE' : ev.status === 'FINISHED' ? 'FT' : '▲ UPCOMING'} · ${escapeHtml(ev.time)} ${scoreHtml}`;
 
-                    detailContent.innerHTML = `
+                    const detailHtml = `
                         <div class="detail-header [background:linear-gradient(135deg,_#0b2a40,_#1a6b9c)] text-white [padding:10px_16px] [position:sticky] [top:0] [z-index:10] max-[480px]:[padding:8px_12px]">
                             <div class="detail-header-top flex items-center justify-between [gap:10px]">
                                 <div class="detail-title [font-size:14.5px] font-extrabold [flex:1] min-w-0 whitespace-nowrap overflow-hidden [text-overflow:ellipsis] max-[480px]:[font-size:13px]">${escapeHtml(ev.match)}</div>
@@ -1350,6 +1361,23 @@
                         </div>
                     `;
 
+                    if (updating) {
+                        const template = document.createElement('template');
+                        template.innerHTML = detailHtml;
+                        if (detailContent.querySelectorAll('.runner-row').length !== template.content.querySelectorAll('.runner-row').length) {
+                            detailContent.querySelector('.runners-list').replaceChildren(...template.content.querySelector('.runners-list').childNodes);
+                        }
+                        const fields = detailContent.querySelectorAll('.detail-title, .detail-meta, .runner-name, .runner-back, .runner-lay, .ind-value, .liq-back, .liq-lay, .liquidity-bar span');
+                        template.content.querySelectorAll('.detail-title, .detail-meta, .runner-name, .runner-back, .runner-lay, .ind-value, .liq-back, .liq-lay, .liquidity-bar span').forEach((next, index) => {
+                            const field = fields[index];
+                            if (field.innerHTML !== next.innerHTML && (!field.matches('.runner-name') || field.textContent !== next.textContent)) field.innerHTML = next.innerHTML;
+                            if (field.className !== next.className) field.className = next.className;
+                            if (field.style.cssText !== next.style.cssText) field.style.cssText = next.style.cssText;
+                        });
+                        detailContent.querySelector('.liquidity-bar').setAttribute('aria-label', template.content.querySelector('.liquidity-bar').getAttribute('aria-label'));
+                        return;
+                    }
+                    detailContent.innerHTML = detailHtml;
                     emptyPanel.style.display = 'none';
                     detailContent.style.display = 'block';
                     detailPanel.classList.add('open');
