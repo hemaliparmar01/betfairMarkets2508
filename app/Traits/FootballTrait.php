@@ -257,14 +257,17 @@ trait FootballTrait
             return true;
         }));
         $sortByTime = in_array($type, ['by_time', 'upcoming'], true);
-        usort($getData, static function (array $first, array $second) use ($sortByTime, $leaguePriorities): int {
+        usort($getData, static function (array $first, array $second) use ($sortByTime, $leaguePriorities, $type): int {
             $timeComparison = (int) ($first['timestamp'] ?? 0) <=> (int) ($second['timestamp'] ?? 0);
             $priorityComparison = $leaguePriorities[$first['tournament'] ?? ''][$first['tournament_country'] ?? '']
                 <=> $leaguePriorities[$second['tournament'] ?? ''][$second['tournament_country'] ?? ''];
+            $competitionComparison = in_array($type, [null, 'all'], true)
+                ? strcmp((string) ($first['tournament_id'] ?? ($first['tournament_country'] ?? '').'|'.$first['tournament']), (string) ($second['tournament_id'] ?? ($second['tournament_country'] ?? '').'|'.$second['tournament']))
+                : 0;
 
             return $sortByTime
                 ? ($timeComparison ?: $priorityComparison)
-                : ($priorityComparison ?: $timeComparison);
+                : ($priorityComparison ?: $competitionComparison ?: $timeComparison);
         });
         $page = max(1, (int) request()->input('page', 1));
         $perPage = min(100, max(1, (int) request()->input('per_page', 20)));
@@ -327,6 +330,9 @@ trait FootballTrait
             }
             $tournamentName = $data['tournament'];
             $leagueKey = $type === 'by_time' ? $tournamentName.'|'.$data['timestamp'] : $tournamentName;
+            if (in_array($type, [null, 'all'], true)) {
+                $leagueKey = 'competition:'.($data['tournament_id'] ?? ($data['tournament_country'] ?? '').'|'.$tournamentName);
+            }
             $matchId = (string) $data['sportsApiPro_match_id'];
             $timeline = $data['timeline'] ?? [];
             $oddsMarkets = ! $showTimeline && $canDisplayOdds
