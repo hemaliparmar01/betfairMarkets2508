@@ -664,18 +664,30 @@ if (! function_exists('storeInRedis')) {
 }
 
 if (! function_exists('getInRedis')) {
-    function getInRedis(string $cacheKey)
+    function getInRedis(string $cacheKey, bool $restoreVisibleFootballTimelines = false): mixed
     {
         $cachedData = Redis::get($cacheKey);
 
         $matches = $cachedData === null ? null : json_decode($cachedData, true);
         if ($cacheKey === 'Football:matches' && is_array($matches) && $matches !== []) {
             try {
-                $matchIds = array_values(array_filter(array_column($matches, 'sportsApiPro_match_id'), static fn (mixed $id): bool => is_scalar($id) && preg_match('/^[1-9][0-9]*$/', (string) $id)));
+                $matchIds = [];
+                $matchKeys = [];
+                foreach ($matches as $matchKey => $match) {
+                    if ($restoreVisibleFootballTimelines && (($match['result_status'] ?? '') === 'Finished' || MatchBackup::isHidden($match, 'football'))) {
+                        continue;
+                    }
+                    $matchId = $match['sportsApiPro_match_id'] ?? null;
+                    if (is_scalar($matchId) && preg_match('/^[1-9][0-9]*$/', (string) $matchId)) {
+                        $matchIds[] = $matchId;
+                        $matchKeys[] = $matchKey;
+                    }
+                }
                 $savedTimelines = $matchIds === [] ? collect() : DB::table('football_timeline')->whereIn('match_id', $matchIds)->get(['match_id', 'timeline'])->keyBy('match_id');
                 $before = $matches;
                 $controller = null;
-                foreach ($matches as &$match) {
+                foreach ($matchKeys as $matchKey) {
+                    $match = &$matches[$matchKey];
                     $saved = $savedTimelines->get((string) ($match['sportsApiPro_match_id'] ?? ''));
                     $timeline = json_decode($saved->timeline ?? '[]', true) ?? [];
                     if ($timeline !== []) {

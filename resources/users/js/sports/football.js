@@ -63,6 +63,8 @@ const footballLazyLoader = document.querySelector('[data-football-lazy-loader]')
 let footballPage = 1;
 let footballHasMore = footballLazyLoader?.dataset.hasMore === 'true';
 let footballLoading = false;
+let footballRealtimeLoading = false;
+let footballRequestVersion = 0;
 let footballPendingRequest = null;
 let footballPendingRealtime = false;
 let footballRealtimeTimer = null;
@@ -537,6 +539,7 @@ document.querySelectorAll('.market-dropdown').forEach((element) => {
 const callFixtureData = async (value, options = {}) => {
     const append = options.append === true;
     const preserveLoaded = options.preserveLoaded === true;
+    const realtime = options.realtime === true;
     const fixtures = document.querySelector('.fixtures-container');
 
     if (options.reset === true && !append) {
@@ -544,7 +547,7 @@ const callFixtureData = async (value, options = {}) => {
         fixtures?.setAttribute('aria-busy', 'true');
     }
 
-    if (footballLoading) {
+    if (footballLoading || (footballRealtimeLoading && (realtime || value.prediction))) {
         if (value.prediction) {
             return new Promise((resolve) => {
                 footballPendingPredictions.push({ prediction: value.prediction, options, resolve });
@@ -560,7 +563,9 @@ const callFixtureData = async (value, options = {}) => {
     clearTimeout(footballRealtimeTimer);
     footballRealtimeTimer = null;
     footballPendingRealtime = false;
-    footballLoading = true;
+    if (realtime) footballRealtimeLoading = true;
+    else footballLoading = true;
+    const requestVersion = realtime ? footballRequestVersion : ++footballRequestVersion;
     if (append && footballLazyLoader) {
         footballLazyLoader.querySelector('[data-lazy-loader-text]').textContent = 'Loading matches…';
     }
@@ -595,7 +600,7 @@ const callFixtureData = async (value, options = {}) => {
         document.querySelector('[data-football-request-error]')?.remove();
         const data = await response.json();
         const selected = getSelectedFilters();
-        if (footballPendingRequest || selected.type !== value.type || selected.market_name !== value.market_name) {
+        if (requestVersion !== footballRequestVersion || footballPendingRequest || selected.type !== value.type || selected.market_name !== value.market_name) {
             return;
         }
 
@@ -608,7 +613,16 @@ const callFixtureData = async (value, options = {}) => {
             const responseContainer = template.content.querySelector('.fixtures-container');
             const incoming = responseContainer ?? template.content;
             preserveQuickStatsPanel(incoming);
-            document.querySelector('.fixtures-container').replaceChildren(...incoming.childNodes);
+            const existingNodes = new Map(Array.from(fixtures.children, node => [node.id || node.dataset.leagueHeader || node.getAttribute('data-sportApi-match-id'), node]));
+            const nodes = Array.from(incoming.children, node => {
+                const current = existingNodes.get(node.id || node.dataset.leagueHeader || node.getAttribute('data-sportApi-match-id'));
+                return current?.isEqualNode(node) ? current : node;
+            });
+            nodes.forEach((node, index) => {
+                if (fixtures.children[index] !== node) fixtures.insertBefore(node, fixtures.children[index] ?? null);
+            });
+            Array.from(fixtures.children).slice(nodes.length).forEach(node => node.remove());
+            Array.from(fixtures.childNodes).forEach(node => { if (node.nodeType !== 1) node.remove(); });
             footballPage = preserveLoaded ? Math.max(1, footballPage) : 1;
         }
         updateFootballLazyLoader(data.has_more, append ? data.next_page : (preserveLoaded ? footballPage + 1 : data.next_page));
@@ -637,10 +651,14 @@ const callFixtureData = async (value, options = {}) => {
         }
         updateFootballLazyLoader(footballHasMore);
     } finally {
-        footballLoading = false;
-        if (!footballPendingRequest) {
+        if (realtime) footballRealtimeLoading = false;
+        else footballLoading = false;
+        if (!footballLoading && !footballPendingRequest) {
             fixtures?.classList.remove('fixtures-loading');
             fixtures?.removeAttribute('aria-busy');
+        }
+        if (footballLoading) {
+            return;
         }
         if (footballPendingRequest) {
             const pending = footballPendingRequest;
@@ -661,7 +679,7 @@ const scheduleFootballRealtimeRefresh = () => {
         return;
     }
 
-    if (footballLoading) {
+    if (footballLoading || footballRealtimeLoading) {
         footballPendingRealtime = true;
         return;
     }
@@ -691,6 +709,8 @@ let minuteRefreshInProgress = false;
 const refreshFixtureMinutes = async () => {
     if (
         minuteRefreshInProgress ||
+        footballLoading ||
+        footballRealtimeLoading ||
         document.visibilityState !== 'visible' ||
         !document.querySelector('.fixtures-container')
     ) {

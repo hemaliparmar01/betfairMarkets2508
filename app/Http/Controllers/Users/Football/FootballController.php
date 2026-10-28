@@ -9,6 +9,7 @@ use App\Traits\FootballTrait;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Str;
+use Symfony\Component\HttpFoundation\AcceptHeader;
 
 class FootballController extends Controller
 {
@@ -235,7 +236,7 @@ class FootballController extends Controller
         ]);
     }
 
-    public function filterFootball()
+    public function filterFootball(): JsonResponse
     {
         $prediction = request()->input('prediction');
         if (is_array($prediction)) {
@@ -319,29 +320,29 @@ class FootballController extends Controller
             }
         }
 
-        $data = $this->getFootballMatches();
-
-        return response()->json([
-            'html' => view('users.sports.football.footballDetails', [
-                'data' => $data,
-                'append' => request()->boolean('append'),
-            ])->render(),
-            'has_more' => $this->footballHasMore,
-            'next_page' => $this->footballNextPage,
-        ]);
+        return $this->websocketFootball(request()->boolean('append'));
     }
 
-    public function websocketFootball()
+    public function websocketFootball(bool $append = false): JsonResponse
     {
         $data = $this->getFootballMatches();
 
-        return response()->json([
+        $response = response()->json([
             'html' => view('users.sports.football.footballDetails', [
                 'data' => $data,
+                'append' => $append,
             ])->render(),
             'has_more' => $this->footballHasMore,
             'next_page' => $this->footballNextPage,
-        ]);
+        ], options: JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+        $response->setVary('Accept-Encoding', false);
+        if (function_exists('gzencode') && AcceptHeader::fromString(request()->header('Accept-Encoding', ''))->get('gzip')?->getQuality() > 0) {
+            $response->setContent(gzencode($response->getContent(), 1));
+            $response->headers->set('Content-Encoding', 'gzip');
+        }
+
+        return $response;
     }
 
     public function tempDataMerge()

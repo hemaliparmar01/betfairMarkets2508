@@ -51,7 +51,7 @@ trait FootballTrait
             abort_unless($checkAuthAndSubscription['display_odds'], 403, __('An active 7-day free trial or paid subscription is required to use smart filters.'));
         }
 
-        $getData = getVisibleSportsMatches('Football:matches') ?? [];
+        $getData = getInRedis('Football:matches', request()->input('type') !== 'finished') ?? [];
         $customerId = request()->user('customers')?->getAuthIdentifier();
         $favoriteKeys = $customerId === null ? [] : array_fill_keys(
             Favorite::query()->where('sport', 'football')->where('customer_id', $customerId)->pluck('event_key')->all(),
@@ -237,9 +237,10 @@ trait FootballTrait
         }
 
         $leaguePriorities = [];
-        $getData = array_values(array_filter($getData, function (array $match) use ($type, $todayStart, $tomorrowStart, $matchesFilter, &$leaguePriorities): bool {
+        $getData = array_filter($getData, function (array $match) use ($type, $todayStart, $tomorrowStart, $matchesFilter, &$leaguePriorities): bool {
             if (
-                ! isset($match['timestamp'])
+                MatchBackup::isHidden($match, 'football')
+                || ! isset($match['timestamp'])
                 || ! is_numeric($match['sportsApiPro_match_id'] ?? null)
                 || (int) $match['sportsApiPro_match_id'] <= 0
                 || ($type !== 'finished' && ($match['result_status'] ?? null) === 'Finished')
@@ -255,13 +256,14 @@ trait FootballTrait
             $leaguePriorities[$tournament][$country ?? ''] ??= $this->footballLeaguePriority($tournament, $country);
 
             return true;
-        }));
+        });
         $sortByTime = in_array($type, ['by_time', 'upcoming'], true);
-        usort($getData, static function (array $first, array $second) use ($sortByTime, $leaguePriorities, $type): int {
+        $groupByCompetition = in_array($type, [null, 'all'], true);
+        usort($getData, static function (array $first, array $second) use ($sortByTime, $leaguePriorities, $groupByCompetition): int {
             $timeComparison = (int) ($first['timestamp'] ?? 0) <=> (int) ($second['timestamp'] ?? 0);
             $priorityComparison = $leaguePriorities[$first['tournament'] ?? ''][$first['tournament_country'] ?? '']
                 <=> $leaguePriorities[$second['tournament'] ?? ''][$second['tournament_country'] ?? ''];
-            $competitionComparison = in_array($type, [null, 'all'], true)
+            $competitionComparison = $groupByCompetition
                 ? strcmp((string) ($first['tournament_id'] ?? ($first['tournament_country'] ?? '').'|'.$first['tournament']), (string) ($second['tournament_id'] ?? ($second['tournament_country'] ?? '').'|'.$second['tournament']))
                 : 0;
 
@@ -330,7 +332,7 @@ trait FootballTrait
             }
             $tournamentName = $data['tournament'];
             $leagueKey = $type === 'by_time' ? $tournamentName.'|'.$data['timestamp'] : $tournamentName;
-            if (in_array($type, [null, 'all'], true)) {
+            if ($groupByCompetition) {
                 $leagueKey = 'competition:'.($data['tournament_id'] ?? ($data['tournament_country'] ?? '').'|'.$tournamentName);
             }
             $matchId = (string) $data['sportsApiPro_match_id'];

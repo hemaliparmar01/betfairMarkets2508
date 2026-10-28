@@ -78,7 +78,10 @@ class FootballSyncController extends Controller
             }
         }
         $events = [];
-        foreach ([$storedTimeline, $previous['timeline'] ?? [], $match['timeline'] ?? []] as $source) {
+        foreach ([$storedTimeline, $previous['timeline'] ?? [], $match['timeline'] ?? []] as $sourceIndex => $source) {
+            if ($sourceIndex === 2 && ($previous['timeline'] ?? []) === [] && $source === $storedTimeline) {
+                continue;
+            }
             foreach ($source['events'] ?? [] as $id => $event) {
                 $events[(string) ($event['id'] ?? $id)] = $event;
             }
