@@ -221,18 +221,57 @@ if (dashboard) {
         if (!row) { closeModal(); return; }
         const modal = dashboard.querySelector('#tennisModal');
         const panel = modal.querySelector('[data-tennis-modal-panel]');
-        const scrollTop = panel.scrollTop;
+        const scrollTop = (panel.querySelector('[data-tennis-statistics-scroll]') ?? panel).scrollTop;
         const scoreStatus = escape(row.dataset.matchStatus ?? row.dataset.tennisStatus ?? '');
         let title = ''; let body = '';
         if (activeModal.action === 'stats') {
-            const data = parse(row.dataset.tennisStats); title = 'Live Match Statistics';
-            if (data.surface) body += `<p class="mb-3 text-sm text-[#5a7d99]">${escape(data.surface)}</p>`;
-            body += `<div class="grid gap-3 sm:grid-cols-2">${[['home', data.team1], ['away', data.team2]].map(([side, team]) => {
-                const score = data[side] ?? {};
-                return `<section class="rounded-xl border border-[#d4e0ec] p-4"><h3 class="mb-2 font-bold">${escape(team)}${data.serving === side ? ' <span class="text-amber-500">● Serving</span>' : ''}</h3><p class="mb-2 text-xl font-bold"><span class="match-score" data-score-status="${scoreStatus}">${escape(score.current ?? score.display ?? '—')}</span> <small class="text-xs font-normal">sets</small></p>${score.point != null ? `<p class="mb-2 text-sm">Current point: <b>${escape(score.point)}</b></p>` : ''}${[1, 2, 3, 4, 5].filter((set) => score[`period${set}`] != null).map((set) => `<p class="py-1">${escape(data.periods?.[`period${set}`] ?? `Set ${set}`)}: <b>${escape(score[`period${set}`])}</b>${score[`period${set}TieBreak`] != null ? ` <small>(TB ${escape(score[`period${set}TieBreak`])})</small>` : ''}</p>`).join('')}</section>`;
-            }).join('')}</div>`;
-            const statistics = Array.isArray(data.statistics) ? data.statistics : [data.statistics];
-            body += statistics.map((period) => `<h3 class="mt-5 text-xs font-bold uppercase text-[#5a7d99]">${escape(period?.period === 'ALL' ? 'Match' : period?.period ?? '')}</h3>${(period?.groups ?? []).map((group) => `<h4 class="mt-3 font-bold">${escape(group.groupName)}</h4>${(group.statisticsItems ?? []).map((item) => `<div class="grid grid-cols-[1fr_2fr_1fr] border-b border-[#e3ecf5] py-2 text-center text-sm"><span>${escape(item.home ?? item.homeValue ?? '—')}</span><span>${escape(item.name)}</span><span>${escape(item.away ?? item.awayValue ?? '—')}</span></div>`).join('')}`).join('')}`).join('');
+            const data = parse(row.dataset.tennisStats); title = 'Live Statistics';
+            const statistics = (Array.isArray(data.statistics) ? data.statistics : [data.statistics]).filter((period) => period && Array.isArray(period.groups));
+            const periods = statistics.length ? statistics : [{ period: 'ALL', groups: [] }];
+            const selectedPeriod = periods.find((period, index) => String(period.period ?? index) === activeModal.period) ?? periods[0];
+            activeModal.period = String(selectedPeriod.period ?? periods.indexOf(selectedPeriod));
+            body = `<header class="relative shrink-0 bg-[#0b2a40] px-4 py-5 text-center text-white sm:px-8">
+                <button type="button" data-action="close-modal" aria-label="Close" class="absolute right-3 top-3 flex size-[30px] items-center justify-center rounded-full bg-white/20 text-lg transition hover:bg-white/40 focus-visible:outline-2 focus-visible:outline-white">×</button>
+                <h2 id="tennisModalTitle" class="px-7 text-[10px] uppercase tracking-wider text-[#b0c8dd] sm:text-xs">${escape([data.tournament, data.surface, title].filter(Boolean).join(' · '))}</h2>
+                <div class="mt-2 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 text-sm font-bold sm:gap-4 sm:text-lg">
+                    <span class="min-w-0 break-words text-right">${escape(data.team1)}${data.serving === 'home' ? ' <span class="text-xs text-amber-400" aria-label="Serving">●</span>' : ''}</span>
+                    <span class="match-score match-score-on-dark whitespace-nowrap rounded-md bg-white/10 px-3 py-1 text-xl font-extrabold tabular-nums sm:text-[26px]" data-score-status="${scoreStatus}" aria-label="Sets won">${escape(data.home?.current ?? data.home?.display ?? '—')} - ${escape(data.away?.current ?? data.away?.display ?? '—')}</span>
+                    <span class="min-w-0 break-words text-left">${data.serving === 'away' ? '<span class="text-xs text-amber-400" aria-label="Serving">●</span> ' : ''}${escape(data.team2)}</span>
+                </div>
+                <div class="mt-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs font-semibold text-[#b0c8dd]">
+                    <span class="${scoreStatus === 'Live' ? 'text-[#ff4d4d]' : ''}">${scoreStatus === 'Live' ? '● ' : ''}${escape(data.minutes || row.dataset.matchStatus || row.dataset.tennisStatus || '—')}</span>
+                    ${['home', 'away'].includes(data.serving) ? `<span>Serving: ${escape(data.serving === 'home' ? data.team1 : data.team2)}</span>` : ''}
+                    ${data.home?.point != null || data.away?.point != null ? `<span>Current point: <b class="text-white">${escape(data.home?.point ?? '—')} - ${escape(data.away?.point ?? '—')}</b></span>` : ''}
+                </div>
+                <div class="mt-3 flex flex-wrap justify-center gap-2 text-[11px] font-semibold sm:text-xs">${[1, 2, 3, 4, 5].filter((set) => ['home', 'away'].some((side) => data[side]?.[`period${set}`] != null && Number(data[side][`period${set}`]) >= 0)).map((set) => `<span class="rounded-md border px-2 py-1 ${Number(data.current_set) === set ? 'border-[#ff4d4d] bg-white/20 text-white' : 'border-transparent bg-white/10 text-[#b0c8dd]'}">${escape(data.periods?.[`period${set}`] ?? `Set ${set}`)}: ${escape(data.home?.[`period${set}`] ?? '—')}-${escape(data.away?.[`period${set}`] ?? '—')}${['home', 'away'].some((side) => data[side]?.[`period${set}TieBreak`] != null) ? ` (TB ${escape(data.home?.[`period${set}TieBreak`] ?? '—')}-${escape(data.away?.[`period${set}TieBreak`] ?? '—')})` : ''}</span>`).join('')}</div>
+            </header>
+            <div role="tablist" aria-label="Statistics periods" class="flex shrink-0 overflow-x-auto border-b border-[#d1dbe6] bg-[#f0f4f8] [scrollbar-width:thin] dark:border-[#2a3f50] dark:bg-[#203544]">${periods.map((period, index) => {
+                const key = String(period.period ?? index);
+                const set = key.match(/^(?:period|set)?([1-5])(?:st|nd|rd|th)?$/i)?.[1];
+                const label = key === 'ALL' ? 'Full Match' : data.periods?.[key] ?? (set ? data.periods?.[`period${set}`] ?? `Set ${set}` : key);
+                return `<button type="button" role="tab" id="tennis-stat-tab-${index}" aria-controls="tennis-stat-period" aria-selected="${key === activeModal.period}" data-action="stats-period" data-period="${escape(key)}" class="min-w-20 flex-1 whitespace-nowrap border-b-[3px] px-3 py-3 text-[11px] font-bold uppercase tracking-wide transition hover:bg-[#e8f2fc] hover:text-[#0b2a40] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[#5a7d99] dark:hover:bg-[#2a4050] dark:hover:text-white ${key === activeModal.period ? 'border-[#0b2a40] bg-white text-[#0b2a40] dark:border-sky-300 dark:bg-[#1a2a38] dark:text-white' : 'border-transparent text-[#5a7d99] dark:text-[#b0c8dd]'}">${escape(label)}</button>`;
+            }).join('')}</div>
+            <div id="tennis-stat-period" role="tabpanel" aria-labelledby="tennis-stat-tab-${periods.indexOf(selectedPeriod)}" data-tennis-statistics-scroll class="min-h-0 overflow-x-hidden overflow-y-auto overscroll-contain bg-[#f7f9fc] p-3 sm:p-5 dark:bg-[#162532]">
+                ${(selectedPeriod.groups ?? []).map((group) => `<section class="mb-4 rounded-lg border border-[#e3ecf5] bg-white p-3 shadow-sm last:mb-0 sm:p-4 dark:border-[#2a3f50] dark:bg-[#1a2a38]">
+                    <h3 class="mb-3 border-b border-[#edf2f7] pb-2 text-[11px] font-bold uppercase tracking-wide text-[#5a7d99] dark:border-[#2a3f50] dark:text-[#b0c8dd]">${escape(group.groupName)}</h3>
+                    ${(group.statisticsItems ?? []).map((item) => {
+                        const values = ['home', 'away'].map((side) => {
+                            const displayed = [item[side], item[`${side}Value`]].find((value) => (typeof value === 'string' && value.trim() !== '' && !/^(?:null|undefined|NaN|Infinity|N\/A|[-—–])$/i.test(value.trim())) || (typeof value === 'number' && Number.isFinite(value)));
+                            const text = String(displayed ?? '—');
+                            const percentage = text.match(/(-?\d+(?:[.,]\d+)?)\s*%/);
+                            const raw = item[`${side}Value`];
+                            const fraction = text.match(/^(-?\d+(?:[.,]\d+)?)\s*\/\s*(\d+(?:[.,]\d+)?)/);
+                            const numeric = percentage ? Number(percentage[1].replace(',', '.')) : fraction && Number(fraction[2].replace(',', '.')) > 0 ? Number(fraction[1].replace(',', '.')) / Number(fraction[2].replace(',', '.')) : typeof raw === 'number' && Number.isFinite(raw) ? raw : /^-?\d+(?:[.,]\d+)?$/.test(String(raw)) ? Number(String(raw).replace(',', '.')) : /^-?\d+(?:[.,]\d+)?(?:\s|\(|$)/.test(text) ? Number.parseFloat(text.replace(',', '.')) : null;
+                            return { text, numeric, percentage: percentage !== null };
+                        });
+                        const comparable = values.every((value) => value.numeric !== null && Number.isFinite(value.numeric));
+                        const bar = /^(?:total points won|points won percentage)$/i.test(item.name ?? '') && values.every((value) => value.percentage && value.numeric >= 0 && value.numeric <= 100) && Math.abs(values[0].numeric + values[1].numeric - 100) < 1;
+                        return `<div class="py-1.5"><div class="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] items-center gap-2 text-xs sm:text-[13px]">
+                            ${values.map((value, index) => `${index === 1 ? `<span class="min-w-0 break-words text-center font-medium text-[#5a7d99] dark:text-[#b0c8dd]">${escape(item.name)}</span>` : ''}<span class="min-w-0 break-words tabular-nums ${index === 0 ? 'justify-self-start text-left' : 'justify-self-end text-right'} ${comparable && value.numeric > values[1 - index].numeric ? 'font-extrabold text-[#0b2a40] dark:text-white' : comparable && value.numeric < values[1 - index].numeric ? 'font-medium text-[#8aaccc] dark:text-slate-400' : 'font-semibold text-[#5a7d99] dark:text-[#b0c8dd]'}">${escape(value.text)}</span>`).join('')}
+                        </div>${bar ? `<div class="mt-2 flex h-2 overflow-hidden rounded-sm" aria-hidden="true"><span class="bg-[#1f9a6e]" style="width:${values[0].numeric / (values[0].numeric + values[1].numeric) * 100}%"></span><span class="bg-[#d63e3e]" style="width:${values[1].numeric / (values[0].numeric + values[1].numeric) * 100}%"></span></div>` : ''}</div>`;
+                    }).join('') || '<p class="py-2 text-center text-xs text-[#8aaccc]">No statistics available for this section.</p>'}
+                </section>`).join('') || '<p class="rounded-lg border border-[#e3ecf5] bg-white p-5 text-center text-sm text-[#5a7d99] dark:border-[#2a3f50] dark:bg-[#1a2a38] dark:text-[#b0c8dd]">No statistics available for this period yet.</p>'}
+            </div>`;
         } else if (activeModal.action === 'chart') {
             const data = parse(row.dataset.tennisChart); title = `${data.title ?? 'Match Winner'} · Odds Movement`;
             if (data.locked) body = '<p>Login with an active subscription to view odds.</p>';
@@ -259,8 +298,9 @@ if (dashboard) {
             }).join('')}</tbody></table></div><a class="mt-4 inline-block rounded-xl bg-[#0b2a40] px-4 py-2 text-sm font-bold text-white" href="${escape(row.dataset.tennisMatchUrl)}">Match markets &amp; charts →</a>`;
         }
         hideOddsTooltip();
-        panel.innerHTML = `<div class="mb-5 flex items-center justify-between gap-3"><h2 id="tennisModalTitle" class="text-lg font-extrabold">${escape(title)}</h2><button type="button" data-action="close-modal" aria-label="Close" class="px-2 text-2xl">×</button></div>${body}`;
-        panel.scrollTop = scrollTop;
+        panel.dataset.statistics = String(activeModal.action === 'stats');
+        panel.innerHTML = activeModal.action === 'stats' ? body : `<div class="mb-5 flex items-center justify-between gap-3"><h2 id="tennisModalTitle" class="text-lg font-extrabold">${escape(title)}</h2><button type="button" data-action="close-modal" aria-label="Close" class="px-2 text-2xl">×</button></div>${body}`;
+        (panel.querySelector('[data-tennis-statistics-scroll]') ?? panel).scrollTop = scrollTop;
         modal.classList.remove('hidden');
         modal.classList.add('flex');
         document.body.classList.add('!overflow-hidden');
@@ -286,6 +326,13 @@ if (dashboard) {
         if (button.dataset.requiresLogin === 'true') { window.location.assign(button.dataset.loginUrl); return; }
         const action = button.dataset.action;
         if (action === 'close-modal') { closeModal(); return; }
+        if (action === 'stats-period' && activeModal?.action === 'stats') {
+            activeModal.period = button.dataset.period;
+            dashboard.querySelector('[data-tennis-statistics-scroll]').scrollTop = 0;
+            renderModal();
+            dashboard.querySelector(`[data-action="stats-period"][aria-selected="true"]`)?.focus({ preventScroll: true });
+            return;
+        }
         const row = button.closest('[data-match-id]');
         if (action === 'open-match') { window.location.assign(row.dataset.tennisMatchUrl); return; }
         if (['stats', 'prediction', 'market', 'chart'].includes(action)) { activeModal = { action, matchId: row.dataset.matchId, marketId: row.dataset.marketId ?? null }; renderModal(); return; }
