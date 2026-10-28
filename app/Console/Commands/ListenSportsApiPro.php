@@ -386,7 +386,7 @@ class ListenSportsApiPro extends Command
             }
 
             return app($config['controller'])->mergeSportsWebSocketData($channel, $frameData);
-        });
+        }, $sport === 'football' ? 30 : 5);
         $events = str_starts_with($channel, 'live-scores') ? $this->normalizeLiveEvents($frameData) : [];
         foreach ($events as $event) {
             $matchId = $event['id'] ?? $event['eventId'] ?? null;

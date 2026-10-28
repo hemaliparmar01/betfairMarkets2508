@@ -113,7 +113,8 @@ class FootballSyncController extends Controller
             }
             $sequence = data_get($payload, 'changes.changeTimestamp', $payload['changes.changeTimestamp'] ?? null);
             if ($requestedAt === null && is_numeric($sequence) && (int) $sequence > 0) {
-                if ((int) $sequence <= (int) ($timeline['change_timestamps'][$channel] ?? 0)) {
+                $lastSequence = (int) ($timeline['change_timestamps'][$channel] ?? 0);
+                if ((int) $sequence < $lastSequence || (! $isIncidents && (int) $sequence === $lastSequence)) {
                     return false;
                 }
                 $timeline['change_timestamps'][$channel] = (int) $sequence;
@@ -377,7 +378,7 @@ class FootballSyncController extends Controller
                                         }
                                         unset($cachedMatch);
                                         storeInRedis('Football:matches', $matches, 10, false);
-                                    });
+                                    }, 30);
                                 }
                                 Event::dispatch(new FootballSportsScoreUpdated);
                             } catch (Throwable $exception) {

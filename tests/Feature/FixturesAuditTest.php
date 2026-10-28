@@ -323,6 +323,11 @@ class FixturesAuditTest extends TestCase
         $sync->storeTimeline($match, 'match:123:incidents', ['incidents' => [$second], 'changes' => ['changeTimestamp' => 11]], 'snapshot');
         $this->assertCount(2, $match['timeline']['home_goals']);
         $this->assertSame(14, $match['timeline']['home_goals'][0]['minute']);
+        $sameTimestampGoal = array_replace($second, ['id' => 'g3', 'isHome' => false, 'time' => 61, 'awayScore' => 1]);
+        $sameTimestampPayload = ['incidents' => [$sameTimestampGoal], 'changes' => ['changeTimestamp' => 11]];
+        $this->assertTrue($sync->storeTimeline($match, 'match:123:incidents', $sameTimestampPayload));
+        $this->assertSame(['g3'], array_column($match['timeline']['away_goals'], 'id'));
+        $this->assertFalse($sync->storeTimeline($match, 'match:123:incidents', $sameTimestampPayload));
         $this->assertFalse($sync->storeTimeline($match, 'match:123:incidents', ['incidents' => [$goal], 'changes' => ['changeTimestamp' => 9]], 'update'));
         $sync->storeTimeline($match, 'match:123:incidents', ['incidents' => [['id' => 'g1', 'isDeleted' => true]], 'changes' => ['changeTimestamp' => 12]], 'update');
         $sync->storeTimeline($match, 'match:123:incidents', ['incidents' => [$goal, $second], 'changes' => ['changeTimestamp' => 13]], 'snapshot');
@@ -330,18 +335,35 @@ class FixturesAuditTest extends TestCase
         $this->assertContains('g2', array_column($match['timeline']['home_goals'], 'id'));
     }
 
-    public function test_goal_markers_match_score_deduplicate_and_follow_credited_team_score(): void
+    public function test_goal_markers_preserve_provider_team_and_render_before_score_updates(): void
     {
         $goal = ['id' => 'goal-1', 'kind' => 'goal', 'minute' => 14, 'added_time' => 0, 'seconds' => 840, 'is_home' => false, 'home_score' => 1, 'away_score' => 0];
         $match = ['timestamp' => time() - 3600, 'result_status' => 'Live', 'minutes_status' => '2nd half', 'home_score' => 4, 'away_score' => 2, 'timeline' => ['events' => ['goal-1' => $goal]]];
         $timeline = $this->timeline($match);
         $goals = array_values(array_filter($timeline['events'], static fn (array $event): bool => $event['kind'] === 'goal'));
-        $this->assertCount(6, $goals);
-        $this->assertTrue($goals[0]['is_home']);
+        $this->assertCount(1, $goals);
+        $this->assertFalse($goals[0]['is_home']);
         $this->assertSame(14, $goals[0]['minute']);
-        $this->assertCount(4, array_filter($goals, static fn (array $event): bool => $event['is_home']));
-        $match['away_score'] = 1;
-        $this->assertCount(5, array_filter($this->timeline($match)['events'], static fn (array $event): bool => $event['kind'] === 'goal'));
+        $match['away_score'] = 0;
+        $this->assertSame($goals, array_values(array_filter($this->timeline($match)['events'], static fn (array $event): bool => $event['kind'] === 'goal')));
+        $match['timeline']['events'] = [];
+        $this->assertSame([], $this->timeline($match)['events']);
+        $match['timeline']['events'] = ['goal-1' => array_replace($goal, ['minute' => 90, 'added_time' => 4, 'seconds' => 5640])];
+        $timeline = $this->timeline($match);
+        $this->assertSame(94, $timeline['duration']);
+        $this->assertSame(100, $timeline['events'][0]['left']);
+        $this->assertSame("90+4'", $timeline['events'][0]['minute_label']);
+        $match['timeline']['events'] = [
+            'home-goal' => array_replace($goal, ['id' => 'home-goal', 'is_home' => true]),
+            'away-goal' => array_replace($goal, ['id' => 'away-goal']),
+            'yellow' => array_replace($goal, ['id' => 'yellow', 'kind' => 'yellow', 'is_home' => true]),
+            'red' => array_replace($goal, ['id' => 'red', 'kind' => 'red']),
+        ];
+        foreach ($this->timeline($match)['events'] as $incident) {
+            $html = view('users.sports.football.partials.timelineEvent', ['incident' => $incident, 'positioned' => true])->render();
+            $this->assertStringContainsString($incident['is_home'] ? 'bottom-1/2' : 'top-1/2', $html);
+            $this->assertStringContainsString('left: '.$incident['left'].'%', $html);
+        }
     }
 
     public function test_single_timeline_storage_preserves_event_details_and_removes_duplicate_cache_fields(): void
@@ -371,7 +393,9 @@ class FixturesAuditTest extends TestCase
         $this->assertSame($first, $match['timeline']['home_goals']);
         $this->assertDatabaseCount('football_timeline', 1);
         $this->assertDatabaseHas('football_timeline', ['match_id' => '123', 'home_goals' => '["45+2"]']);
+        $match['home_score'] = 0;
         $rendered = $this->timeline($match);
+        $this->assertCount(2, array_filter($rendered['events'], static fn (array $event): bool => $event['kind'] === 'goal'));
         $this->assertSame("45+2'", $rendered['events'][0]['minute_label']);
         $this->assertSame('Test Player', $rendered['events'][0]['player']);
         $cached = json_encode(['match-1' => $match]);

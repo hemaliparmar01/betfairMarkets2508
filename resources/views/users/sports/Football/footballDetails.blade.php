@@ -231,6 +231,7 @@
                             @php $timeline = $event['timeline']; @endphp
                             <div data-football-timeline="{{ $event['sportsApiPro_match_id'] }}"
                                 data-timeline-clock-limit="{{ $timeline['clock_limit'] }}" data-timeline-minute="{{ $timeline['minute'] }}"
+                                data-timeline-duration="{{ $timeline['duration'] }}"
                                 data-timeline-at="{{ $timeline['calculated_at'] }}"
                                 data-timeline-second="{{ $timeline['seconds_into_minute'] }}"
                                 data-timeline-running="{{ $timeline['running'] ? 'true' : 'false' }}"
@@ -276,9 +277,9 @@
                                     <span class="pointer-events-none absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-[#d3dde6] dark:bg-[#bacbd9]" aria-hidden="true"></span>
                                     <span data-timeline-progress class="pointer-events-none absolute left-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-[#249b61] transition-[width] duration-300 dark:bg-[#45bc7b]"
                                         style="width: {{ $timeline['progress'] }}%" aria-hidden="true"></span>
-                                    <span class="pointer-events-none absolute left-1/2 top-1/2 h-3 w-px -translate-x-1/2 -translate-y-1/2 bg-[#90a7b9]" aria-hidden="true"></span>
+                                    <span class="pointer-events-none absolute top-1/2 h-3 w-px -translate-x-1/2 -translate-y-1/2 bg-[#90a7b9]" style="left: {{ 45 / $timeline['duration'] * 100 }}%" aria-hidden="true"></span>
                                     <div class="pointer-events-none absolute inset-x-0 bottom-0.5 flex justify-between text-[9px] leading-none text-[#7891a5] dark:text-[#b0c4d4]" aria-hidden="true">
-                                        <span>0'</span><span class="absolute left-1/2 -translate-x-1/2">45'</span><span class="ml-auto">90'</span>
+                                        <span>0'</span><span class="absolute -translate-x-1/2" style="left: {{ 45 / $timeline['duration'] * 100 }}%">45'</span><span class="ml-auto">{{ $timeline['duration'] }}'</span>
                                     </div>
                                     @if ($timeline['finished'])
                                         <span class="absolute left-0 top-0.5 text-[9px] font-semibold">FT</span>

@@ -50,7 +50,7 @@ const refreshFootballTimelineClocks = () => {
         const label = (minute > limit ? `${limit}+${minute - limit}` : String(minute)) + "'";
         timeline.dataset.timelineLabel = label;
         const progress = timeline.querySelector('[data-timeline-progress]');
-        if (progress) progress.style.width = `${Math.min(100, Math.max(0, minute / 90 * 100))}%`;
+        if (progress) progress.style.width = `${Math.min(100, Math.max(0, minute / Number(timeline.dataset.timelineDuration ?? 90) * 100))}%`;
         if (openFootballTimeline?.matchId === timeline.dataset.footballTimeline && !openFootballTimeline.eventId) {
             const detailMinute = timeline.querySelector('[data-timeline-detail-minute]');
             if (detailMinute) detailMinute.textContent = label;

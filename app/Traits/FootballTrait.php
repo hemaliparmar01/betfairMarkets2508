@@ -650,44 +650,22 @@ trait FootballTrait
             }
         }
         usort($events, static fn (array $first, array $second): int => ($first['seconds'] <=> $second['seconds']) ?: strcmp($first['id'], $second['id']));
-        $previousGoalScore = [0, 0];
-        foreach ($events as &$goalEvent) {
-            if ($goalEvent['kind'] !== 'goal' || ! isset($goalEvent['home_score'], $goalEvent['away_score'])) {
-                continue;
-            }
-            $score = [(int) $goalEvent['home_score'], (int) $goalEvent['away_score']];
-            if ($score[0] === $previousGoalScore[0] + 1 && $score[1] === $previousGoalScore[1]) {
-                $goalEvent['is_home'] = true;
-            } elseif ($score[1] === $previousGoalScore[1] + 1 && $score[0] === $previousGoalScore[0]) {
-                $goalEvent['is_home'] = false;
-            }
-            $previousGoalScore = $score;
-        }
-        unset($goalEvent);
-        $missingHomeGoals = 0;
-        $missingGoals = 0;
         $goalsPending = false;
         if (isset($match['home_score'], $match['away_score'])) {
             $confirmedGoals = ['home' => (int) $match['home_score'], 'away' => (int) $match['away_score']];
-            $events = array_values(array_filter($events, static function (array $event) use (&$confirmedGoals): bool {
+            foreach ($events as $event) {
                 if ($event['kind'] !== 'goal') {
-                    return true;
+                    continue;
                 }
                 $side = $event['is_home'] ? 'home' : 'away';
-
-                return $confirmedGoals[$side]-- > 0;
-            }));
-            $missingHomeGoals = max(0, $confirmedGoals['home']);
-            $missingGoals = $missingHomeGoals + max(0, $confirmedGoals['away']);
-            $goalsPending = $confirmedGoals['home'] !== 0 || $confirmedGoals['away'] !== 0;
+                $confirmedGoals[$side]--;
+            }
+            $goalsPending = $confirmedGoals['home'] > 0 || $confirmedGoals['away'] > 0;
         }
-        $stoppageCount = count(array_filter($events, static function (array $event): bool {
-            $minute = $event['minute'] === 0 && $event['added_time'] === 0 && $event['seconds'] > 0
-                ? (int) floor($event['seconds'] / 60) : $event['minute'];
-
-            return $minute + $event['added_time'] > 90;
-        }));
-        $stoppageIndex = 0;
+        $duration = max(90, $minute, $confirmedLimit);
+        foreach ($events as $event) {
+            $duration = max($duration, ($event['minute'] ?: (int) floor($event['seconds'] / 60)) + $event['added_time']);
+        }
         $lanes = ['home' => [], 'away' => []];
         $untimedEvents = ['home' => [], 'away' => []];
         foreach ($events as &$event) {
@@ -695,12 +673,8 @@ trait FootballTrait
             if ($event['minute'] === 0 && $event['added_time'] === 0 && $event['seconds'] > 0) {
                 $event['minute'] = (int) floor($event['seconds'] / 60);
             }
-            $event['left'] = $event['time_known'] ? min(100, max(0, $event['minute'] / 90 * 100)) : null;
+            $event['left'] = $event['time_known'] ? min(100, max(0, ($event['minute'] + $event['added_time']) / $duration * 100)) : null;
             $event['end_offset'] = null;
-            if ($event['minute'] + $event['added_time'] > 90) {
-                $event['end_offset'] = $stoppageCount - 1 - $stoppageIndex++;
-                $event['left'] = max(0, 100 - $event['end_offset'] * 2);
-            }
             $side = $event['is_home'] ? 'home' : 'away';
             $lane = 0;
             if ($event['time_known']) {
@@ -728,33 +702,17 @@ trait FootballTrait
         }
         unset($event);
 
-        $goalLabel = $missingGoals > 0 ? __('Goal') : '';
-        for ($index = 0; $index < $missingGoals; $index++) {
-            $isHome = $index < $missingHomeGoals;
-            $side = $isHome ? 'home' : 'away';
-            $goalIndex = $isHome ? $index : $index - $missingHomeGoals;
-            $event = [
-                'id' => 'score-'.$side.'-goal-'.$goalIndex,
-                'kind' => 'goal',
-                'minute' => 0, 'added_time' => 0, 'seconds' => 0, 'time_known' => false,
-                'is_home' => $isHome, 'source' => 'score',
-                'player' => '', 'player_surname' => '', 'home_score' => null, 'away_score' => null,
-                'left' => null, 'end_offset' => null, 'lane' => 0, 'minute_label' => '', 'label' => $goalLabel,
-            ];
-            $events[] = $event;
-            $untimedEvents[$side][] = $event;
-        }
-
         return [
             'events' => $events,
             'untimed_events' => $untimedEvents,
             'goals_pending' => $goalsPending,
-            'height' => 64 + max(0, count($lanes['home']) - 1, count($lanes['away']) - 1) * 28,
+            'height' => 56 + max(0, count($lanes['home']) - 1, count($lanes['away']) - 1) * 28,
+            'duration' => $duration,
             'minute' => $minute,
             'minute_label' => $minuteLabel.($live && ! $halfTime && preg_match('/^\d+(?:\+\d+)?$/', $minuteLabel) === 1 ? "'" : ''),
             'period_limit' => $periodLimit,
             'clock_limit' => $confirmedLimit,
-            'progress' => min(100, max(0, $minute / 90 * 100)),
+            'progress' => $finished ? 100 : min(100, max(0, $minute / $duration * 100)),
             'running' => $running,
             'seconds_into_minute' => $running ? max(0, time() - ($periodStart ?: (int) $match['timestamp'])) % 60 : 0,
             'calculated_at' => time(),
