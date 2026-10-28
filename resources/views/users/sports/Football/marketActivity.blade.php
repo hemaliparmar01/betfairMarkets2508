@@ -939,10 +939,9 @@
                 function matchesStartWindow(event, now) {
                     if (!activeStartSeconds) return true;
                     if (event.internal_backup || event.hidden || event.status === 'FINISHED') return false;
-                    if (event.status === 'LIVE') return activeFootballFilter !== 'live';
                     const remaining = Number(event.timestamp) - now;
                     return ['UP', 'PREMATCH', 'UPCOMING'].includes(event.status)
-                        && Number.isFinite(remaining) && remaining > 0 && remaining <= activeStartSeconds;
+                        && Number.isFinite(remaining) && remaining >= 0 && remaining <= activeStartSeconds;
                 }
 
                 function applyStartFilter() {
