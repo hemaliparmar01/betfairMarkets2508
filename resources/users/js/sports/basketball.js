@@ -143,17 +143,68 @@ if (dashboard) {
         if (!row) { closeModal(); return; }
         const modal = dashboard.querySelector('#basketballModal');
         const panel = modal.querySelector('[data-basketball-modal-panel]');
-        const scrollTop = panel.scrollTop;
+        const scrollTop = (panel.querySelector('[data-basketball-statistics-scroll]') ?? panel).scrollTop;
         const scoreStatus = escape(row.dataset.matchStatus ?? '');
         let title = ''; let body = '';
         if (activeModal.action === 'stats') {
-            const data = parse(row.dataset.basketballStats); title = 'Live Match Statistics';
-            body = `<div class="grid gap-3 sm:grid-cols-2">${[['home', data.team1], ['away', data.team2]].map(([side, team]) => {
-                const score = data[side] ?? {};
-                return `<section class="rounded-xl border border-[#d4e0ec] p-4"><h3 class="mb-2 font-bold">${escape(team)}</h3><p class="mb-2 text-xl font-bold"><span class="match-score" data-score-status="${scoreStatus}">${escape(score.current ?? score.display ?? '—')}</span></p>${[['period1', 'Q1'], ['period2', 'Q2'], ['period3', 'Q3'], ['period4', 'Q4'], ['overtime', 'OT']].filter(([key]) => score[key] != null).map(([key, label]) => `<p class="py-1">${escape(data.periods?.[key] ?? label)}: <b>${escape(score[key])}</b></p>`).join('')}</section>`;
-            }).join('')}</div>`;
-            const statistics = Array.isArray(data.statistics) ? data.statistics : [data.statistics];
-            body += statistics.map((period) => (period?.groups ?? []).map((group) => `<h3 class="mt-4 font-bold">${escape(group.groupName)}</h3>${(group.statisticsItems ?? []).map((item) => `<div class="grid grid-cols-[1fr_2fr_1fr] border-b border-[#e3ecf5] py-2 text-center text-sm"><span>${escape(item.home ?? item.homeValue ?? '—')}</span><span>${escape(item.name)}</span><span>${escape(item.away ?? item.awayValue ?? '—')}</span></div>`).join('')}`).join('')).join('');
+            const data = parse(row.dataset.basketballStats); title = 'Live Statistics';
+            const statistics = (Array.isArray(data.statistics) ? data.statistics : [data.statistics]).filter((period) => period && Array.isArray(period.groups)).map((period) => {
+                const name = String(period.period ?? '').toUpperCase().replace(/[ _-]/g, '');
+                const quarter = name.match(/^(?:Q|PERIOD)?([1-4])(?:ST|ND|RD|TH)?(?:QUARTER)?$/)?.[1];
+                const overtime = name.match(/^(?:OT|OVERTIME)(\d*)$/) ?? name.match(/^(\d+)(?:ST|ND|RD|TH)?OT$/);
+                return { ...period, key: quarter ? `Q${quarter}` : overtime ? `OT${overtime[1]}` : name };
+            });
+            const phase = String(data.phase ?? data.minutes ?? '');
+            const currentQuarter = Number(phase.match(/^([1-4])(?:st|nd|rd|th)?\s*quarter/i)?.[1] ?? String(data.minutes ?? '').match(/^Q([1-4])\b/i)?.[1] ?? 0);
+            const inOvertime = scoreStatus === 'Live' && (/overtime|\bOT(?:\d+)?\b/i.test(phase) || /^OT\b/i.test(data.minutes ?? ''));
+            const playedQuarters = [1, 2, 3, 4].filter((quarter) => ['home', 'away'].some((side) => Number(data[side]?.[`period${quarter}`]) > 0));
+            const statisticsQuarters = statistics.filter((period) => /^Q[1-4]$/.test(period.key) && period.groups.some((group) => (group.statisticsItems ?? []).some((item) => [item.home, item.away, item.homeValue, item.awayValue].some((value) => value != null && String(value).trim() !== '')))).map((period) => Number(period.key.slice(1)));
+            const startedQuarter = scoreStatus === 'Prematch' ? 0 : currentQuarter || Math.max(inOvertime ? 4 : /halftime/i.test(phase) ? (/half/i.test(data.periods?.period1 ?? '') ? 1 : 2) : 0, ...playedQuarters, ...statisticsQuarters, 0);
+            const periods = [{ key: 'ALL', label: 'Full Match', groups: statistics.find((period) => period.key === 'ALL')?.groups ?? [] }];
+            for (let quarter = 1; quarter <= startedQuarter; quarter++) {
+                periods.push({ key: `Q${quarter}`, label: data.periods?.[`period${quarter}`] ?? `${quarter}${['st', 'nd', 'rd', 'th'][quarter - 1]} Quarter`, scoreKey: `period${quarter}`, groups: statistics.find((period) => period.key === `Q${quarter}`)?.groups ?? [] });
+            }
+            const overtimeKeys = new Set([...Object.keys(data.home ?? {}), ...Object.keys(data.away ?? {}), ...statistics.filter((period) => /^OT\d*$/.test(period.key)).map((period) => period.key), ...(inOvertime ? ['overtime'] : [])]);
+            const overtimePeriods = new Map();
+            for (const scoreKey of overtimeKeys) {
+                const match = scoreKey.match(/^(?:overtime|OT)(\d*)$/i) ?? scoreKey.match(/^(\d+)(?:st|nd|rd|th)?OT$/i);
+                if (!match || scoreStatus === 'Prematch' || (currentQuarter > 0 && currentQuarter < 4)) continue;
+                const key = `OT${match[1]}`;
+                const period = statistics.find((period) => period.key === key);
+                const hasScore = ['home', 'away'].some((side) => Number(data[side]?.[scoreKey]) > 0);
+                const hasStatistics = period?.groups.some((group) => (group.statisticsItems ?? []).some((item) => Number(item.homeValue ?? item.home) > 0 || Number(item.awayValue ?? item.away) > 0));
+                const currentOvertime = Number(phase.match(/(?:overtime|OT)\s*(\d+)/i)?.[1] ?? 1);
+                if (!hasScore && !hasStatistics && !(inOvertime && (!match[1] || Number(match[1]) <= currentOvertime))) continue;
+                overtimePeriods.set(key, { key, label: match[1] ? `OT ${match[1]}` : data.periods?.overtime ?? 'OT', scoreKey: ['home', 'away'].some((side) => data[side]?.[scoreKey] != null) ? scoreKey : overtimePeriods.get(key)?.scoreKey, groups: period?.groups ?? [] });
+            }
+            if ([...overtimePeriods.keys()].some((key) => /^OT\d+$/.test(key))) overtimePeriods.delete('OT');
+            periods.push(...[...overtimePeriods.values()].sort((left, right) => Number(left.key.slice(2)) - Number(right.key.slice(2))));
+            const selectedPeriod = periods.find((period) => period.key === activeModal.period) ?? periods[0];
+            activeModal.period = selectedPeriod.key;
+            body = `<header class="relative shrink-0 bg-[#0b2a40] px-4 py-5 text-center text-white sm:px-8">
+                <button type="button" data-action="close-modal" aria-label="Close" class="absolute right-3 top-3 flex size-[30px] items-center justify-center rounded-full bg-white/20 text-lg transition hover:bg-white/40 focus-visible:outline-2 focus-visible:outline-white">×</button>
+                <h2 id="basketballModalTitle" class="px-7 text-[10px] uppercase tracking-wider text-[#b0c8dd] sm:text-xs">${escape(data.tournament || 'Basketball')} · ${escape(title)}</h2>
+                <div class="mt-2 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 text-sm font-bold sm:gap-4 sm:text-lg"><span class="min-w-0 break-words text-right">${escape(data.team1)}</span><span class="whitespace-nowrap rounded-md bg-white/10 px-3 py-1 text-[22px] font-extrabold tabular-nums text-[#ff4d4d] sm:text-[28px]" aria-label="Total score">${escape(data.home?.current ?? data.home?.display ?? '—')} - ${escape(data.away?.current ?? data.away?.display ?? '—')}</span><span class="min-w-0 break-words text-left">${escape(data.team2)}</span></div>
+                <p class="mt-2 text-xs font-bold text-[#ff4d4d]">● ${escape(scoreStatus === 'Live' ? data.minutes || data.phase || scoreStatus : scoreStatus || '—')}</p>
+                <div class="mt-3 flex flex-wrap justify-center gap-2 text-[11px] font-bold sm:text-[13px]">${periods.slice(1).map((period) => `<span class="rounded-md border px-2 py-1 ${period.key === `Q${currentQuarter}` || (inOvertime && period.key === periods.at(-1).key) ? 'border-[#ff4d4d] bg-white/20 text-white' : 'border-transparent bg-white/10 text-[#b0c8dd]'}">${escape(data.periods?.[period.scoreKey] ?? (period.key.startsWith('Q') ? period.key : period.label))}: ${escape(data.home?.[period.scoreKey] ?? '—')}-${escape(data.away?.[period.scoreKey] ?? '—')}</span>`).join('')}</div>
+            </header>
+            <div role="tablist" aria-label="Statistics periods" class="flex shrink-0 overflow-x-auto border-b border-[#d1dbe6] bg-[#f0f4f8] [scrollbar-width:thin] dark:border-[#2a3f50] dark:bg-[#203544]">${periods.map((period, index) => `<button type="button" role="tab" id="basketball-stat-tab-${index}" aria-controls="basketball-stat-period" aria-selected="${period.key === activeModal.period}" data-action="stats-period" data-period="${escape(period.key)}" class="min-w-20 flex-1 whitespace-nowrap border-b-[3px] px-3 py-3 text-[11px] font-bold uppercase tracking-wide transition hover:bg-[#e8f2fc] hover:text-[#0b2a40] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[#5a7d99] dark:hover:bg-[#2a4050] dark:hover:text-white ${period.key === activeModal.period ? 'border-[#0b2a40] bg-white text-[#0b2a40] dark:border-sky-300 dark:bg-[#1a2a38] dark:text-white' : 'border-transparent text-[#5a7d99] dark:text-[#b0c8dd]'}">${escape(period.label)}</button>`).join('')}</div>
+            <div id="basketball-stat-period" role="tabpanel" aria-labelledby="basketball-stat-tab-${periods.indexOf(selectedPeriod)}" data-basketball-statistics-scroll class="min-h-0 overflow-x-hidden overflow-y-auto overscroll-contain bg-[#f7f9fc] p-3 sm:p-5 dark:bg-[#162532]">
+                ${selectedPeriod.groups.map((group) => `<section class="mb-4 rounded-lg border border-[#e3ecf5] bg-white p-3 shadow-sm last:mb-0 sm:p-4 dark:border-[#2a3f50] dark:bg-[#1a2a38]"><h3 class="mb-3 border-b border-[#edf2f7] pb-2 text-[11px] font-bold uppercase tracking-wide text-[#5a7d99] dark:border-[#2a3f50] dark:text-[#b0c8dd]">${escape(group.groupName === 'Other' ? 'Other Stats' : group.groupName)}</h3>
+                    ${(group.statisticsItems ?? []).map((item) => {
+                        const values = ['home', 'away'].map((side) => {
+                            const displayed = [item[side], item[`${side}Value`]].find((value) => (typeof value === 'string' && value.trim() !== '' && !/^(?:null|undefined|NaN|Infinity|N\/A|[-—–])$/i.test(value.trim())) || (typeof value === 'number' && Number.isFinite(value)));
+                            const text = String(displayed ?? '—');
+                            const percentage = text.match(/(-?\d+(?:[.,]\d+)?)\s*%/);
+                            const raw = item[`${side}Value`];
+                            const numeric = percentage ? Number(percentage[1].replace(',', '.')) : typeof raw === 'number' && Number.isFinite(raw) ? raw : /^-?\d+(?:[.,]\d+)?$/.test(String(raw)) ? Number(String(raw).replace(',', '.')) : /^-?\d+(?:[.,]\d+)?$/.test(text) ? Number(text.replace(',', '.')) : null;
+                            return { text, numeric };
+                        });
+                        const comparable = values.every((value) => value.numeric !== null && Number.isFinite(value.numeric));
+                        return `<div class="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] items-center gap-2 py-1.5 text-xs sm:text-[13px]">${values.map((value, index) => `${index === 1 ? `<span class="min-w-0 break-words text-center font-medium text-[#5a7d99] dark:text-[#b0c8dd]">${escape(item.name)}</span>` : ''}<span class="min-w-0 break-words tabular-nums ${index === 0 ? 'justify-self-start text-left' : 'justify-self-end text-right'} ${comparable && value.numeric > values[1 - index].numeric ? 'highlight font-extrabold text-[#0b2a40] dark:text-white' : comparable && value.numeric < values[1 - index].numeric ? 'dimmed font-medium text-[#8aaccc] dark:text-slate-400' : 'font-semibold text-[#5a7d99] dark:text-[#b0c8dd]'}">${escape(value.text)}</span>`).join('')}</div>`;
+                    }).join('') || '<p class="py-2 text-center text-xs text-[#8aaccc]">No statistics available for this section.</p>'}
+                </section>`).join('') || '<p class="rounded-lg border border-[#e3ecf5] bg-white p-5 text-center text-sm text-[#5a7d99] dark:border-[#2a3f50] dark:bg-[#1a2a38] dark:text-[#b0c8dd]">No statistics available for this period yet.</p>'}
+            </div>`;
         } else if (activeModal.action === 'prediction') {
             const data = parse(row.dataset.basketballPrediction); title = 'Match Predictions';
             const total = Object.values(data.counts ?? {}).reduce((sum, count) => sum + Number(count), 0);
@@ -169,8 +220,9 @@ if (dashboard) {
             }).join('')}</tbody></table></div><a class="mt-4 inline-block rounded-xl bg-[#0b2a40] px-4 py-2 text-sm font-bold text-white" href="${escape(row.dataset.basketballMatchUrl)}">Match markets &amp; charts →</a>`;
         }
         hideOddsTooltip();
-        panel.innerHTML = `<div class="mb-5 flex items-center justify-between gap-3"><h2 id="basketballModalTitle" class="text-lg font-extrabold">${escape(title)}</h2><button type="button" data-action="close-modal" aria-label="Close" class="px-2 text-2xl">×</button></div>${body}`;
-        panel.scrollTop = scrollTop;
+        panel.dataset.statistics = String(activeModal.action === 'stats');
+        panel.innerHTML = activeModal.action === 'stats' ? body : `<div class="mb-5 flex items-center justify-between gap-3"><h2 id="basketballModalTitle" class="text-lg font-extrabold">${escape(title)}</h2><button type="button" data-action="close-modal" aria-label="Close" class="px-2 text-2xl">×</button></div>${body}`;
+        (panel.querySelector('[data-basketball-statistics-scroll]') ?? panel).scrollTop = scrollTop;
         modal.classList.remove('hidden');
         modal.classList.add('flex');
         document.body.classList.add('!overflow-hidden');
@@ -196,6 +248,13 @@ if (dashboard) {
         if (button.dataset.requiresLogin === 'true') { window.location.assign(button.dataset.loginUrl); return; }
         const action = button.dataset.action;
         if (action === 'close-modal') { closeModal(); return; }
+        if (action === 'stats-period' && activeModal?.action === 'stats') {
+            activeModal.period = button.dataset.period;
+            dashboard.querySelector('[data-basketball-statistics-scroll]').scrollTop = 0;
+            renderModal();
+            dashboard.querySelector('[data-action="stats-period"][aria-selected="true"]')?.focus({ preventScroll: true });
+            return;
+        }
         const row = button.closest('[data-match-id]');
         if (action === 'open-match') { window.location.assign(row.dataset.basketballMatchUrl); return; }
         if (['stats', 'prediction', 'market'].includes(action)) { activeModal = { action, matchId: row.dataset.matchId, marketId: row.dataset.marketId ?? null }; renderModal(); return; }
