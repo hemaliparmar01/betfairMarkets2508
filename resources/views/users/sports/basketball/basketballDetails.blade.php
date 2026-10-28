@@ -45,7 +45,7 @@
                 <span class="flex min-w-0 items-center justify-end gap-1.5 text-right font-bold">@if ($event['home_team_logo'] ?? null)<img src="{{ $event['home_team_logo'] }}" alt="" class="size-5 shrink-0 object-contain" onerror="this.remove()">@endif<span class="break-words">{{ $event['team1'] }}</span></span>
                 <strong data-score-status="{{ $event['status'] }}" class="match-score text-center text-xs">{{ $event['score'] }}</strong>
                 <span class="flex min-w-0 items-center gap-1.5 text-left"><span class="break-words">{{ $event['team2'] }}</span>@if ($event['away_team_logo'] ?? null)<img src="{{ $event['away_team_logo'] }}" alt="" class="size-5 shrink-0 object-contain" onerror="this.remove()">@endif</span>
-                @if ($quarterScores !== [])<span aria-label="Completed quarter scores" class="col-span-3 whitespace-nowrap text-center text-[11px] font-normal leading-3 text-[#5a7d99] dark:text-[#8aaccc]">{{ implode(' | ', $quarterScores) }}</span>@endif
+                @if ($quarterScores !== [])<span aria-label="Completed quarter scores" class="col-span-3 whitespace-nowrap text-center text-[11px] font-normal leading-3 text-[#000000]">{{ implode(' | ', $quarterScores) }}</span>@endif
             </button>
             <div class="flex items-center justify-center gap-4">
                 <button type="button" class="cursor-pointer text-[#46799a] disabled:cursor-not-allowed disabled:opacity-30"

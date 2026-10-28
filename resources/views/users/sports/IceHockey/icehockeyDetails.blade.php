@@ -17,15 +17,31 @@
             if ($event['prediction_has_draw']) { $choices['X'] = 'Tie (60 min)'; }
             $prediction = ['match_id' => (string) $event['sportsApiPro_match_id'], 'choices' => $choices, 'counts' => $event['prediction_counts'], 'vote' => $event['prediction_vote'], 'locked' => $event['status'] !== 'Prematch'];
             $highlight = (int) ($event['incident_highlight_until'] ?? 0) > time();
+            $completedPeriods = $event['status'] === 'Finished' ? 3 : 0;
+            if ($event['status'] === 'Live') {
+                $completedPeriods = ['1st Period' => 0, '2nd Period' => 1, '3rd Period' => 2, 'Overtime' => 3, 'Shootout' => 3][$event['minutes_status'] ?? ''] ?? 0;
+                if (($event['minutes_status'] ?? '') === 'Period Break' && preg_match('/\b([1-3])(?:st|nd|rd)?\s*(?:period|break|intermission)\b|\bP([1-3])\b/i', (string) ($event['match_status_description'] ?? ''), $periodMatch)) {
+                    $completedPeriods = (int) ($periodMatch[1] ?: $periodMatch[2]);
+                }
+            }
+            $periodScores = [];
+            for ($period = 1; $period <= $completedPeriods; $period++) {
+                $homePeriodScore = $event['home_score_data']['period'.$period] ?? null;
+                $awayPeriodScore = $event['away_score_data']['period'.$period] ?? null;
+                if (is_numeric($homePeriodScore) && is_numeric($awayPeriodScore) && $homePeriodScore >= 0 && $awayPeriodScore >= 0) {
+                    $periodScores[] = 'P'.$period.': '.$homePeriodScore.'-'.$awayPeriodScore;
+                }
+            }
         @endphp
         <div data-icehockey-match-url="{{ route('icehockey.matches.show', $event['sportsApiPro_match_id']) }}" data-match-id="{{ $event['sportsApiPro_match_id'] }}" data-match-status="{{ $event['status'] }}" data-icehockey-stats="{{ json_encode(['team1' => $event['team1'], 'team2' => $event['team2'], 'home' => $event['home_score_data'] ?? [], 'away' => $event['away_score_data'] ?? [], 'statistics' => $event['live_stats'] ?? []]) }}" data-icehockey-prediction="{{ json_encode($prediction) }}" @if ($highlight) data-incident-highlight-until="{{ $event['incident_highlight_until'] }}" @endif
             @class(['event-row my-2 grid min-w-[1060px] grid-cols-[28px_100px_minmax(460px,1fr)_82px_310px] items-center gap-3 rounded-xl border border-[#e6eff8] bg-[#fafdff] px-3 py-2.5 text-[#12324a] hover:bg-[#f2f8ff] dark:border-[#2a3f50] dark:bg-[#1a2a38] dark:text-[#e8edf2]', '!bg-[#ffe4ec] dark:!bg-[#4a2633]' => $highlight])>
             <button type="button" data-action="favorite" data-requires-login="{{ $authenticated ? 'false' : 'true' }}" data-login-url="{{ route('login') }}" data-sport="icehockey" data-event-key="{{ $event['unique_key'] }}" data-event-id="{{ $event['sportsApiPro_match_id'] }}" data-team1="{{ $event['team1'] }}" data-team2="{{ $event['team2'] }}" data-start-timestamp="{{ $event['timestamp'] }}" aria-pressed="{{ $event['is_favorite'] ? 'true' : 'false' }}" @class(['fav-star cursor-pointer border-0 bg-transparent text-lg text-[#b8ccdf]', '!text-[#e6b422]' => $event['is_favorite']])><i class="fas fa-star"></i></button>
             <span class="text-center text-xs font-semibold {{ $event['status'] === 'Live' ? 'text-[#dc2e08]' : 'text-[#5a7d99]' }}">{{ $event['minutes'] }}@if ($highlight)<strong class="block text-red-600" data-incident-indicator>{{ $event['last_incident']['text'] ?? 'Update' }}</strong>@endif</span>
-            <button type="button" data-action="open-match" class="grid min-w-0 grid-cols-[minmax(0,1fr)_210px_minmax(0,1fr)] items-center gap-2 text-sm">
+            <button type="button" data-action="open-match" class="grid min-w-0 grid-cols-[minmax(0,1fr)_210px_minmax(0,1fr)] items-center gap-x-2 gap-y-0.5 text-sm">
                 <span class="flex min-w-0 items-center justify-end gap-1.5 text-right font-bold">@if ($event['home_team_logo'] ?? null)<img src="{{ $event['home_team_logo'] }}" alt="" class="size-5 shrink-0 object-contain" onerror="this.remove()">@endif<span class="break-words">{{ $event['team1'] }}</span></span>
                 <strong data-score-status="{{ $event['status'] }}" class="match-score text-center text-xs">{{ $event['score'] }}</strong>
                 <span class="flex min-w-0 items-center gap-1.5 text-left"><span class="break-words">{{ $event['team2'] }}</span>@if ($event['away_team_logo'] ?? null)<img src="{{ $event['away_team_logo'] }}" alt="" class="size-5 shrink-0 object-contain" onerror="this.remove()">@endif</span>
+                @if ($periodScores !== [])<span aria-label="Completed period scores" class="col-span-3 whitespace-nowrap text-center text-[11px] font-normal leading-3 text-[#000000]">{{ implode(' | ', $periodScores) }}</span>@endif
             </button>
             <div class="flex items-center justify-center gap-4">
                 <button type="button" class="cursor-pointer text-[#46799a] disabled:cursor-not-allowed disabled:opacity-30"
