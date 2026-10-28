@@ -21,6 +21,10 @@ Artisan::command('inspire', function () {
 Schedule::command('sports:process-match-backups --scheduled')->everyMinute()->withoutOverlapping(5);
 
 Schedule::call(function () {
+    app(FootballSyncController::class)->queueMatchStatistics();
+})->name('football-prematch-statistics')->everyMinute()->withoutOverlapping(2);
+
+Schedule::call(function () {
     app(FootballV6Stats::class)->queueDueMatches();
 })->name('football-v6-live-statistics')->everyMinute()->withoutOverlapping(2);
 

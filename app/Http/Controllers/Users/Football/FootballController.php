@@ -223,7 +223,7 @@ class FootballController extends Controller
     public function statistics(string $matchId): JsonResponse
     {
         abort_unless(checkAuthAndSubscription()['display_odds'], 403, __('An active 7-day free trial or paid subscription is required to view statistics.'));
-        $match = app(FootballSyncController::class)->loadMatchStatistics($matchId, request()->input('scope') !== 'live');
+        $match = array_find(getVisibleSportsMatches('Football:matches'), static fn (array $match): bool => (string) ($match['sportsApiPro_match_id'] ?? '') === $matchId);
         abort_if($match === null, 404);
         $event = array_replace($match, [
             'status' => $match['result_status'],

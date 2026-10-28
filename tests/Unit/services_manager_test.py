@@ -31,18 +31,16 @@ class ServiceManagerTest(unittest.TestCase):
 
     def test_launchd_definition_and_restart_policy(self):
         job = plistlib.loads(self.manager.definition('betfair', self.manager.instances['betfair']))
-        self.assertEqual(['/bin/sh', '-d', 'memory_limit=-1', str(self.root / 'artisan'), 'betfair:listen'], job['ProgramArguments'])
+        self.assertEqual(['/bin/sh', str(self.root / 'artisan'), 'betfair:listen'], job['ProgramArguments'])
         self.assertTrue(job['KeepAlive'])
         self.assertEqual(120, job['ExitTimeOut'])
         self.assertEqual(10, job['ThrottleInterval'])
         self.assertTrue(job['RunAtLoad'])
 
-    def test_all_managed_php_processes_start_without_a_php_memory_cap(self):
+    def test_managed_processes_inherit_php_and_queue_memory_defaults(self):
         for name, spec in self.manager.instances.items():
             job = plistlib.loads(self.manager.definition(name, spec))
-            self.assertEqual(['-d', 'memory_limit=-1'], job['ProgramArguments'][1:3])
-            if spec['command'][0] == 'queue:work':
-                self.assertIn('--memory=0', job['ProgramArguments'])
+            self.assertEqual(['/bin/sh', str(self.root / 'artisan')] + spec['command'], job['ProgramArguments'])
 
     def test_production_scheduler_enabled_and_realtime_workers_configured(self):
         with patch.object(module.platform, 'system', return_value='Linux'), patch.dict(os.environ, {'SERVICES_ENV': 'production'}):
@@ -158,15 +156,15 @@ class ServiceManagerTest(unittest.TestCase):
             self.assertIn('--no-interaction', plistlib.loads(destination.read_bytes())['ProgramArguments'])
             self.assertEqual('bootstrap', run.call_args_list[-1].args[0][1])
 
-    def test_reload_applies_memory_flags_to_verified_legacy_mac_definition(self):
+    def test_reload_removes_memory_overrides_from_verified_legacy_mac_definition(self):
         destination = self.root / 'legacy.plist'
         job = plistlib.loads(self.manager.definition('betfair', self.manager.instances['betfair']))
-        job['ProgramArguments'] = ['/bin/sh', str(self.root / 'artisan'), 'betfair:listen']
+        job['ProgramArguments'] = ['/bin/sh', '-d', 'memory_limit=-1', str(self.root / 'artisan'), 'betfair:listen']
         destination.write_bytes(plistlib.dumps(job))
         with patch.object(self.manager, 'inspect', return_value=(True, 'running')), patch.object(self.manager, 'verify_existing') as verify, patch.object(self.manager, 'destination', return_value=destination), patch.object(self.manager, 'reject_unmanaged'), patch.object(module, 'run'):
             self.manager.execute('reload', 'betfair')
             verify.assert_called()
-        self.assertIn('memory_limit=-1', plistlib.loads(destination.read_bytes())['ProgramArguments'])
+        self.assertEqual(['/bin/sh', str(self.root / 'artisan'), 'betfair:listen'], plistlib.loads(destination.read_bytes())['ProgramArguments'])
         registry = json.loads((self.manager.state / 'managed-local.json').read_text())
         self.assertIn('definition_hash', registry['betfair'])
         with patch.object(self.manager, 'inspect', return_value=(True, 'running')), patch.object(self.manager, 'verify_existing'), patch.object(self.manager, 'destination', return_value=destination), patch.object(module, 'run'):

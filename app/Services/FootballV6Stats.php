@@ -52,7 +52,7 @@ class FootballV6Stats
                     } finally {
                         $lock->release();
                     }
-                })->name('Football V6 live statistics '.$matchId)->onQueue('sports-statistics')->delay($delay)
+                })->name('Football V6 live statistics '.$matchId)->onConnection('sports-realtime')->onQueue('sports-statistics')->delay($delay)
                     ->catch(static function (Throwable $e) use ($key, $owner): void {
                         Cache::store('redis')->restoreLock($key, $owner)->release();
                         Log::warning('Football V6 statistics job failed', ['exception' => $e::class]);

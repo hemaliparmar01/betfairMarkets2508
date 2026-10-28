@@ -864,12 +864,57 @@ class FootballSyncController extends Controller
         return true;
     }
 
+    public function queueMatchStatistics(): void
+    {
+        $queued = [];
+        foreach (json_decode(Redis::get('Football:matches') ?? '[]', true) ?? [] as $match) {
+            $matchId = (string) ($match['sportsApiPro_match_id'] ?? '');
+            if (! ctype_digit($matchId) || (int) $matchId <= 0 || isset($queued[$matchId]) || ! in_array($match['result_status'] ?? '', ['Prematch', 'Live'], true) || MatchBackup::isHidden($match, 'football')) {
+                continue;
+            }
+            $queued[$matchId] = true;
+            $due = array_any(['overview', 'pregame-form', 'h2h', 'streaks', 'home-season', 'away-season'], static function (string $section) use ($match): bool {
+                $attempt = $match['statistics_requests'][$section] ?? [];
+
+                return ($attempt['at'] ?? 0) <= microtime(true) - (($attempt['available'] ?? false) ? 1800 : 120);
+            });
+            if (! $due) {
+                continue;
+            }
+            $key = 'Football:statistics:'.$matchId.':pending';
+            $lock = Cache::store('redis')->lock($key, 3600);
+            if (! $lock->get()) {
+                continue;
+            }
+            $owner = $lock->owner();
+            try {
+                dispatch(static function () use ($matchId, $key, $owner): void {
+                    $lock = Cache::store('redis')->restoreLock($key, $owner);
+                    try {
+                        if ($lock->isOwnedByCurrentProcess()) {
+                            app(self::class)->loadMatchStatistics($matchId);
+                        }
+                    } finally {
+                        $lock->release();
+                    }
+                })->name('Football pre-match statistics '.$matchId)->onConnection('sports-realtime')->onQueue('sports-prematch-statistics')->delay(abs(crc32($matchId)) % 50)
+                    ->catch(static function (Throwable $exception) use ($key, $owner): void {
+                        Cache::store('redis')->restoreLock($key, $owner)->release();
+                        Log::warning('Football pre-match statistics job failed', ['exception' => $exception::class]);
+                    });
+            } catch (Throwable $exception) {
+                $lock->release();
+                throw $exception;
+            }
+        }
+    }
+
     /** @return array<string, mixed>|null */
     public function loadMatchStatistics(string $matchId, bool $includePrematch = true): ?array
     {
-        $match = array_find(getVisibleSportsMatches('Football:matches') ?? [], static fn (array $match): bool => (string) ($match['sportsApiPro_match_id'] ?? '') === $matchId);
-        if ($match === null) {
-            return null;
+        $match = array_find(json_decode(Redis::get('Football:matches') ?? '[]', true) ?? [], static fn (array $match): bool => (string) ($match['sportsApiPro_match_id'] ?? '') === $matchId && ! MatchBackup::isHidden($match, 'football'));
+        if ($match === null || ! app()->runningInConsole()) {
+            return $match;
         }
         $lock = Cache::store('redis')->lock('Football:statistics:'.$matchId.':fetch', 60);
         if (! $lock->get()) {
@@ -878,8 +923,8 @@ class FootballSyncController extends Controller
         try {
             $responses = [];
             $attempts = [];
-            $sections = $includePrematch ? ['pregame-form', 'h2h', 'streaks'] : [];
-            if (($match['result_status'] ?? '') !== 'Prematch') {
+            $sections = $includePrematch ? ['overview', 'pregame-form', 'h2h', 'streaks', 'home-season', 'away-season'] : [];
+            if (! $includePrematch && ($match['result_status'] ?? '') !== 'Prematch') {
                 $sections[] = 'statistics';
             }
             foreach ($sections as $section) {
@@ -893,11 +938,31 @@ class FootballSyncController extends Controller
                 }
                 $requestedAt = microtime(true);
                 $diagnostics = null;
+                $url = 'https://api.sportsapipro.com/v2/football/match/'.$matchId.($section === 'overview' ? '' : '/'.$section);
+                if (in_array($section, ['home-season', 'away-season'], true)) {
+                    $overview = $responses['overview']['data'] ?? $match['prematch_statistics']['overview'] ?? [];
+                    $side = $section === 'home-season' ? 'home' : 'away';
+                    $teamId = $overview[$side.'Team']['id'] ?? $match[$side.'_team_id'] ?? null;
+                    $tournamentId = $overview['tournament']['uniqueTournament']['id'] ?? null;
+                    $seasonId = $overview['season']['id'] ?? null;
+                    if (! is_numeric($teamId) || (int) $teamId <= 0 || ! is_numeric($tournamentId) || (int) $tournamentId <= 0 || ! is_numeric($seasonId) || (int) $seasonId <= 0) {
+                        $attempts[$section] = ['at' => $requestedAt, 'available' => false];
+
+                        continue;
+                    }
+                    $url = 'https://api.sportsapipro.com/v2/football/teams/'.(int) $teamId.'/tournament/'.(int) $tournamentId.'/season/'.(int) $seasonId.'/statistics?type=overall';
+                }
                 try {
-                    $response = ApiCall('https://api.sportsapipro.com/v2/football/match/'.$matchId.'/'.$section,
-                        ['x-api-key' => GetSportApiProKey()], ['connect_timeout' => 3, 'timeout' => 6], $diagnostics);
+                    $response = $this->requestFootballStatistics($url, $diagnostics, in_array($section, ['overview', 'home-season', 'away-season'], true) ? 3 : 6);
                     $payload = $response['data'] ?? $response;
+                    if ($section === 'overview') {
+                        $payload = $response['match'] ?? $payload['match'] ?? $payload['event'] ?? $payload;
+                    } elseif (in_array($section, ['home-season', 'away-season'], true)) {
+                        $payload = $payload['statistics'] ?? [];
+                    }
                     $expectedKeys = match ($section) {
+                        'overview' => ['venue', 'referee', 'startTimestamp', 'roundInfo', 'Info', 'season'],
+                        'home-season', 'away-season' => ['avgRating', 'matches', 'awardedMatches'],
                         'statistics' => ['statistics'],
                         'pregame-form' => ['homeTeam', 'awayTeam'],
                         'h2h' => ['teamDuel', 'managerDuel'],
@@ -906,8 +971,17 @@ class FootballSyncController extends Controller
                     $available = is_array($response) && ($response['success'] ?? true) !== false
                         && is_array($payload) && array_any($expectedKeys, static fn (string $key): bool => array_key_exists($key, $payload))
                         && (! isset($response['matchId']) || (string) $response['matchId'] === $matchId)
+                        && ($section !== 'overview' || ! isset($payload['id']) || (string) $payload['id'] === $matchId)
                         && (! isset($diagnostics['http_status']) || ($diagnostics['http_status'] >= 200 && $diagnostics['http_status'] < 300));
                     if ($available) {
+                        if ($section === 'overview') {
+                            $payload = array_intersect_key($payload, array_flip(['venue', 'referee', 'startTimestamp', 'roundInfo', 'Info', 'season', 'tournament', 'homeTeam', 'awayTeam']));
+                            foreach (['homeTeam', 'awayTeam'] as $team) {
+                                $payload[$team] = array_intersect_key(is_array($payload[$team] ?? null) ? $payload[$team] : [], array_flip(['id', 'name']));
+                            }
+                        } elseif (in_array($section, ['home-season', 'away-season'], true)) {
+                            $payload = array_intersect_key($payload, array_flip($expectedKeys));
+                        }
                         $responses[$section] = ['data' => $payload, 'at' => $requestedAt];
                     } else {
                         Log::warning('Football statistics response unavailable', ['match_id' => $matchId, 'section' => $section, 'api' => $diagnostics]);
@@ -922,9 +996,9 @@ class FootballSyncController extends Controller
                 return $match;
             }
 
-            return withRedisLock('Football:matches', function () use ($matchId, $responses, $attempts): ?array {
-                $matches = getInRedis('Football:matches') ?? [];
-                $key = array_find_key($matches, static fn (array $match): bool => (string) ($match['sportsApiPro_match_id'] ?? '') === $matchId);
+            $updatedMatch = withRedisLock('Football:matches', function () use ($matchId, $responses, $attempts): ?array {
+                $matches = json_decode(Redis::get('Football:matches') ?? '[]', true) ?? [];
+                $key = array_find_key($matches, static fn (array $match): bool => (string) ($match['sportsApiPro_match_id'] ?? '') === $matchId && ! MatchBackup::isHidden($match, 'football'));
                 if ($key === null) {
                     return null;
                 }
@@ -936,13 +1010,24 @@ class FootballSyncController extends Controller
                     }
                 }
                 $matches[$key]['statistics_requests'] = array_replace($matches[$key]['statistics_requests'] ?? [], $attempts);
-                storeInRedis('Football:matches', $matches, 10);
+                Redis::set('Football:matches', json_encode($matches));
+                Redis::expire('Football:matches', 600);
 
                 return $matches[$key];
             });
+            if ($updatedMatch !== null) {
+                Event::dispatch(new FootballSportsScoreUpdated);
+            }
+
+            return $updatedMatch;
         } finally {
             $lock->release();
         }
+    }
+
+    protected function requestFootballStatistics(string $url, ?array &$diagnostics = null, int $timeout = 6): mixed
+    {
+        return ApiCall($url, ['x-api-key' => GetSportApiProKey()], ['connect_timeout' => 3, 'timeout' => $timeout], $diagnostics);
     }
 
     /** @param array<string, mixed> $payload */

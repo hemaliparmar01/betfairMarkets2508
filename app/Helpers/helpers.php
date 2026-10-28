@@ -375,6 +375,13 @@ if (! function_exists('ApiCall')) {
             $url .= (str_contains($url, '?') ? '&' : '?').$query;
         }
 
+        $host = strtolower((string) parse_url($url, PHP_URL_HOST));
+        if (! app()->runningInConsole() && preg_match('/(^|\.)(sportsapipro\.com|betfair-odds\.com)$/', $host)) {
+            $diagnostics = apiResponseLogContext(['url' => $url, 'http_status' => null, 'skipped' => 'browser_request']);
+
+            return null;
+        }
+
         $isSportsApiPro = parse_url($url, PHP_URL_HOST) === 'api.sportsapipro.com';
         $requestNumber = 0;
         if ($isSportsApiPro) {

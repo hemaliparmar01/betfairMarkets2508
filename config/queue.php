@@ -15,11 +15,6 @@ return [
 
     'default' => env('QUEUE_CONNECTION', 'database'),
 
-    'worker' => [
-        'memory' => (int) env('QUEUE_WORKER_MEMORY', 0),
-        'php_memory_limit' => env('QUEUE_WORKER_PHP_MEMORY_LIMIT', '-1'),
-    ],
-
     /*
     |--------------------------------------------------------------------------
     | Queue Connections

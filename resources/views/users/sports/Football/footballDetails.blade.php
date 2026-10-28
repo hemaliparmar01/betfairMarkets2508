@@ -184,8 +184,7 @@
                     class="event-actions flex w-[148px] items-center justify-end [gap:2px] max-[1024px]:w-[148px] max-[1024px]:justify-start max-[480px]:w-full max-[480px]:justify-center">
                     <button type="button"
                         class="live-stat-icon bg-transparent border-0 [color:#d63e3e] [font-size:15px] [padding:4px_4px] cursor-pointer [border-radius:8px] [width:28px] text-center [transition:0.2s] disabled:cursor-not-allowed disabled:opacity-30 dark:[color:#6a8aa8] dark:[&:hover]:[background:#2a4050] dark:[&:hover]:[color:#e8edf2] [&:hover]:[background:#dce8f5] [&:hover]:[color:#b52a2a]"
-                        @if ($checkAuthAndSubscription['display_odds'])
-                            data-statistics-url="{{ route('football.matches.statistics', $event['sportsApiPro_match_id']) }}" data-action="livestats" data-match-id="{{ $event['sportsApiPro_match_id'] }}"
+                        @if ($checkAuthAndSubscription['display_odds']) data-action="livestats" data-match-id="{{ $event['sportsApiPro_match_id'] }}"
                             aria-expanded="false" aria-controls="live-stats-{{ $event['sportsApiPro_match_id'] }}"
                             title="Live Statistics"
                         @else
@@ -197,8 +196,7 @@
                     <button type="button"
                         class="action-icon w-7 cursor-pointer rounded-lg border-0 bg-transparent px-1 py-1 text-center text-[15px] text-[#427292] transition hover:bg-[#dce8f5] hover:text-[#0b2a40] disabled:cursor-not-allowed disabled:opacity-30 dark:text-[#6a8aa8] dark:hover:bg-[#2a4050] dark:hover:text-[#e8edf2]"
                         aria-label="{{ __('Quick Stats') }}"
-                        @if ($checkAuthAndSubscription['display_odds'])
-                            data-statistics-url="{{ route('football.matches.statistics', $event['sportsApiPro_match_id']) }}" data-action="quickstats" data-match-id="{{ $event['sportsApiPro_match_id'] }}"
+                        @if ($checkAuthAndSubscription['display_odds']) data-action="quickstats" data-match-id="{{ $event['sportsApiPro_match_id'] }}"
                             aria-expanded="false" aria-controls="quick-stats-{{ $event['sportsApiPro_match_id'] }}"
                             title="Quick Stats"
                         @else
@@ -213,7 +211,7 @@
                     <button type="button"
                         class="action-icon bg-transparent border-0 [color:#427292] [font-size:15px] [padding:4px_4px] cursor-pointer [border-radius:8px] [width:28px] text-center [transition:0.2s] dark:[color:#6a8aa8] disabled:cursor-not-allowed disabled:opacity-30 dark:[&:hover]:[background:#2a4050] dark:[&:hover]:[color:#e8edf2] [&:hover]:[background:#dce8f5] [&:hover]:[color:#0b2a40] [&.disabled]:[opacity:0.3] [&.disabled]:[pointer-events:none]"
                         @if ($checkAuthAndSubscription['display_odds'])
-                            data-action="stats" data-match-id="{{ $event['sportsApiPro_match_id'] }}" data-statistics-url="{{ route('football.matches.statistics', $event['sportsApiPro_match_id']) }}" aria-expanded="false" aria-controls="statistics-{{ $event['sportsApiPro_match_id'] }}" title="Statistics"
+                            data-action="stats" data-match-id="{{ $event['sportsApiPro_match_id'] }}" aria-expanded="false" aria-controls="statistics-{{ $event['sportsApiPro_match_id'] }}" title="Statistics"
                         @else
                             disabled title="Statistics (requires subscription)"
                         @endif
@@ -380,8 +378,6 @@
                     class="fixed inset-0 z-[80] hidden overflow-hidden bg-slate-950/60 p-3 backdrop-blur-sm sm:p-6">
                     <div
                         class="relative mx-auto my-4 w-full max-w-4xl max-h-[calc(100dvh-3.5rem)] overflow-x-hidden overflow-y-auto overscroll-contain rounded-2xl sm:max-h-[calc(100dvh-7rem)] border border-[#dbe7f2] bg-white shadow-2xl dark:border-[#2a3f50] dark:bg-[#162532] sm:my-8">
-                        <div class="px-4 pt-3 text-xs text-slate-500" data-statistics-loading role="status" hidden>{{ __('Loading statistics…') }}</div>
-                        <div class="px-4 pt-3 text-xs text-amber-600" data-statistics-error role="alert" hidden></div>
                         <div
                             class="relative bg-gradient-to-r from-[#153f5c] to-[#2478a8] px-4 py-5 text-white sm:px-7">
                             <button type="button" data-close-live-stats

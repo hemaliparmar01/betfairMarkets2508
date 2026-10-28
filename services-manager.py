@@ -80,9 +80,7 @@ class Manager:
         directory = Path(spec.get('working_directory', self.root))
         cwd = str((directory if directory.is_absolute() else self.root / directory).resolve())
         command = list(spec['command'])
-        if command[0] == 'queue:work' and not any(arg.startswith('--memory=') for arg in command):
-            command.append('--memory=0')
-        args = [self.php, '-d', 'memory_limit=-1', str(Path(cwd) / 'artisan')] + command
+        args = [self.php, str(Path(cwd) / 'artisan')] + command
         logs = Path(spec.get('log_directory', self.logs)).resolve()
         restart = spec.get('restart', 'always')
         if self.mac:

@@ -31,6 +31,17 @@
       ],
       "enabled": true
     },
+    "queue-sports-statistics": {
+      "command": [
+        "queue:work",
+        "sports-realtime",
+        "--queue=sports-statistics,sports-prematch-statistics",
+        "--sleep=1",
+        "--timeout=45",
+        "--tries=3"
+      ],
+      "enabled": true
+    },
     "queue-sports-images": {
       "command": [
         "queue:work",

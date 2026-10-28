@@ -3,12 +3,20 @@
 namespace Tests\Feature;
 
 use App\Console\Commands\ListenSportsApiPro;
+use App\Events\FootballSportsScoreUpdated;
 use App\Events\TennisSportsScoreUpdated;
 use App\Http\Controllers\Users\Football\FootballSyncController;
+use App\Models\Customer;
 use App\Models\FootballMatch;
+use App\Services\CustomerAuthService;
 use App\Services\MatchBackup;
+use Illuminate\Cache\ArrayStore;
+use Illuminate\Cache\Repository;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Queue\CallQueuedClosure;
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Facades\Schema;
@@ -344,5 +352,205 @@ class MatchBackupTest extends TestCase
             storeInRedis($sport.':matches', ['match-1' => ['team1' => 'Updated']], 10, false);
             $this->assertSame('Japan', getInRedis($sport.':matches')['match-1'][$field], $sport);
         }
+    }
+
+    private function statisticsController(array $responses): FootballSyncController
+    {
+        $lock = Mockery::mock();
+        $lock->shouldReceive('get')->andReturn(true);
+        $lock->shouldReceive('release')->andReturn(true);
+        $lock->shouldReceive('block')->andReturnUsing(static fn (int $wait, callable $callback): mixed => $callback());
+        $cache = Mockery::mock();
+        $cache->shouldReceive('store')->with('redis')->andReturnSelf();
+        $cache->shouldReceive('lock')->andReturn($lock);
+        Cache::swap($cache);
+
+        return new class($responses) extends FootballSyncController
+        {
+            public array $urls = [];
+
+            public function __construct(public array $responses) {}
+
+            protected function requestFootballStatistics(string $url, ?array &$diagnostics = null, int $timeout = 6): mixed
+            {
+                $this->urls[] = $url;
+                $diagnostics = ['http_status' => 200];
+
+                return $this->responses[$url] ?? ['success' => false];
+            }
+        };
+    }
+
+    public function test_prematch_statistics_fetch_correct_season_context_cache_results_and_preserve_data_on_failure(): void
+    {
+        $base = 'https://api.sportsapipro.com/v2/football/';
+        $match = $this->match(['timestamp' => time() + 3600, 'result_status' => 'Prematch']);
+        $this->redis['Football:matches'] = json_encode(['match-1' => $match]);
+        $overview = ['id' => 123, 'startTimestamp' => $match['timestamp'], 'homeTeam' => ['id' => 10], 'awayTeam' => ['id' => 20], 'tournament' => ['id' => 42, 'uniqueTournament' => ['id' => 35]], 'season' => ['id' => 99, 'name' => '2026/27'], 'venue' => ['name' => 'Test Ground'], 'referee' => ['name' => 'Test Referee'], 'roundInfo' => ['round' => 12]];
+        $responses = [
+            $base.'match/123' => ['success' => true, 'matchId' => 123, 'match' => $overview],
+            $base.'match/123/pregame-form' => ['data' => ['homeTeam' => ['avgRating' => '7.21', 'value' => '0', 'form' => ['W', 'D', 'L']], 'awayTeam' => []]],
+            $base.'match/123/h2h' => ['data' => ['teamDuel' => ['homeWins' => 4, 'awayWins' => 3, 'draws' => 0]]],
+            $base.'match/123/streaks' => ['data' => ['general' => [], 'head2head' => []]],
+            $base.'teams/10/tournament/35/season/99/statistics?type=overall' => ['data' => ['statistics' => ['avgRating' => 7.2, 'matches' => 12, 'awardedMatches' => 0, 'shots' => 90]]],
+            $base.'teams/20/tournament/35/season/99/statistics?type=overall' => ['data' => ['statistics' => ['avgRating' => 6.9, 'matches' => 11, 'awardedMatches' => 1]]],
+        ];
+        $controller = $this->statisticsController($responses);
+
+        $loaded = $controller->loadMatchStatistics('123');
+
+        $this->assertSame(array_keys($responses), $controller->urls);
+        $this->assertSame(['avgRating' => 7.2, 'matches' => 12, 'awardedMatches' => 0], $loaded['prematch_statistics']['home-season']);
+        $this->assertSame('Test Ground', $loaded['prematch_statistics']['overview']['venue']['name']);
+        $this->assertSame(0, $loaded['prematch_statistics']['h2h']['teamDuel']['draws']);
+        $this->assertArrayNotHasKey('statistics', $loaded['statistics_requests']);
+        $this->assertSame($loaded['prematch_statistics'], $controller->loadMatchStatistics('123')['prematch_statistics']);
+        $this->assertCount(6, $controller->urls);
+        Event::assertDispatched(FootballSportsScoreUpdated::class);
+
+        foreach ($loaded['statistics_requests'] as &$attempt) {
+            $attempt['at'] = microtime(true) - 3600;
+        }
+        unset($attempt);
+        $this->redis['Football:matches'] = json_encode(['match-1' => $loaded]);
+        $controller->responses = [];
+        $retained = $controller->loadMatchStatistics('123');
+        $this->assertSame($loaded['prematch_statistics'], $retained['prematch_statistics']);
+        $this->assertFalse($retained['statistics_requests']['home-season']['available']);
+        $this->assertCount(12, $controller->urls);
+    }
+
+    public function test_prematch_statistics_reject_another_match_and_do_not_guess_season_identifiers(): void
+    {
+        $this->redis['Football:matches'] = json_encode(['match-1' => $this->match(['timestamp' => time() + 3600, 'result_status' => 'Prematch'])]);
+        $controller = $this->statisticsController(['https://api.sportsapipro.com/v2/football/match/123' => ['matchId' => 456, 'match' => ['id' => 456, 'startTimestamp' => time() + 3600, 'homeTeam' => ['id' => 10], 'awayTeam' => ['id' => 20], 'tournament' => ['uniqueTournament' => ['id' => 35]], 'season' => ['id' => 99]]]]);
+
+        $loaded = $controller->loadMatchStatistics('123');
+
+        $this->assertArrayNotHasKey('prematch_statistics', $loaded);
+        $this->assertFalse($loaded['statistics_requests']['overview']['available']);
+        $this->assertFalse($loaded['statistics_requests']['home-season']['available']);
+        $this->assertFalse($loaded['statistics_requests']['away-season']['available']);
+        $this->assertCount(4, $controller->urls);
+    }
+
+    public function test_live_statistics_scope_keeps_its_existing_endpoint_separate_from_prematch_cards(): void
+    {
+        $this->redis['Football:matches'] = json_encode(['match-1' => $this->match(['timestamp' => time() - 600])]);
+        $url = 'https://api.sportsapipro.com/v2/football/match/123/statistics';
+        $controller = $this->statisticsController([$url => ['statistics' => []]]);
+
+        $loaded = $controller->loadMatchStatistics('123', false);
+
+        $this->assertSame([$url], $controller->urls);
+        $this->assertArrayNotHasKey('prematch_statistics', $loaded);
+    }
+
+    public function test_statistics_endpoint_reads_cached_or_empty_cards_without_fetching_provider_data(): void
+    {
+        $this->withoutMiddleware(CustomerAuthService::class);
+        $this->actingAs(new Customer(['trial_ends_at' => now()->addDay()]), 'customers');
+        $controller = $this->statisticsController([]);
+        $this->app->instance(FootballSyncController::class, $controller);
+        foreach ([[], ['h2h' => ['teamDuel' => ['homeWins' => 4, 'draws' => 0, 'awayWins' => 3]]]] as $statistics) {
+            $match = $this->match(['timestamp' => time() + 3600, 'result_status' => 'Prematch', 'team1' => 'Home', 'team2' => 'Away', 'prematch_statistics' => $statistics]);
+            $this->redis['Football:matches'] = json_encode(['match-1' => $match]);
+
+            foreach (['all', 'live'] as $scope) {
+                $response = $this->getJson('/football/matches/123/statistics?scope='.$scope)->assertOk();
+                $this->assertStringContainsString('Head-to-Head', $response->json('html'));
+                $this->assertSame([], $controller->urls);
+                $this->assertArrayNotHasKey('statistics_requests', getInRedis('Football:matches')['match-1']);
+            }
+        }
+        $this->getJson('/football/matches/999/statistics')->assertNotFound();
+        $this->app['auth']->guard('customers')->forgetUser();
+        $this->getJson('/football/matches/123/statistics')->assertForbidden();
+    }
+
+    public function test_scheduler_queues_due_visible_statistics_once_and_worker_publishes_cache_updates(): void
+    {
+        Bus::fake();
+        $controller = $this->statisticsController(['https://api.sportsapipro.com/v2/football/match/123/h2h' => ['data' => ['teamDuel' => ['homeWins' => 4, 'draws' => 0, 'awayWins' => 3]]]]);
+        $this->app->instance(FootballSyncController::class, $controller);
+        $repository = new Repository(new ArrayStore);
+        $cache = Mockery::mock();
+        $cache->shouldReceive('store')->with('redis')->andReturn($repository);
+        Cache::swap($cache);
+        $fresh = array_fill_keys(['overview', 'pregame-form', 'h2h', 'streaks', 'home-season', 'away-season'], ['at' => microtime(true), 'available' => true]);
+        $match = $this->match(['timestamp' => time() + 3600, 'result_status' => 'Prematch']);
+        $this->redis['Football:matches'] = json_encode([
+            'due' => $match,
+            'duplicate' => $match,
+            'fresh' => array_replace($match, ['sportsApiPro_match_id' => '124', 'statistics_requests' => $fresh]),
+            'finished' => array_replace($match, ['sportsApiPro_match_id' => '125', 'result_status' => 'Finished']),
+            'hidden' => array_replace($match, ['sportsApiPro_match_id' => '126', 'timestamp' => time() - 10000, 'result_status' => 'Live', 'internal_backup' => ['since' => time()]]),
+            'invalid' => array_replace($match, ['sportsApiPro_match_id' => 'bad']),
+        ]);
+
+        $controller->queueMatchStatistics();
+        $controller->queueMatchStatistics();
+
+        Bus::assertDispatchedTimes(CallQueuedClosure::class, 1);
+        $job = Bus::dispatched(CallQueuedClosure::class)->first();
+        $this->assertSame('sports-prematch-statistics', $job->queue);
+        $this->assertSame('sports-realtime', $job->connection);
+        $this->assertSame([], $controller->urls);
+        $job->handle($this->app);
+        $this->assertSame(4, getInRedis('Football:matches')['due']['prematch_statistics']['h2h']['teamDuel']['homeWins']);
+        Event::assertDispatched(FootballSportsScoreUpdated::class);
+        $controller->queueMatchStatistics();
+        Bus::assertDispatchedTimes(CallQueuedClosure::class, 1);
+    }
+
+    public function test_browser_provider_requests_are_blocked_before_transport_or_quota_usage(): void
+    {
+        $property = new \ReflectionProperty($this->app, 'isRunningInConsole');
+        $previous = $property->getValue($this->app);
+        $property->setValue($this->app, false);
+        try {
+            foreach (['api.sportsapipro.com', 'v6.football.sportsapipro.com', 'betfair-odds.com'] as $host) {
+                $diagnostics = null;
+                $this->assertNull(ApiCall('https://'.$host.'/test', [], [], $diagnostics));
+                $this->assertSame('browser_request', $diagnostics['skipped']);
+            }
+            $controller = $this->statisticsController([]);
+            $this->redis['Football:matches'] = json_encode(['match-1' => $this->match(['timestamp' => time() + 3600, 'result_status' => 'Prematch'])]);
+            $this->assertNotNull($controller->loadMatchStatistics('123'));
+            $this->assertSame([], $controller->urls);
+        } finally {
+            $property->setValue($this->app, $previous);
+        }
+    }
+
+    public function test_background_statistics_preserve_timeline_markets_and_other_matches_without_database_normalization(): void
+    {
+        DB::shouldReceive('table')->never();
+        $match = $this->match(['timestamp' => time() + 3600, 'result_status' => 'Prematch', 'timeline' => ['home_goals' => [['id' => 'goal-1', 'minute' => 12]]], 'markets' => ['market-1' => ['backOdds' => 1.8]]]);
+        $other = array_replace($match, ['sportsApiPro_match_id' => '999']);
+        $this->redis['Football:matches'] = json_encode(['match-1' => $match, 'other' => $other]);
+        $controller = $this->statisticsController(['https://api.sportsapipro.com/v2/football/match/123/h2h' => ['data' => ['teamDuel' => ['homeWins' => 4, 'draws' => 0, 'awayWins' => 3]]]]);
+
+        $controller->loadMatchStatistics('123');
+
+        $stored = json_decode($this->redis['Football:matches'], true);
+        $this->assertSame($match['timeline'], $stored['match-1']['timeline']);
+        $this->assertSame($match['markets'], $stored['match-1']['markets']);
+        $this->assertSame($other, $stored['other']);
+        $this->assertSame(4, $stored['match-1']['prematch_statistics']['h2h']['teamDuel']['homeWins']);
+    }
+
+    public function test_provider_sync_cannot_be_started_from_any_sport_browser_route(): void
+    {
+        $this->withoutMiddleware(CustomerAuthService::class);
+        foreach (['football', 'cricket', 'icehockey', 'americanfootball', 'basketball', 'tennis', 'greyhounds', 'horse-racing', 'baseball'] as $sport) {
+            foreach (['betfair', 'sportsApiPro'] as $provider) {
+                foreach (['live', 'prematch'] as $mode) {
+                    $this->getJson('/'.$sport.'/sync/'.$provider.'/'.$mode.'-feed')->assertNotFound();
+                }
+            }
+        }
+        $this->getJson('/horse-racing/sportsApiPro/live-feed')->assertNotFound();
+        $this->getJson('/horse-racing/sportsApiPro/prematch-feed')->assertNotFound();
     }
 }

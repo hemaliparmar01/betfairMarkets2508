@@ -533,4 +533,44 @@ class FixturesAuditTest extends TestCase
         $html = view('users.sports.greyhounds.greyhoundsDetails', ['data' => [['country' => 'United Kingdom', 'tournament_name' => 'Hove', 'matches' => []]], 'append' => true])->render();
         $this->assertStringContainsString('United Kingdom : Hove', strip_tags($html));
     }
+
+    public function test_prematch_statistics_cards_show_provider_values_colored_form_and_zero_counts(): void
+    {
+        $event = ['team1' => 'Home', 'team2' => 'Away', 'status' => 'Prematch', 'prematch_statistics' => [
+            'pregame-form' => ['homeTeam' => ['avgRating' => '7.21', 'position' => 17, 'value' => '0', 'form' => ['W', 'D', 'L']], 'awayTeam' => ['avgRating' => '7.31', 'position' => 10, 'value' => '15', 'form' => ['L', 'W']]],
+            'h2h' => ['teamDuel' => ['homeWins' => 4, 'draws' => 0, 'awayWins' => 3]],
+            'streaks' => ['general' => [['name' => 'No wins', 'value' => '4', 'team' => 'away'], ['name' => 'More than 2.5 goals', 'value' => '9/10', 'team' => 'home']]],
+            'overview' => ['venue' => ['name' => 'Test Ground'], 'referee' => ['name' => 'Test Referee'], 'startTimestamp' => 1792843200, 'Info' => ['round' => 'Regular Season - 12']],
+            'home-season' => ['avgRating' => 7.2, 'matches' => 12, 'awardedMatches' => 0],
+        ]];
+
+        $html = view('users.sports.football.partials.statisticsContent', compact('event'))->render();
+
+        foreach (['Team Form', 'Head-to-Head', 'Team Streaks', 'Match Overview', 'Team Season Statistics', '7.21', '7.31', '9/10', 'Test Ground', 'Test Referee', 'Regular Season - 12', 'No season data available'] as $text) {
+            $this->assertStringContainsString($text, strip_tags($html));
+        }
+        foreach (['Win', 'Draw', 'Loss'] as $result) {
+            $this->assertStringContainsString('aria-label="'.$result.'"', $html);
+        }
+        $this->assertStringContainsString('bg-emerald-600', $html);
+        $this->assertStringContainsString('bg-amber-400', $html);
+        $this->assertStringContainsString('bg-red-500', $html);
+        $this->assertMatchesRegularExpression('~<dt[^>]*>Draws</dt><dd[^>]*>0</dd>~', $html);
+        $this->assertStringNotContainsString('W · D · L', $html);
+    }
+
+    public function test_prematch_statistics_empty_data_has_placeholders_and_never_renders_live_only_fields(): void
+    {
+        $event = ['team1' => '<script>Home</script>', 'team2' => 'Away', 'status' => 'Live', 'prematch_statistics' => [], 'live_stats' => ['possession' => ['home' => 60, 'away' => 40], 'expected_goals' => ['home' => 2, 'away' => 1]]];
+
+        $html = view('users.sports.football.partials.statisticsContent', compact('event'))->render();
+
+        $this->assertStringContainsString('No data available', $html);
+        $this->assertStringContainsString('No head-to-head data available', $html);
+        $this->assertStringContainsString('—', $html);
+        $this->assertStringContainsString('&lt;script&gt;Home&lt;/script&gt;', $html);
+        foreach (['<script>', 'Live statistics', 'Ball possession', 'Expected goals'] as $text) {
+            $this->assertStringNotContainsString($text, $html);
+        }
+    }
 }

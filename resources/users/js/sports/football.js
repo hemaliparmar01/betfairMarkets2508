@@ -168,7 +168,6 @@ let openPredictionMatchId = null;
 let openQuickStatsMatchId = null;
 
 let openStatisticsMatchId = null;
-const statisticsRequests = new Map();
 
 const closeStatisticsPanel = (restoreFocus = true) => {
     if (openStatisticsMatchId === null) return;
@@ -194,47 +193,9 @@ const restoreStatisticsPanel = () => {
         return;
     }
     panel.classList.remove('hidden');
-    panel.querySelector('[data-statistics-loading]').hidden = !statisticsRequests.has(openStatisticsMatchId);
     button.setAttribute('aria-expanded', 'true');
     document.body.classList.add('!overflow-hidden');
     document.documentElement.classList.add('!overflow-hidden');
-};
-
-const loadFootballStatistics = async (button, scope = 'all') => {
-    const matchId = button.dataset.matchId;
-    if (statisticsRequests.has(matchId)) {
-        await statisticsRequests.get(matchId);
-        if (scope === 'live') return;
-    }
-    const panel = () => document.querySelector(`[data-${scope === 'live' ? 'live-stats' : 'statistics'}-panel="${CSS.escape(matchId)}"]`);
-    const error = panel()?.querySelector('[data-statistics-error]');
-    if (error) error.hidden = true;
-    const url = new URL(button.dataset.statisticsUrl, window.location.origin);
-    url.searchParams.set('scope', scope);
-    const promise = (async () => {
-        try {
-            const response = await fetch(url, { headers: { Accept: 'application/json' }, cache: 'no-store' });
-            if (!response.ok) throw new Error('Statistics could not be loaded. Please try again.');
-            const result = await response.json();
-            const body = panel()?.querySelector('[data-statistics-body]');
-            if (body && scope === 'all') body.innerHTML = result.html;
-            await callFixtureData(getSelectedFilters(), { preserveLoaded: true, realtime: true });
-        } catch (requestError) {
-            const currentError = panel()?.querySelector('[data-statistics-error]');
-            if (currentError) {
-                currentError.textContent = requestError.message;
-                currentError.hidden = false;
-            }
-        } finally {
-            statisticsRequests.delete(matchId);
-            const loading = panel()?.querySelector('[data-statistics-loading]');
-            if (loading) loading.hidden = true;
-        }
-    })();
-    statisticsRequests.set(matchId, promise);
-    const loading = panel()?.querySelector('[data-statistics-loading]');
-    if (loading) loading.hidden = false;
-    await promise;
 };
 
 const closeQuickStatsPanel = (restoreFocus = true) => {
@@ -338,8 +299,6 @@ const restoreLiveStatsPanel = () => {
     }
 
     panel.classList.remove('hidden');
-    const loading = panel.querySelector('[data-statistics-loading]');
-    if (loading) loading.hidden = !statisticsRequests.has(openLiveStatsMatchId);
     button.setAttribute('aria-expanded', 'true');
     document.body.classList.add('!overflow-hidden');
     document.documentElement.classList.add('!overflow-hidden');
@@ -383,7 +342,7 @@ document.addEventListener('click', (event) => {
         closeStatisticsPanel();
         return;
     }
-    const statisticsButton = event.target.closest('[data-action="stats"][data-statistics-url]');
+    const statisticsButton = event.target.closest('[data-action="stats"]');
     if (statisticsButton && !statisticsButton.disabled) {
         const shouldOpen = openStatisticsMatchId !== statisticsButton.dataset.matchId;
         closeQuickStatsPanel(false);
@@ -394,7 +353,6 @@ document.addEventListener('click', (event) => {
             openStatisticsMatchId = statisticsButton.dataset.matchId;
             restoreStatisticsPanel();
             document.querySelector(`[data-statistics-panel="${CSS.escape(openStatisticsMatchId)}"] [data-close-statistics]`)?.focus({ preventScroll: true });
-            loadFootballStatistics(statisticsButton);
         }
         return;
     }
@@ -515,7 +473,6 @@ document.addEventListener('click', (event) => {
         document.body.classList.add('!overflow-hidden');
         document.documentElement.classList.add('!overflow-hidden');
         openLiveStatsMatchId = matchId;
-        loadFootballStatistics(button, 'live');
     } else {
         closeLiveStatsPanel();
     }
