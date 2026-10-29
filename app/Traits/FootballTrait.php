@@ -44,6 +44,151 @@ trait FootballTrait
 
     protected ?int $marketActivityNextPage = null;
 
+    public function footballFilterPredicate(string $type): ?\Closure
+    {
+        $matchesFilter = null;
+        switch ($type) {
+            case '00_70':
+                $matchesFilter = function (array $match): bool {
+                    if (
+                        ($match['result_status'] ?? null) !== 'Live'
+                        || ! isset($match['home_score'], $match['away_score'])
+                || (int) ($match['home_score'] ?? 0) !== 0
+                        || (int) ($match['away_score'] ?? 0) !== 0
+                    ) {
+                        return false;
+                    }
+
+                    $minute = $this->calculateMinutes(
+                        $match['minutes_status'] ?? $match['result_status'],
+                        (int) ($match['timestamp'] ?? time()),
+                        $match['result_status'],
+                        $match['added_time'] ?? [],
+                        $match['current_period_start_timestamp'] ?? null
+                    );
+
+                    return is_numeric($minute) ? (int) $minute >= 70 : str_starts_with((string) $minute, '90+');
+                };
+                break;
+
+            case 'ht00':
+                $matchesFilter = static function (array $match): bool {
+                    $minuteStatus = strtolower(trim((string) ($match['minutes_status'] ?? '')));
+
+                    return ($match['result_status'] ?? null) === 'Live'
+                        && in_array($minuteStatus, ['half time', 'halftime', 'ht'], true)
+                        && isset($match['home_score'], $match['away_score'])
+                        && (int) ($match['home_score'] ?? 0) === 0
+                        && (int) ($match['away_score'] ?? 0) === 0;
+                };
+                break;
+
+            case 'fav_losing':
+            case 'fav_not_winning':
+                $matchesFilter = function (array $match) use ($type): bool {
+                    $favoriteOdds = (float) ($match['bet365_prematch']['favorite_odds'] ?? 0);
+                    $maximumOdds = $type === 'fav_losing' ? 2.10 : 1.87;
+
+                    if (
+                        ($match['result_status'] ?? null) !== 'Live'
+                        || ! isset($match['home_score'], $match['away_score'])
+                        || $favoriteOdds < 1.01
+                        || $favoriteOdds > $maximumOdds
+                    ) {
+                        return false;
+                    }
+
+                    if ($type === 'fav_not_winning') {
+                        $minute = $this->calculateMinutes(
+                            $match['minutes_status'] ?? $match['result_status'],
+                            (int) ($match['timestamp'] ?? time()),
+                            $match['result_status'],
+                            $match['added_time'] ?? [],
+                            $match['current_period_start_timestamp'] ?? null
+                        );
+
+                        if ($minute === 'HT') {
+                            $currentMinute = 45;
+                        } elseif (preg_match('/^(\d+)/', (string) $minute, $minuteMatch) === 1) {
+                            $currentMinute = (int) $minuteMatch[1];
+                        } else {
+                            return false;
+                        }
+
+                        if ($currentMinute < 29) {
+                            return false;
+                        }
+                    }
+
+                    $favoriteSide = $match['bet365_prematch']['favorite_side'] ?? null;
+                    $homeScore = (int) ($match['home_score'] ?? 0);
+                    $awayScore = (int) ($match['away_score'] ?? 0);
+
+                    if ($favoriteSide === 'home') {
+                        return $type === 'fav_losing'
+                            ? $homeScore < $awayScore
+                            : $homeScore <= $awayScore;
+                    }
+
+                    if ($favoriteSide === 'away') {
+                        return $type === 'fav_losing'
+                            ? $awayScore < $homeScore
+                            : $awayScore <= $homeScore;
+                    }
+
+                    return false;
+                };
+                break;
+
+            case 'prematch_drops':
+                $matchesFilter = static function (array $match): bool {
+                    if (($match['result_status'] ?? null) !== 'Prematch') {
+                        return false;
+                    }
+
+                    if (($match['pinnacle_drop_triggered'] ?? false) === true) {
+                        return true;
+                    }
+
+                    foreach (($match['markets'] ?? []) as $marketRunners) {
+                        foreach (($marketRunners ?? []) as $runner) {
+                            if (($runner['prematch_drop_triggered'] ?? false) === true && hasMeaningfulOpeningOdds($runner)) {
+                                return true;
+                            }
+                        }
+                    }
+
+                    return false;
+                };
+                break;
+
+            case 'market_shock':
+                $shockCutoff = time() - 1200;
+                $matchesFilter = static function (array $match) use ($shockCutoff): bool {
+                    if (($match['result_status'] ?? null) !== 'Prematch') {
+                        return false;
+                    }
+
+                    if ((int) ($match['pinnacle_market_shock_detected_at'] ?? 0) >= $shockCutoff) {
+                        return true;
+                    }
+
+                    foreach (($match['markets'] ?? []) as $marketRunners) {
+                        foreach (($marketRunners ?? []) as $runner) {
+                            if ((int) ($runner['market_shock_detected_at'] ?? 0) >= $shockCutoff && hasMeaningfulOpeningOdds($runner)) {
+                                return true;
+                            }
+                        }
+                    }
+
+                    return false;
+                };
+                break;
+        }
+
+        return $matchesFilter;
+    }
+
     public function getFootballMatches(): array
     {
         $checkAuthAndSubscription = checkAuthAndSubscription();
@@ -90,145 +235,17 @@ trait FootballTrait
                 case 'by_time':
                     break;
 
-                case '00_70':
-                    $matchesFilter = function (array $match): bool {
-                        if (
-                            ($match['result_status'] ?? null) !== 'Live'
-                            || ! isset($match['home_score'], $match['away_score'])
-                        || (int) ($match['home_score'] ?? 0) !== 0
-                            || (int) ($match['away_score'] ?? 0) !== 0
-                        ) {
-                            return false;
-                        }
-
-                        $minute = $this->calculateMinutes(
-                            $match['minutes_status'] ?? $match['result_status'],
-                            (int) ($match['timestamp'] ?? time()),
-                            $match['result_status'],
-                            $match['added_time'] ?? [],
-                            $match['current_period_start_timestamp'] ?? null
-                        );
-
-                        return is_numeric($minute) ? (int) $minute >= 70 : str_starts_with((string) $minute, '90+');
-                    };
-                    break;
-
-                case 'ht00':
-                    $matchesFilter = static function (array $match): bool {
-                        $minuteStatus = strtolower(trim((string) ($match['minutes_status'] ?? '')));
-
-                        return ($match['result_status'] ?? null) === 'Live'
-                            && in_array($minuteStatus, ['half time', 'halftime', 'ht'], true)
-                            && isset($match['home_score'], $match['away_score'])
-                            && (int) ($match['home_score'] ?? 0) === 0
-                            && (int) ($match['away_score'] ?? 0) === 0;
-                    };
-                    break;
-
                 case 'favorites':
                     $matchesFilter = static fn (array $match): bool => isset($favoriteKeys[$match['unique_key'] ?? '']);
                     break;
 
+                case '00_70':
+                case 'ht00':
                 case 'fav_losing':
                 case 'fav_not_winning':
-                    $matchesFilter = function (array $match) use ($type): bool {
-                        $favoriteOdds = (float) ($match['bet365_prematch']['favorite_odds'] ?? 0);
-                        $maximumOdds = $type === 'fav_losing' ? 2.10 : 1.87;
-
-                        if (
-                            ($match['result_status'] ?? null) !== 'Live'
-                            || ! isset($match['home_score'], $match['away_score'])
-                            || $favoriteOdds < 1.01
-                            || $favoriteOdds > $maximumOdds
-                        ) {
-                            return false;
-                        }
-
-                        if ($type === 'fav_not_winning') {
-                            $minute = $this->calculateMinutes(
-                                $match['minutes_status'] ?? $match['result_status'],
-                                (int) ($match['timestamp'] ?? time()),
-                                $match['result_status'],
-                                $match['added_time'] ?? [],
-                                $match['current_period_start_timestamp'] ?? null
-                            );
-
-                            if ($minute === 'HT') {
-                                $currentMinute = 45;
-                            } elseif (preg_match('/^(\d+)/', (string) $minute, $minuteMatch) === 1) {
-                                $currentMinute = (int) $minuteMatch[1];
-                            } else {
-                                return false;
-                            }
-
-                            if ($currentMinute < 29) {
-                                return false;
-                            }
-                        }
-
-                        $favoriteSide = $match['bet365_prematch']['favorite_side'] ?? null;
-                        $homeScore = (int) ($match['home_score'] ?? 0);
-                        $awayScore = (int) ($match['away_score'] ?? 0);
-
-                        if ($favoriteSide === 'home') {
-                            return $type === 'fav_losing'
-                                ? $homeScore < $awayScore
-                                : $homeScore <= $awayScore;
-                        }
-
-                        if ($favoriteSide === 'away') {
-                            return $type === 'fav_losing'
-                                ? $awayScore < $homeScore
-                                : $awayScore <= $homeScore;
-                        }
-
-                        return false;
-                    };
-                    break;
-
                 case 'prematch_drops':
-                    $matchesFilter = static function (array $match): bool {
-                        if (($match['result_status'] ?? null) !== 'Prematch') {
-                            return false;
-                        }
-
-                        if (($match['pinnacle_drop_triggered'] ?? false) === true) {
-                            return true;
-                        }
-
-                        foreach (($match['markets'] ?? []) as $marketRunners) {
-                            foreach (($marketRunners ?? []) as $runner) {
-                                if (($runner['prematch_drop_triggered'] ?? false) === true && hasMeaningfulOpeningOdds($runner)) {
-                                    return true;
-                                }
-                            }
-                        }
-
-                        return false;
-                    };
-                    break;
-
                 case 'market_shock':
-                    $shockCutoff = time() - 1200;
-                    $matchesFilter = static function (array $match) use ($shockCutoff): bool {
-                        if (($match['result_status'] ?? null) !== 'Prematch') {
-                            return false;
-                        }
-
-                        if ((int) ($match['pinnacle_market_shock_detected_at'] ?? 0) >= $shockCutoff) {
-                            return true;
-                        }
-
-                        foreach (($match['markets'] ?? []) as $marketRunners) {
-                            foreach (($marketRunners ?? []) as $runner) {
-                                if ((int) ($runner['market_shock_detected_at'] ?? 0) >= $shockCutoff && hasMeaningfulOpeningOdds($runner)) {
-                                    return true;
-                                }
-                            }
-                        }
-
-                        return false;
-                    };
+                    $matchesFilter = $this->footballFilterPredicate($type);
                     break;
 
                 default:
@@ -971,6 +988,10 @@ trait FootballTrait
     public function getMarketActivites()
     {
         $getData = array_map('prepareMatchOddsMonitoring', getVisibleSportsMatches('Football:matches') ?? []);
+        if (request()->filled('match')) {
+            $matchId = (string) request()->query('match');
+            $getData = array_filter($getData, static fn (array $match): bool => (string) ($match['sportsApiPro_match_id'] ?? '') === $matchId);
+        }
         $mainArray = [];
         $now = time();
         $type = request()->input('type', 'all');

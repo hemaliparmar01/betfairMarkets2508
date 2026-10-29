@@ -1,8 +1,11 @@
 @extends('users.layout.main')
 
-@section('title', 'Fixtures · BF Markets')
+@section('title', 'Notifications · BF Markets')
 
 @section('content')
+    <div id="notification-settings" data-connect-url="{{ route('notifications.connect') }}" data-disconnect-url="{{ route('notifications.disconnect') }}" data-test-url="{{ route('notifications.test') }}">
+    <script id="notification-state" type="application/json">{!! json_encode($notificationState, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) !!}</script>
+    <p id="notification-feedback" role="status" class="my-3 text-sm text-[#1a6b9c] dark:text-[#8aaccc]"></p>
 
     <!-- ===== PAGE HEADER ===== -->
     <div class="page-header [display:flex] [align-items:center] [justify-content:space-between] [flex-wrap:wrap] [gap:12px] [margin:18px_0_14px] [margin:28px_0_8px]">
@@ -32,6 +35,7 @@
                         <i class="fas fa-link"></i>
                         {{ __('Connect Telegram') }}
                     </button>
+                    <button type="button" class="btn-tg btn-tg-connect inline-flex items-center [gap:8px] [padding:10px_20px] [border-radius:60px] [font-size:13.5px] font-bold border-0 cursor-pointer [transition:transform_0.2s,_box-shadow_0.2s] [text-decoration:none] [font-family:inherit] [background:linear-gradient(135deg,_#229ED9,_#1a6b9c)] text-white [box-shadow:0_4px_12px_rgba(34,_158,_217,_0.3)] [&:hover]:[transform:translateY(-2px)] [&:hover]:[box-shadow:0_8px_20px_rgba(34,_158,_217,_0.4)]" id="btnConnectTelegramWeb"><i class="fas fa-globe"></i> {{ __('Open Telegram Web') }}</button>
                 </div>
             </div>
 
@@ -64,6 +68,7 @@
                         <i class="fas fa-redo"></i>
                         {{ __('Retry') }}
                     </button>
+                    <button type="button" class="btn-tg btn-tg-connect inline-flex items-center [gap:8px] [padding:10px_20px] [border-radius:60px] [font-size:13.5px] font-bold border-0 cursor-pointer [transition:transform_0.2s,_box-shadow_0.2s] [text-decoration:none] [font-family:inherit] [background:linear-gradient(135deg,_#229ED9,_#1a6b9c)] text-white [box-shadow:0_4px_12px_rgba(34,_158,_217,_0.3)] [&:hover]:[transform:translateY(-2px)] [&:hover]:[box-shadow:0_8px_20px_rgba(34,_158,_217,_0.4)]" id="btnRetryConnectWeb"><i class="fas fa-globe"></i> {{ __('Open Telegram Web') }}</button>
                 </div>
             </div>
         </div>
@@ -78,6 +83,11 @@
         </div>
     </div>
 
+    <label class="my-6 flex cursor-pointer items-center gap-3 rounded-xl border border-[#c9e5f5] bg-[#f0f9ff] p-5 dark:bg-[#1f3444] dark:text-white">
+        <input id="popup-enabled" type="checkbox" @checked($notificationState['popup_enabled']) class="size-5 accent-[#1a6b9c]">
+        <span><strong>{{ __('Platform Live Pop-up Alerts') }}</strong><span class="mt-1 block text-sm text-[#5a7d99]">{{ __('Enable Live Pop-up alerts') }} · LTD + Goal · EN / KA</span></span>
+    </label>
+
     <!-- ===== LIVE ALERTS GROUP ===== -->
     <div class="notif-group [margin-bottom:28px]">
         <div class="notif-group-header live flex items-center [gap:12px] [padding:12px_18px] [border-radius:12px] [margin:14px_0px] [transition:0.3s] [&.live]:[background:linear-gradient(135deg,_#fde8e8,_#fce8ee)] [&.live]:[border-left:4px_solid_#c74e4e] dark:[&.live]:[background:linear-gradient(135deg,_#3a1f1f,_#3a1f2a)] [&.prematch]:[background:linear-gradient(135deg,_#fff8e6,_#fef3d6)] [&.prematch]:[border-left:4px_solid_#e6b422] dark:[&.prematch]:[background:linear-gradient(135deg,_#3a2e1a,_#2e2414)]">
@@ -90,8 +100,8 @@
 
         <div class="notif-list flex flex-col [gap:10px]">
             <!-- 1. HT 0-0 -->
-            <div class="notif-item flex items-start [gap:14px] [padding:16px_18px] [border-radius:14px] bg-white [border:2px_solid_#e6eff8] cursor-pointer [transition:0.25s] dark:[background:#1f3444] dark:[border-color:#2a3f50] [&:hover]:[border-color:#b8d4ec] [&:hover]:[transform:translateY(-2px)] [&:hover]:[box-shadow:0_6px_16px_rgba(26,_107,_156,_0.08)] dark:[&:hover]:[border-color:#4a8ab5] dark:[&:hover]:[box-shadow:0_6px_16px_rgba(74,_138,_181,_0.12)] max-[768px]:[padding:14px_14px] max-[768px]:[gap:12px] max-[480px]:[flex-direction:row]" data-filter="ht_00">
-                <div class="notif-checkbox [width:22px] [height:22px] [border-radius:6px] [border:2px_solid_#d4e0ec] bg-white flex items-center justify-center shrink-0 [margin-top:2px] [transition:0.2s] [color:transparent] [font-size:12px] dark:[background:#1a2a38] dark:[border-color:#3a5568] max-[480px]:[width:20px] max-[480px]:[height:20px]"><i class="fas fa-check"></i></div>
+            <div class="notif-item flex items-start [gap:14px] [padding:16px_18px] [border-radius:14px] bg-white [border:2px_solid_#e6eff8] cursor-pointer [transition:0.25s] dark:[background:#1f3444] dark:[border-color:#2a3f50] [&:hover]:[border-color:#b8d4ec] [&:hover]:[transform:translateY(-2px)] [&:hover]:[box-shadow:0_6px_16px_rgba(26,_107,_156,_0.08)] dark:[&:hover]:[border-color:#4a8ab5] dark:[&:hover]:[box-shadow:0_6px_16px_rgba(74,_138,_181,_0.12)] max-[768px]:[padding:14px_14px] max-[768px]:[gap:12px] max-[480px]:[flex-direction:row]" data-filter="ht00">
+                <input type="checkbox" aria-label="HT 0-0" data-notification-filter="ht00" @checked($notificationState['preferences']['ht00']) class="notif-checkbox mt-0.5 size-[22px] shrink-0 cursor-pointer rounded-md accent-[#1a6b9c]">
                 <div class="notif-content [flex:1]">
                     <div class="notif-title [font-size:15px] font-bold [color:#0b2a40] [margin-bottom:4px] flex items-center [gap:8px] flex-wrap [transition:color_0.3s] dark:[color:#e8edf2] [&_.notif-badge]:[font-size:10.5px] [&_.notif-badge]:[font-weight:800] [&_.notif-badge]:[padding:2px_8px] [&_.notif-badge]:[border-radius:20px] [&_.notif-badge]:[text-transform:uppercase] [&_.notif-badge]:[letter-spacing:0.3px] max-[768px]:[font-size:14px] max-[480px]:[font-size:13.5px]">{{ __('HT 0-0 (Half Time 0-0)') }} <span class="notif-badge hot [&.hot]:[background:linear-gradient(135deg,_#fde8e8,_#fce8ee)] [&.hot]:[color:#c74e4e] dark:[&.hot]:[background:#3a1f1f] dark:[&.hot]:[color:#e08080] [&.new]:[background:linear-gradient(135deg,_#e8f7ee,_#d6f0e0)] [&.new]:[color:#1f9a6e] dark:[&.new]:[background:#1a3a2a] dark:[&.new]:[color:#5ab88a]">{{ __('LIVE') }}</span></div>
                     <div class="notif-desc [font-size:13px] [color:#5a7d99] [line-height:1.5] [transition:color_0.3s] dark:[color:#8aaccc] max-[768px]:[font-size:12.5px] max-[480px]:[font-size:12px]">{{ __('Goalless at half-time — ideal for 2nd-half goal strategies.') }}</div>
@@ -100,7 +110,7 @@
 
             <!-- 2. 0-0 @ 70' -->
             <div class="notif-item flex items-start [gap:14px] [padding:16px_18px] [border-radius:14px] bg-white [border:2px_solid_#e6eff8] cursor-pointer [transition:0.25s] dark:[background:#1f3444] dark:[border-color:#2a3f50] [&:hover]:[border-color:#b8d4ec] [&:hover]:[transform:translateY(-2px)] [&:hover]:[box-shadow:0_6px_16px_rgba(26,_107,_156,_0.08)] dark:[&:hover]:[border-color:#4a8ab5] dark:[&:hover]:[box-shadow:0_6px_16px_rgba(74,_138,_181,_0.12)] max-[768px]:[padding:14px_14px] max-[768px]:[gap:12px] max-[480px]:[flex-direction:row]" data-filter="00_70">
-                <div class="notif-checkbox [width:22px] [height:22px] [border-radius:6px] [border:2px_solid_#d4e0ec] bg-white flex items-center justify-center shrink-0 [margin-top:2px] [transition:0.2s] [color:transparent] [font-size:12px] dark:[background:#1a2a38] dark:[border-color:#3a5568] max-[480px]:[width:20px] max-[480px]:[height:20px]"><i class="fas fa-check"></i></div>
+                <input type="checkbox" aria-label="0-0 @ 70'" data-notification-filter="00_70" @checked($notificationState['preferences']['00_70']) class="notif-checkbox mt-0.5 size-[22px] shrink-0 cursor-pointer rounded-md accent-[#1a6b9c]">
                 <div class="notif-content [flex:1]">
                     <div class="notif-title [font-size:15px] font-bold [color:#0b2a40] [margin-bottom:4px] flex items-center [gap:8px] flex-wrap [transition:color_0.3s] dark:[color:#e8edf2] [&_.notif-badge]:[font-size:10.5px] [&_.notif-badge]:[font-weight:800] [&_.notif-badge]:[padding:2px_8px] [&_.notif-badge]:[border-radius:20px] [&_.notif-badge]:[text-transform:uppercase] [&_.notif-badge]:[letter-spacing:0.3px] max-[768px]:[font-size:14px] max-[480px]:[font-size:13.5px]">{{ __("0-0 @ 70' (Late Goal Radar)") }} <span class="notif-badge hot [&.hot]:[background:linear-gradient(135deg,_#fde8e8,_#fce8ee)] [&.hot]:[color:#c74e4e] dark:[&.hot]:[background:#3a1f1f] dark:[&.hot]:[color:#e08080] [&.new]:[background:linear-gradient(135deg,_#e8f7ee,_#d6f0e0)] [&.new]:[color:#1f9a6e] dark:[&.new]:[background:#1a3a2a] dark:[&.new]:[color:#5ab88a]">{{ __('LIVE') }}</span></div>
                     <div class="notif-desc [font-size:13px] [color:#5a7d99] [line-height:1.5] [transition:color_0.3s] dark:[color:#8aaccc] max-[768px]:[font-size:12.5px] max-[480px]:[font-size:12px]">{{ __('Still 0-0 at or after the 70th minute — late goal opportunity.') }}</div>
@@ -109,7 +119,7 @@
 
             <!-- 3. Fav Losing -->
             <div class="notif-item flex items-start [gap:14px] [padding:16px_18px] [border-radius:14px] bg-white [border:2px_solid_#e6eff8] cursor-pointer [transition:0.25s] dark:[background:#1f3444] dark:[border-color:#2a3f50] [&:hover]:[border-color:#b8d4ec] [&:hover]:[transform:translateY(-2px)] [&:hover]:[box-shadow:0_6px_16px_rgba(26,_107,_156,_0.08)] dark:[&:hover]:[border-color:#4a8ab5] dark:[&:hover]:[box-shadow:0_6px_16px_rgba(74,_138,_181,_0.12)] max-[768px]:[padding:14px_14px] max-[768px]:[gap:12px] max-[480px]:[flex-direction:row]" data-filter="fav_losing">
-                <div class="notif-checkbox [width:22px] [height:22px] [border-radius:6px] [border:2px_solid_#d4e0ec] bg-white flex items-center justify-center shrink-0 [margin-top:2px] [transition:0.2s] [color:transparent] [font-size:12px] dark:[background:#1a2a38] dark:[border-color:#3a5568] max-[480px]:[width:20px] max-[480px]:[height:20px]"><i class="fas fa-check"></i></div>
+                <input type="checkbox" aria-label="Fav Losing" data-notification-filter="fav_losing" @checked($notificationState['preferences']['fav_losing']) class="notif-checkbox mt-0.5 size-[22px] shrink-0 cursor-pointer rounded-md accent-[#1a6b9c]">
                 <div class="notif-content [flex:1]">
                     <div class="notif-title [font-size:15px] font-bold [color:#0b2a40] [margin-bottom:4px] flex items-center [gap:8px] flex-wrap [transition:color_0.3s] dark:[color:#e8edf2] [&_.notif-badge]:[font-size:10.5px] [&_.notif-badge]:[font-weight:800] [&_.notif-badge]:[padding:2px_8px] [&_.notif-badge]:[border-radius:20px] [&_.notif-badge]:[text-transform:uppercase] [&_.notif-badge]:[letter-spacing:0.3px] max-[768px]:[font-size:14px] max-[480px]:[font-size:13.5px]">{{ __('Fav Losing (Favorite Losing)') }} <span class="notif-badge hot [&.hot]:[background:linear-gradient(135deg,_#fde8e8,_#fce8ee)] [&.hot]:[color:#c74e4e] dark:[&.hot]:[background:#3a1f1f] dark:[&.hot]:[color:#e08080] [&.new]:[background:linear-gradient(135deg,_#e8f7ee,_#d6f0e0)] [&.new]:[color:#1f9a6e] dark:[&.new]:[background:#1a3a2a] dark:[&.new]:[color:#5ab88a]">{{ __('LIVE') }}</span></div>
                     <div class="notif-desc [font-size:13px] [color:#5a7d99] [line-height:1.5] [transition:color_0.3s] dark:[color:#8aaccc] max-[768px]:[font-size:12.5px] max-[480px]:[font-size:12px]">{{ __('Pre-match favorite is currently trailing in-play — potential comeback situation.') }}
@@ -119,10 +129,10 @@
 
             <!-- 4. Strategy: 1st Half LTD -->
             <div class="notif-item flex items-start [gap:14px] [padding:16px_18px] [border-radius:14px] bg-white [border:2px_solid_#e6eff8] cursor-pointer [transition:0.25s] dark:[background:#1f3444] dark:[border-color:#2a3f50] [&:hover]:[border-color:#b8d4ec] [&:hover]:[transform:translateY(-2px)] [&:hover]:[box-shadow:0_6px_16px_rgba(26,_107,_156,_0.08)] dark:[&:hover]:[border-color:#4a8ab5] dark:[&:hover]:[box-shadow:0_6px_16px_rgba(74,_138,_181,_0.12)] max-[768px]:[padding:14px_14px] max-[768px]:[gap:12px] max-[480px]:[flex-direction:row]" data-filter="ltd">
-                <div class="notif-checkbox [width:22px] [height:22px] [border-radius:6px] [border:2px_solid_#d4e0ec] bg-white flex items-center justify-center shrink-0 [margin-top:2px] [transition:0.2s] [color:transparent] [font-size:12px] dark:[background:#1a2a38] dark:[border-color:#3a5568] max-[480px]:[width:20px] max-[480px]:[height:20px]"><i class="fas fa-check"></i></div>
+                <input type="checkbox" aria-label="{{ \App\Services\AlertService::STRATEGY[app()->getLocale() === 'ka' ? 'ka' : 'en'] }}" data-notification-filter="ltd" @checked($notificationState['preferences']['ltd']) class="notif-checkbox mt-0.5 size-[22px] shrink-0 cursor-pointer rounded-md accent-[#1a6b9c]">
                 <div class="notif-content [flex:1]">
-                    <div class="notif-title [font-size:15px] font-bold [color:#0b2a40] [margin-bottom:4px] flex items-center [gap:8px] flex-wrap [transition:color_0.3s] dark:[color:#e8edf2] [&_.notif-badge]:[font-size:10.5px] [&_.notif-badge]:[font-weight:800] [&_.notif-badge]:[padding:2px_8px] [&_.notif-badge]:[border-radius:20px] [&_.notif-badge]:[text-transform:uppercase] [&_.notif-badge]:[letter-spacing:0.3px] max-[768px]:[font-size:14px] max-[480px]:[font-size:13.5px]">{{ __('Strategy: 1st Half Lay The Draw (LTD)') }} <span class="notif-badge new [&.hot]:[background:linear-gradient(135deg,_#fde8e8,_#fce8ee)] [&.hot]:[color:#c74e4e] dark:[&.hot]:[background:#3a1f1f] dark:[&.hot]:[color:#e08080] [&.new]:[background:linear-gradient(135deg,_#e8f7ee,_#d6f0e0)] [&.new]:[color:#1f9a6e] dark:[&.new]:[background:#1a3a2a] dark:[&.new]:[color:#5ab88a]">{{ __('NEW') }}</span></div>
-                    <div class="notif-desc [font-size:13px] [color:#5a7d99] [line-height:1.5] [transition:color_0.3s] dark:[color:#8aaccc] max-[768px]:[font-size:12.5px] max-[480px]:[font-size:12px]">{{ __('Automated signals for high-pressure 1st Half Lay The Draw opportunities.') }}</div>
+                    <div class="notif-title [font-size:15px] font-bold [color:#0b2a40] [margin-bottom:4px] flex items-center [gap:8px] flex-wrap [transition:color_0.3s] dark:[color:#e8edf2] [&_.notif-badge]:[font-size:10.5px] [&_.notif-badge]:[font-weight:800] [&_.notif-badge]:[padding:2px_8px] [&_.notif-badge]:[border-radius:20px] [&_.notif-badge]:[text-transform:uppercase] [&_.notif-badge]:[letter-spacing:0.3px] max-[768px]:[font-size:14px] max-[480px]:[font-size:13.5px]">{{ \App\Services\AlertService::STRATEGY[app()->getLocale() === 'ka' ? 'ka' : 'en'] }} <span class="notif-badge new [&.hot]:[background:linear-gradient(135deg,_#fde8e8,_#fce8ee)] [&.hot]:[color:#c74e4e] dark:[&.hot]:[background:#3a1f1f] dark:[&.hot]:[color:#e08080] [&.new]:[background:linear-gradient(135deg,_#e8f7ee,_#d6f0e0)] [&.new]:[color:#1f9a6e] dark:[&.new]:[background:#1a3a2a] dark:[&.new]:[color:#5ab88a]">{{ __('NEW') }}</span></div>
+                    <div class="notif-desc [font-size:13px] [color:#5a7d99] [line-height:1.5] [transition:color_0.3s] dark:[color:#8aaccc] max-[768px]:[font-size:12.5px] max-[480px]:[font-size:12px]">{{ \App\Services\AlertService::STRATEGY['en'] }}</div>
                 </div>
             </div>
         </div>
@@ -140,7 +150,7 @@
 
         <div class="notif-list flex flex-col [gap:10px]">
             <div class="notif-item flex items-start [gap:14px] [padding:16px_18px] [border-radius:14px] bg-white [border:2px_solid_#e6eff8] cursor-pointer [transition:0.25s] dark:[background:#1f3444] dark:[border-color:#2a3f50] [&:hover]:[border-color:#b8d4ec] [&:hover]:[transform:translateY(-2px)] [&:hover]:[box-shadow:0_6px_16px_rgba(26,_107,_156,_0.08)] dark:[&:hover]:[border-color:#4a8ab5] dark:[&:hover]:[box-shadow:0_6px_16px_rgba(74,_138,_181,_0.12)] max-[768px]:[padding:14px_14px] max-[768px]:[gap:12px] max-[480px]:[flex-direction:row]" data-filter="prematch_drops">
-                <div class="notif-checkbox [width:22px] [height:22px] [border-radius:6px] [border:2px_solid_#d4e0ec] bg-white flex items-center justify-center shrink-0 [margin-top:2px] [transition:0.2s] [color:transparent] [font-size:12px] dark:[background:#1a2a38] dark:[border-color:#3a5568] max-[480px]:[width:20px] max-[480px]:[height:20px]"><i class="fas fa-check"></i></div>
+                <input type="checkbox" aria-label="Prematch Drops" data-notification-filter="prematch_drops" @checked($notificationState['preferences']['prematch_drops']) class="notif-checkbox mt-0.5 size-[22px] shrink-0 cursor-pointer rounded-md accent-[#1a6b9c]">
                 <div class="notif-content [flex:1]">
                     <div class="notif-title [font-size:15px] font-bold [color:#0b2a40] [margin-bottom:4px] flex items-center [gap:8px] flex-wrap [transition:color_0.3s] dark:[color:#e8edf2] [&_.notif-badge]:[font-size:10.5px] [&_.notif-badge]:[font-weight:800] [&_.notif-badge]:[padding:2px_8px] [&_.notif-badge]:[border-radius:20px] [&_.notif-badge]:[text-transform:uppercase] [&_.notif-badge]:[letter-spacing:0.3px] max-[768px]:[font-size:14px] max-[480px]:[font-size:13.5px]">{{ __('Prematch Drops') }}</div>
                     <div class="notif-desc [font-size:13px] [color:#5a7d99] [line-height:1.5] [transition:color_0.3s] dark:[color:#8aaccc] max-[768px]:[font-size:12.5px] max-[480px]:[font-size:12px]">{{ __('Early warning for significant pre-match odds movement.') }}</div>
@@ -149,7 +159,7 @@
 
             <!-- 6. Market Shock Detector -->
             <div class="notif-item flex items-start [gap:14px] [padding:16px_18px] [border-radius:14px] bg-white [border:2px_solid_#e6eff8] cursor-pointer [transition:0.25s] dark:[background:#1f3444] dark:[border-color:#2a3f50] [&:hover]:[border-color:#b8d4ec] [&:hover]:[transform:translateY(-2px)] [&:hover]:[box-shadow:0_6px_16px_rgba(26,_107,_156,_0.08)] dark:[&:hover]:[border-color:#4a8ab5] dark:[&:hover]:[box-shadow:0_6px_16px_rgba(74,_138,_181,_0.12)] max-[768px]:[padding:14px_14px] max-[768px]:[gap:12px] max-[480px]:[flex-direction:row]" data-filter="market_shock">
-                <div class="notif-checkbox [width:22px] [height:22px] [border-radius:6px] [border:2px_solid_#d4e0ec] bg-white flex items-center justify-center shrink-0 [margin-top:2px] [transition:0.2s] [color:transparent] [font-size:12px] dark:[background:#1a2a38] dark:[border-color:#3a5568] max-[480px]:[width:20px] max-[480px]:[height:20px]"><i class="fas fa-check"></i></div>
+                <input type="checkbox" aria-label="Market Shock Detector" data-notification-filter="market_shock" @checked($notificationState['preferences']['market_shock']) class="notif-checkbox mt-0.5 size-[22px] shrink-0 cursor-pointer rounded-md accent-[#1a6b9c]">
                 <div class="notif-content [flex:1]">
                     <div class="notif-title [font-size:15px] font-bold [color:#0b2a40] [margin-bottom:4px] flex items-center [gap:8px] flex-wrap [transition:color_0.3s] dark:[color:#e8edf2] [&_.notif-badge]:[font-size:10.5px] [&_.notif-badge]:[font-weight:800] [&_.notif-badge]:[padding:2px_8px] [&_.notif-badge]:[border-radius:20px] [&_.notif-badge]:[text-transform:uppercase] [&_.notif-badge]:[letter-spacing:0.3px] max-[768px]:[font-size:14px] max-[480px]:[font-size:13.5px]">{{ __('Market Shock Detector') }} <span class="notif-badge hot [&.hot]:[background:linear-gradient(135deg,_#fde8e8,_#fce8ee)] [&.hot]:[color:#c74e4e] dark:[&.hot]:[background:#3a1f1f] dark:[&.hot]:[color:#e08080] [&.new]:[background:linear-gradient(135deg,_#e8f7ee,_#d6f0e0)] [&.new]:[color:#1f9a6e] dark:[&.new]:[background:#1a3a2a] dark:[&.new]:[color:#5ab88a]">{{ __('HOT') }}</span></div>
                     <div class="notif-desc [font-size:13px] [color:#5a7d99] [line-height:1.5] [transition:color_0.3s] dark:[color:#8aaccc] max-[768px]:[font-size:12.5px] max-[480px]:[font-size:12px]">{{ __('Sharp market movement within 1–3 minutes — rapid change detector.') }}</div>
@@ -168,5 +178,6 @@
             <i class="fas fa-save"></i>
             {{ __('Save Changes') }}
         </button>
+    </div>
     </div>
 @endsection

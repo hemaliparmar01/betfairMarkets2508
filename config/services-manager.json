@@ -177,6 +177,24 @@
         "production"
       ],
       "unit": "bfmarkets-scheduler.service"
+    },
+    "telegram-bot": {
+      "command": [
+        "telegram:listen"
+      ],
+      "enabled": false,
+      "overrides": {
+        "local": {
+          "enabled": true
+        }
+      }
+    },
+    "telegram-source": {
+      "command": [
+        "telegram:listen",
+        "--source"
+      ],
+      "enabled": false
     }
   },
   "overrides": {

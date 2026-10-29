@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" class="scroll-smooth">
+<html lang="{{ str_replace('_', '-', app()->getLocale()) }}" class="scroll-smooth">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -28,5 +28,8 @@
         document.getElementById('scroll-to-top')?.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
     </script>
     @stack('js')
+    @auth('customers')
+        <div id="alert-popup-container" data-customer-id="{{ auth('customers')->id() }}" data-popup-enabled="{{ auth('customers')->user()->popup_enabled ?? true ? '1' : '0' }}" data-preferences-url="{{ route('notifications.update') }}" class="pointer-events-none fixed right-4 top-4 z-[11000] flex w-[min(420px,calc(100%-2rem))] flex-col gap-3" aria-live="polite"></div>
+    @endauth
 </body>
 </html>

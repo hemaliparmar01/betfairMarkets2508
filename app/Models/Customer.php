@@ -28,7 +28,7 @@ use Illuminate\Notifications\Notifiable;
     'subscription_ends_at',
     'subscription_plan',
 ])]
-#[Hidden(['password', 'remember_token', 'code', 'login_otp'])]
+#[Hidden(['password', 'remember_token', 'code', 'login_otp', 'telegram_chat_id', 'telegram_token_hash', 'telegram_token_expires_at'])]
 class Customer extends Authenticatable
 {
     use Notifiable;
@@ -37,6 +37,15 @@ class Customer extends Authenticatable
     protected function casts(): array
     {
         return [
+            'popup_enabled' => 'boolean',
+            'telegram_available' => 'boolean',
+            'telegram_token_expires_at' => 'datetime',
+            'tg_ht00' => 'boolean',
+            'tg_00_70' => 'boolean',
+            'tg_fav_losing' => 'boolean',
+            'tg_ltd' => 'boolean',
+            'tg_prematch_drops' => 'boolean',
+            'tg_market_shock' => 'boolean',
             'password' => 'hashed',
             'is_proxy_or_datacenter' => 'boolean',
             'risk_score' => 'integer',

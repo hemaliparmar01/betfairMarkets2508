@@ -142,7 +142,18 @@ Route::get('delete-cache-key/{forgot_cache_key}', function (Request $request) {
 
 Route::get('contact-us', [ContactController::class, 'contact'])->name('contact-us');
 Route::post('contact-us', [ContactController::class, 'store'])->name('contact-us.store');
-Route::get('notifications', [NotificationController::class, 'notifications'])->name('notifications');
+Route::middleware('auth:customers')->group(function (): void {
+    Route::get('notifications', [NotificationController::class, 'notifications'])->name('notifications');
+    Route::get('notifications/status', [NotificationController::class, 'status'])->name('notifications.status');
+    Route::patch('notifications', [NotificationController::class, 'update'])->name('notifications.update');
+    Route::post('notifications/telegram/connect', [NotificationController::class, 'connect'])->middleware('throttle:5,1')->name('notifications.connect');
+    Route::delete('notifications/telegram', [NotificationController::class, 'disconnect'])->name('notifications.disconnect');
+    Route::post('notifications/telegram/test', [NotificationController::class, 'test'])->middleware('throttle:3,1')->name('notifications.test');
+});
+Route::post('notifications/telegram/webhook', [NotificationController::class, 'webhook'])
+    ->withoutMiddleware([StartSession::class, ShareErrorsFromSession::class, CustomerAuthService::class, PreventRequestForgery::class]);
+Route::post('notifications/telegram/source', [NotificationController::class, 'source'])
+    ->withoutMiddleware([StartSession::class, ShareErrorsFromSession::class, CustomerAuthService::class, PreventRequestForgery::class]);
 Route::get('subscriptions', [SubscriptionController::class, 'subscriptions'])->name('subscriptions');
 Route::get('subscriptions-details', [SubscriptionController::class, 'getSubscriptions'])->name('checkout-single');
 Route::get('feature-request', [FeatureRequestController::class, 'featureRequest'])->name('feature-request');

@@ -177,6 +177,18 @@ class ServiceManagerTest(unittest.TestCase):
             run.assert_not_called()
             self.assertTrue((self.manager.state / (self.manager.instances['betfair']['label'] + '.plist')).exists())
 
+    def test_telegram_bot_and_source_processes_are_distinguished(self):
+        source = subprocess.CompletedProcess([], 0, '123 php artisan telegram:listen --source --login\n', '')
+        with patch.object(module, 'run', return_value=source):
+            self.manager.reject_unmanaged(self.manager.instances['telegram-bot'])
+            with self.assertRaisesRegex(ValueError, 'Unmanaged matching Artisan process'):
+                self.manager.reject_unmanaged(self.manager.instances['telegram-source'])
+        bot = subprocess.CompletedProcess([], 0, '124 php artisan telegram:listen\n', '')
+        with patch.object(module, 'run', return_value=bot):
+            self.manager.reject_unmanaged(self.manager.instances['telegram-source'])
+            with self.assertRaisesRegex(ValueError, 'Unmanaged matching Artisan process'):
+                self.manager.reject_unmanaged(self.manager.instances['telegram-bot'])
+
     def test_production_install_preserves_existing_units(self):
         self.manager.mac = False
         with patch.object(self.manager, 'inspect', return_value=(True, 'active/running')), patch.object(self.manager, 'verify_existing'), patch.object(self.manager, 'definition') as definition, patch.object(module, 'run') as run:

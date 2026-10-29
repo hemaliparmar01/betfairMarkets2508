@@ -1453,6 +1453,10 @@
                 let activeFilter = 'all';
                 let activeSport = 'all';
 
+                if (@json($marketActivitySport === 'football' && request()->filled('match')) && events.length) {
+                    openDetail((events.find(event => event.market === 'first_half') || events[0]).id);
+                }
+
             })();
         </script>
     @endpush

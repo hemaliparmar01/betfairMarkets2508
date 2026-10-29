@@ -145,6 +145,8 @@ class Manager:
         processes = run(['ps', '-axo', 'pid=,command=']).stdout
         for line in processes.splitlines():
             if re.search(r'\bartisan\s+' + re.escape(spec['command'][0]) + r'(?:\s|$)', line):
+                if spec['command'][0] == 'telegram:listen' and ('--source' in spec['command']) != bool(re.search(r'(?:^|\s)--source(?:\s|$)', line)):
+                    continue
                 if spec['command'][0] != 'queue:work' or all(arg in line for arg in spec['command'][1:] if arg.startswith('--queue=')):
                     # Sibling configured workers are safe only when already owned by this supervisor.
                     if spec.get('workers', 1) > 1 and any(self.inspect(other)[1].split('pid=')[-1] == line.strip().split(None, 1)[0] for other in self.instances.values() if other['name'] == spec['name']):
