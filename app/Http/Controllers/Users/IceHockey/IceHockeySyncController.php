@@ -87,13 +87,13 @@ class IceHockeySyncController extends Controller
         return $matches;
     }
 
-    private function readBetFairData(array $payloads, string $cacheKey, bool $isLiveApi, int $ttlSeconds): array
+    private function readBetFairData(array $payloads, string $cacheKey, bool $isLiveApi, int $ttlSeconds, ?array $getExistingRecords = null): array
     {
-        $getExistingRecords = getInRedis($cacheKey) ?? [];
+        $getExistingRecords ??= getInRedis($cacheKey) ?? [];
         $knownBetfairMatches = array_column($getExistingRecords, null, 'betfair_match_id');
         $missingIds = array_diff(array_keys($payloads['liveMap'] ?? []), array_keys($knownBetfairMatches));
         if ($missingIds !== []) {
-            foreach (IceHockeyMatch::query()->with('markets')->whereIn('betfair_match_id', $missingIds)->get() as $stored) {
+            foreach (IceHockeyMatch::query()->with('markets:id,ice_hockey_match_unique_key,payload')->whereIn('betfair_match_id', $missingIds)->get(['id', 'unique_key', 'betfair_match_id', 'payload']) as $stored) {
                 $restored = $stored->payload ?? [];
                 $restored['markets'] = [];
                 foreach ($stored->markets as $runner) {
@@ -420,7 +420,7 @@ class IceHockeySyncController extends Controller
             $knownIds = array_column($matches, 'sportsApiPro_match_id');
             $missingIds = array_diff(array_column($events, 'id'), $knownIds);
             if ($missingIds !== []) {
-                foreach (IceHockeyMatch::query()->with('markets')->whereIn('sports_api_pro_match_id', $missingIds)->get() as $stored) {
+                foreach (IceHockeyMatch::query()->with('markets:id,ice_hockey_match_unique_key,payload')->whereIn('sports_api_pro_match_id', $missingIds)->get(['id', 'unique_key', 'payload']) as $stored) {
                     $restored = $stored->payload ?? [];
                     $restored['markets'] = [];
                     foreach ($stored->markets as $runner) {
@@ -481,7 +481,7 @@ class IceHockeySyncController extends Controller
         }
         $matches = withRedisLock('IceHockey:matches', function () use ($events, $isLive): array {
             $before = getInRedis('IceHockey:matches') ?? [];
-            $after = $this->readBetFairData(['liveMap' => $events], 'IceHockey:matches', $isLive, 30);
+            $after = $this->readBetFairData(['liveMap' => $events], 'IceHockey:matches', $isLive, 30, $before);
 
             return array_filter($after, static fn (array $match, string $key): bool => $match != ($before[$key] ?? null), ARRAY_FILTER_USE_BOTH);
         }, 5);

@@ -66,6 +66,7 @@ let footballLoading = false;
 let footballRealtimeLoading = false;
 let footballRequestVersion = 0;
 let footballPendingRequest = null;
+let footballActiveRequest = null;
 let footballPendingRealtime = false;
 let footballRealtimeTimer = null;
 const footballPendingPredictions = [];
@@ -541,6 +542,12 @@ const callFixtureData = async (value, options = {}) => {
     const preserveLoaded = options.preserveLoaded === true;
     const realtime = options.realtime === true;
     const fixtures = document.querySelector('.fixtures-container');
+    const body = JSON.stringify({
+        ...value,
+        page: append ? footballPage + 1 : 1,
+        per_page: preserveLoaded ? footballPage * FOOTBALL_PAGE_SIZE : FOOTBALL_PAGE_SIZE,
+        append,
+    });
 
     if (options.reset === true && !append) {
         fixtures?.classList.add('fixtures-loading');
@@ -553,7 +560,10 @@ const callFixtureData = async (value, options = {}) => {
                 footballPendingPredictions.push({ prediction: value.prediction, options, resolve });
             });
         } else if (options.reset === true) {
-            footballPendingRequest = { value, options };
+            footballPendingRequest = footballActiveRequest?.body === body
+                && footballActiveRequest.preserveLoaded === preserveLoaded
+                && footballActiveRequest.reset === options.reset
+                ? null : { value, options };
         } else if (options.realtime === true) {
             footballPendingRealtime = true;
         }
@@ -564,7 +574,10 @@ const callFixtureData = async (value, options = {}) => {
     footballRealtimeTimer = null;
     footballPendingRealtime = false;
     if (realtime) footballRealtimeLoading = true;
-    else footballLoading = true;
+    else {
+        footballLoading = true;
+        footballActiveRequest = { body, preserveLoaded, reset: options.reset };
+    }
     const requestVersion = realtime ? footballRequestVersion : ++footballRequestVersion;
     if (append && footballLazyLoader) {
         footballLazyLoader.querySelector('[data-lazy-loader-text]').textContent = 'Loading matches…';
@@ -579,12 +592,7 @@ const callFixtureData = async (value, options = {}) => {
                 'Accept': 'application/json',
                 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content'),
             },
-            body: JSON.stringify({
-                ...value,
-                page: append ? footballPage + 1 : 1,
-                per_page: preserveLoaded ? footballPage * FOOTBALL_PAGE_SIZE : FOOTBALL_PAGE_SIZE,
-                append,
-            }),
+            body,
         });
 
         if (response.status === 401) {
@@ -652,7 +660,10 @@ const callFixtureData = async (value, options = {}) => {
         updateFootballLazyLoader(footballHasMore);
     } finally {
         if (realtime) footballRealtimeLoading = false;
-        else footballLoading = false;
+        else {
+            footballLoading = false;
+            footballActiveRequest = null;
+        }
         if (!footballLoading && !footballPendingRequest) {
             fixtures?.classList.remove('fixtures-loading');
             fixtures?.removeAttribute('aria-busy');

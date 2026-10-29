@@ -658,6 +658,7 @@ if (! function_exists('storeInRedis')) {
             }
             unset($match);
         }
+        unset($existingData, $data, $previous, $cleaned, $savedTimelines, $matchIds, $saved);
         Redis::set($cacheKey, json_encode($mergedData));
         Redis::expire($cacheKey, $ttlMinutes * 60);
     }
@@ -684,7 +685,7 @@ if (! function_exists('getInRedis')) {
                     }
                 }
                 $savedTimelines = $matchIds === [] ? collect() : DB::table('football_timeline')->whereIn('match_id', $matchIds)->get(['match_id', 'timeline'])->keyBy('match_id');
-                $before = $matches;
+                $changed = false;
                 $controller = null;
                 foreach ($matchKeys as $matchKey) {
                     $match = &$matches[$matchKey];
@@ -692,11 +693,12 @@ if (! function_exists('getInRedis')) {
                     $timeline = json_decode($saved->timeline ?? '[]', true) ?? [];
                     if ($timeline !== []) {
                         $controller ??= app(FootballSyncController::class);
-                        $controller->storeTimeline($match, frameType: 'restore', storedTimeline: $timeline);
+                        $changed = $controller->storeTimeline($match, frameType: 'restore', storedTimeline: $timeline) || $changed;
                     }
                 }
                 unset($match);
-                if ($matches !== $before) {
+                unset($savedTimelines, $matchIds, $matchKeys, $timeline, $saved);
+                if ($changed) {
                     Redis::eval('if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("SET", KEYS[1], ARGV[2], "KEEPTTL") end return 0', 1, $cacheKey, $cachedData, json_encode($matches));
                 }
             } catch (Throwable $exception) {

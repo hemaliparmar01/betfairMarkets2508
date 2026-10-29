@@ -244,9 +244,12 @@ class ListenSportsApiPro extends Command
                     while (($message = $socket->receive($cancellation)) !== null) {
                         $frame = json_decode($message->buffer($cancellation), true);
                         if (! is_array($frame)) {
+                            unset($frame, $message);
+
                             continue;
                         }
                         $this->processSportsFrame($sport, $config, $frame, $socket, $matchSubscriptions);
+                        unset($frame, $message);
                         delay(0, cancellation: $cancellation);
                     }
                     throw new \RuntimeException('The remote WebSocket closed the connection.');
@@ -281,6 +284,7 @@ class ListenSportsApiPro extends Command
                         Log::warning('SportsAPI Pro socket close failed', ['sport' => $sport, 'exception' => $e::class]);
                     }
                     $socket = null;
+                    unset($frame, $message);
                 }
                 if (! $shutdown->isRequested()) {
                     delay($retryDelay, cancellation: $shutdown);
@@ -372,7 +376,7 @@ class ListenSportsApiPro extends Command
             return;
         }
         $cacheKey = $config['prefix'].':matches';
-        $syncedIds = $this->syncedMatchIds($cacheKey);
+        $syncedIds = $sport === 'football' || str_starts_with($channel, 'live-scores') ? $this->syncedMatchIds($cacheKey) : [];
         $tennisScores = [];
         $updated = withRedisLock($cacheKey, function () use ($sport, $config, $channel, $frameData, $type, $frame, &$tennisScores): bool {
             if ($sport === 'football') {

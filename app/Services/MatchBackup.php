@@ -272,13 +272,14 @@ class MatchBackup
                         if (isset($matches[$stored->unique_key]) || isset($deletedKeys[$stored->unique_key])) {
                             continue;
                         }
-                        $restored = array_replace($stored->payload ?? [], ['unique_key' => $stored->unique_key, 'timestamp' => $stored->start_timestamp, 'result_status' => $stored->result_status, 'sportsApiPro_match_id' => $stored->sports_api_pro_match_id, 'betfair_match_id' => $stored->betfair_match_id, 'markets' => []]);
+                        $restored = array_replace($stored->getAttribute('payload') ?? [], ['unique_key' => $stored->unique_key, 'timestamp' => $stored->start_timestamp, 'result_status' => $stored->result_status, 'sportsApiPro_match_id' => $stored->sports_api_pro_match_id, 'betfair_match_id' => $stored->betfair_match_id, 'markets' => []]);
                         foreach ($stored->markets as $market) {
                             $restored['markets'][$market->market_id.'_'.$market->market_type][] = $market->payload;
                         }
                         $matches[$stored->unique_key] = $restored;
                     }
                 });
+                unset($deletedKeys);
                 $changes = 0;
                 foreach ($matches as $key => &$match) {
                     $previous = $match;
@@ -327,7 +328,7 @@ class MatchBackup
                         $changes++;
                     }
                 }
-                unset($match);
+                unset($match, $previous, $updates, $payload);
                 if ($matches !== []) {
                     Redis::setex($cacheKey, 1800, json_encode($matches, JSON_THROW_ON_ERROR));
                 } else {

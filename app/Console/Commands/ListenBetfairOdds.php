@@ -114,6 +114,7 @@ class ListenBetfairOdds extends Command
                 $this->info('Connected to Betfair Odds WebSocket; authenticating.');
 
                 foreach ($socket as $message) {
+                    unset($frame, $changedEvents, $event, $eventDelta, $rows, $row, $race);
                     $frame = json_decode($message->buffer(), true);
 
                     if (! is_array($frame)) {
@@ -320,6 +321,7 @@ class ListenBetfairOdds extends Command
                             }
                         });
                     }
+                    unset($frame, $message, $changedEvents, $event, $eventDelta, $rows, $row, $race);
                 }
             } catch (Throwable $e) {
                 $isDuplicateConnection = str_contains($e->getMessage(), 'duplicate WebSocket connection');
@@ -361,6 +363,7 @@ class ListenBetfairOdds extends Command
                         'message' => $e->getMessage(),
                     ]);
                 }
+                unset($books, $snapshotChanges, $frame, $message, $changedEvents, $event, $eventDelta, $rows, $row, $race);
             }
 
             delay($backoff);
@@ -442,13 +445,25 @@ class ListenBetfairOdds extends Command
 
                     continue;
                 }
-                $footballEvents = array_filter($events, static fn (array $event): bool => strtolower((string) ($event['sport'] ?? 'soccer')) === 'soccer');
-                $cricketEvents = array_filter($events, static fn (array $event): bool => strtolower((string) ($event['sport'] ?? '')) === 'cricket');
-                $iceHockeyEvents = array_filter($events, static fn (array $event): bool => strtolower((string) ($event['sport'] ?? '')) === 'ice hockey');
-                $americanFootballEvents = array_filter($events, static fn (array $event): bool => strtolower((string) ($event['sport'] ?? '')) === 'american football');
-                $baseballEvents = array_filter($events, static fn (array $event): bool => strtolower((string) ($event['sport'] ?? '')) === 'baseball');
-                $basketballEvents = array_filter($events, static fn (array $event): bool => strtolower((string) ($event['sport'] ?? '')) === 'basketball');
-                $tennisEvents = array_filter($events, static fn (array $event): bool => strtolower((string) ($event['sport'] ?? '')) === 'tennis');
+                $footballEvents = $cricketEvents = $iceHockeyEvents = $americanFootballEvents = $baseballEvents = $basketballEvents = $tennisEvents = [];
+                foreach ($events as $eventId => $event) {
+                    switch (strtolower((string) ($event['sport'] ?? 'soccer'))) {
+                        case 'soccer': $footballEvents[$eventId] = $event;
+                            break;
+                        case 'cricket': $cricketEvents[$eventId] = $event;
+                            break;
+                        case 'ice hockey': $iceHockeyEvents[$eventId] = $event;
+                            break;
+                        case 'american football': $americanFootballEvents[$eventId] = $event;
+                            break;
+                        case 'baseball': $baseballEvents[$eventId] = $event;
+                            break;
+                        case 'basketball': $basketballEvents[$eventId] = $event;
+                            break;
+                        case 'tennis': $tennisEvents[$eventId] = $event;
+                            break;
+                    }
+                }
                 $feedUpdated = $footballEvents !== [] && withRedisLock(
                     'Football:matches',
                     fn (): bool => $this->updateFootballCache($footballEvents, $isLive)
@@ -502,6 +517,8 @@ class ListenBetfairOdds extends Command
                 ]);
 
                 continue;
+            } finally {
+                unset($events, $footballEvents, $cricketEvents, $iceHockeyEvents, $americanFootballEvents, $baseballEvents, $basketballEvents, $tennisEvents, $event, $runner, $updates);
             }
 
             $pendingChanges[$feed] = $followingEvents;
@@ -593,6 +610,7 @@ class ListenBetfairOdds extends Command
                     $databaseMarkets[$databaseRow->football_match_unique_key][] = $payload;
                 }
             }
+            unset($databaseRows, $databaseRow, $payload);
         }
 
         foreach ($events as $eventId => $event) {
@@ -773,8 +791,10 @@ class ListenBetfairOdds extends Command
             $changedMatches[$matchKey] = $matches[$matchKey];
         }
 
+        unset($databaseMarkets, $previousMarkets, $storedMarkets, $previousRunner, $runner, $updatedMarkets, $marketLiquidity, $snapshots);
         if ($updated) {
             app(FootballSyncController::class)->persistOddsSnapshots($changedMatches);
+            unset($changedMatches);
             storeInRedis('Football:matches', $matches, 30, false);
         }
 

@@ -276,23 +276,25 @@ trait FootballTrait
         });
         $sortByTime = in_array($type, ['by_time', 'upcoming'], true);
         $groupByCompetition = in_array($type, [null, 'all'], true);
-        usort($getData, static function (array $first, array $second) use ($sortByTime, $leaguePriorities, $groupByCompetition): int {
-            $timeComparison = (int) ($first['timestamp'] ?? 0) <=> (int) ($second['timestamp'] ?? 0);
-            $priorityComparison = $leaguePriorities[$first['tournament'] ?? ''][$first['tournament_country'] ?? '']
-                <=> $leaguePriorities[$second['tournament'] ?? ''][$second['tournament_country'] ?? ''];
-            $competitionComparison = $groupByCompetition
-                ? strcmp((string) ($first['tournament_id'] ?? ($first['tournament_country'] ?? '').'|'.$first['tournament']), (string) ($second['tournament_id'] ?? ($second['tournament_country'] ?? '').'|'.$second['tournament']))
-                : 0;
-
-            return $sortByTime
-                ? ($timeComparison ?: $priorityComparison)
-                : ($priorityComparison ?: $competitionComparison ?: $timeComparison);
-        });
         $page = max(1, (int) request()->input('page', 1));
         $perPage = min(100, max(1, (int) request()->input('per_page', 20)));
         $offset = ($page - 1) * $perPage;
         $this->footballHasMore = count($getData) > ($offset + $perPage);
         $this->footballNextPage = $this->footballHasMore ? $page + 1 : null;
+        if ($offset < count($getData)) {
+            usort($getData, static function (array $first, array $second) use ($sortByTime, $leaguePriorities, $groupByCompetition): int {
+                $timeComparison = (int) ($first['timestamp'] ?? 0) <=> (int) ($second['timestamp'] ?? 0);
+                $priorityComparison = $leaguePriorities[$first['tournament'] ?? ''][$first['tournament_country'] ?? '']
+                    <=> $leaguePriorities[$second['tournament'] ?? ''][$second['tournament_country'] ?? ''];
+                $competitionComparison = $groupByCompetition && $priorityComparison === 0
+                    ? strcmp((string) ($first['tournament_id'] ?? ($first['tournament_country'] ?? '').'|'.$first['tournament']), (string) ($second['tournament_id'] ?? ($second['tournament_country'] ?? '').'|'.$second['tournament']))
+                    : 0;
+
+                return $sortByTime
+                    ? ($timeComparison ?: $priorityComparison)
+                    : ($priorityComparison ?: $competitionComparison ?: $timeComparison);
+            });
+        }
         $getData = array_slice($getData, $offset, $perPage);
 
         $matchIds = array_values(array_unique(array_map(

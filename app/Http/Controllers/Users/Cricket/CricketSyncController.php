@@ -87,12 +87,12 @@ class CricketSyncController extends Controller
         return $matches;
     }
 
-    private function readBetFairData(array $payloads, string $cacheKey, bool $isLiveApi, int $ttlSeconds): array
+    private function readBetFairData(array $payloads, string $cacheKey, bool $isLiveApi, int $ttlSeconds, ?array $getExistingRecords = null): array
     {
-        $getExistingRecords = getInRedis($cacheKey) ?? [];
+        $getExistingRecords ??= getInRedis($cacheKey) ?? [];
         $missingIds = array_keys(array_filter($payloads['liveMap'] ?? [], static fn (array $event, string|int $id): bool => ! array_any($getExistingRecords, static fn (array $match): bool => (string) ($match['betfair_match_id'] ?? '') === (string) $id), ARRAY_FILTER_USE_BOTH));
         if ($missingIds !== []) {
-            foreach (CricketMatch::query()->with('markets')->whereIn('betfair_match_id', $missingIds)->get() as $stored) {
+            foreach (CricketMatch::query()->with('markets:id,cricket_match_unique_key,payload')->whereIn('betfair_match_id', $missingIds)->get(['id', 'unique_key', 'betfair_match_id', 'payload']) as $stored) {
                 $restored = $stored->payload ?? [];
                 $restored['markets'] = [];
                 foreach ($stored->markets as $runner) {
@@ -410,7 +410,7 @@ class CricketSyncController extends Controller
             $knownIds = array_column($matches, 'sportsApiPro_match_id');
             $missingIds = array_diff(array_column($events, 'id'), $knownIds);
             if ($missingIds !== []) {
-                foreach (CricketMatch::query()->with('markets')->whereIn('sports_api_pro_match_id', $missingIds)->get() as $stored) {
+                foreach (CricketMatch::query()->with('markets:id,cricket_match_unique_key,payload')->whereIn('sports_api_pro_match_id', $missingIds)->get(['id', 'unique_key', 'payload']) as $stored) {
                     $restored = $stored->payload ?? [];
                     $restored['markets'] = [];
                     foreach ($stored->markets as $runner) {
@@ -471,7 +471,7 @@ class CricketSyncController extends Controller
         }
         $matches = withRedisLock('Cricket:matches', function () use ($events, $isLive): array {
             $before = getInRedis('Cricket:matches') ?? [];
-            $after = $this->readBetFairData(['liveMap' => $events], 'Cricket:matches', $isLive, 30);
+            $after = $this->readBetFairData(['liveMap' => $events], 'Cricket:matches', $isLive, 30, $before);
 
             return array_filter($after, static fn (array $match, string $key): bool => $match != ($before[$key] ?? null), ARRAY_FILTER_USE_BOTH);
         }, 5);
