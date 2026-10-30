@@ -95,7 +95,11 @@ class AlertSystemTest extends TestCase
     {
         $this->get('/notifications')->assertRedirect(route('login'));
         $customer = CustomerFactory::new()->create();
-        $this->actingAs($customer, 'customers')->get('/notifications')->assertOk()->assertSee('Platform Live Pop-up Alerts')->assertSee('Open Telegram Web');
+        $page = $this->actingAs($customer, 'customers')->get('/notifications')->assertOk()->assertSee('Platform Live Pop-up Alerts')
+            ->assertSee('data-status-url="'.route('notifications.status').'"', false)
+            ->assertDontSee('id="btnDisconnectTelegram"', false)
+            ->assertDontSee('Open Telegram Web');
+        $this->assertSame(1, substr_count($page->getContent(), 'id="btnConnectTelegram"'));
         $response = $this->getJson('/notifications/status')->assertOk()->assertJsonPath('popup_enabled', true);
         foreach (AlertService::FILTERS as $type) {
             $response->assertJsonPath('preferences.'.$type, false);
@@ -113,6 +117,8 @@ class AlertSystemTest extends TestCase
         $this->postJson('/notifications/telegram/webhook', $this->start($query['start']), ['X-Telegram-Bot-Api-Secret-Token' => 'test-webhook'])->assertOk();
         $this->assertSame('555', $customer->fresh()->telegram_chat_id);
         $this->assertNull($customer->fresh()->telegram_token_hash);
+        $this->actingAs($customer->fresh(), 'customers')->getJson('/notifications/status')->assertOk()->assertJsonPath('connected', true)
+            ->assertJsonPath('username', 'tester')->assertJsonPath('preferences.ltd', true);
         $this->postJson('/notifications/telegram/webhook', $this->start($query['start'], 777), ['X-Telegram-Bot-Api-Secret-Token' => 'test-webhook'])->assertOk();
         $this->assertSame('555', $customer->fresh()->telegram_chat_id);
         $this->deleteJson('/notifications/telegram')->assertOk()->assertJsonPath('connected', false)->assertJsonPath('preferences.ltd', true);

@@ -19,11 +19,19 @@ const realtimeClient = window.Echo.connector.pusher;
 
 window.addEventListener('pagehide', () => {
     realtimeClient.disconnect();
+    notificationViewActive = false;
+    clearTimeout(connectionExpiry);
+    clearInterval(connectionPolling);
+    connectionPolling = null;
+    connectionStatusRequest?.abort();
+    connectionStatusRequest = null;
 });
 
 window.addEventListener('pageshow', (event) => {
     if (event.persisted) {
         realtimeClient.connect();
+        notificationViewActive = true;
+        if (notificationPage && latestNotificationState) updateNotificationStatus(latestNotificationState);
     }
 });
 
@@ -57,15 +65,21 @@ const notificationPage = document.getElementById('notification-settings');
 const notificationFeedback = document.getElementById('notification-feedback');
 const notificationState = document.getElementById('notification-state');
 let connectionExpiry;
+let connectionPolling = null;
+let connectionExpiresAt = 0;
+let connectionStatusRequest = null;
+let telegramAction = null;
+let latestNotificationState;
+let notificationViewActive = true;
 
-const notificationRequest = async (url, method, body) => {
+const notificationRequest = async (url, method, body, signal) => {
     const response = await fetch(url, {
-        method, credentials: 'same-origin',
+        method, credentials: 'same-origin', signal,
         headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     const data = await response.json();
-    if (!response.ok) throw new Error(data.message || 'Notification request failed.');
+    if (!response.ok) throw Object.assign(new Error(data.message || 'Notification request failed.'), { status: response.status });
     return data;
 };
 
@@ -75,13 +89,63 @@ const updateNotificationStatus = (state, preferences = false) => {
         if (!state.popup_enabled) alertContainer.replaceChildren();
     }
     if (!notificationPage) return;
-    clearTimeout(connectionExpiry);
+    if (telegramAction === 'connect' && connectionExpiresAt && Date.now() >= connectionExpiresAt && !state.connected) {
+        state = { ...state, error: 'Telegram connection token expired. Please connect again.' };
+    }
+    latestNotificationState = state;
+    if (state.connected || state.error) {
+        if (telegramAction === 'connect') {
+            notificationFeedback.textContent = state.connected ? 'Telegram connected successfully.' : state.error;
+            telegramAction = null;
+        }
+        connectionExpiresAt = 0;
+    }
+    if (telegramAction !== 'connect' || !notificationViewActive || !notificationPage.isConnected) {
+        clearTimeout(connectionExpiry);
+        clearInterval(connectionPolling);
+        connectionPolling = null;
+        connectionStatusRequest?.abort();
+        connectionStatusRequest = null;
+    } else if (connectionExpiresAt && connectionPolling === null) {
+        connectionPolling = setInterval(async () => {
+            if (!notificationPage.isConnected) {
+                updateNotificationStatus(latestNotificationState);
+                return;
+            }
+            if (connectionStatusRequest) return;
+            const controller = new AbortController();
+            connectionStatusRequest = controller;
+            try {
+                const status = await notificationRequest(notificationPage.dataset.statusUrl, 'GET', undefined, controller.signal);
+                if (!controller.signal.aborted) updateNotificationStatus(status);
+            } catch (error) {
+                if (error.name === 'AbortError') return;
+                notificationFeedback.textContent = error.message;
+                if (error.status >= 400 && error.status < 500 && ![408, 429].includes(error.status)) {
+                    updateNotificationStatus({ ...latestNotificationState, error: error.message });
+                }
+            } finally {
+                if (connectionStatusRequest === controller) connectionStatusRequest = null;
+            }
+        }, 3000);
+        connectionExpiry = setTimeout(() => {
+            updateNotificationStatus({ ...latestNotificationState, error: 'Telegram connection token expired. Please connect again.' });
+        }, Math.max(0, connectionExpiresAt - Date.now()));
+    }
+    if (!notificationPage.isConnected) return;
     document.getElementById('tgStatusConnected').style.display = state.connected ? 'flex' : 'none';
     document.getElementById('tgStatusDisconnected').style.display = !state.connected && !state.error ? 'flex' : 'none';
-    document.getElementById('tgStatusError').style.display = state.error ? 'flex' : 'none';
+    document.getElementById('tgStatusError').style.display = !state.connected && state.error ? 'flex' : 'none';
     document.getElementById('tgUsername').textContent = state.username ? `@${state.username}` : 'Telegram';
     document.getElementById('tgErrorText').textContent = state.error || '';
     document.getElementById('btnTestNotification').disabled = !state.connected;
+    const button = document.getElementById('btnConnectTelegram');
+    const actions = document.getElementById(state.connected ? 'tgStatusConnected' : state.error ? 'tgStatusError' : 'tgStatusDisconnected').querySelector('.tg-status-actions');
+    if (button.parentElement !== actions) actions.append(button);
+    button.className = state.connected ? button.dataset.disconnectClass : button.dataset.connectClass;
+    button.disabled = telegramAction !== null;
+    button.querySelector('i').className = state.connected ? 'fas fa-unlink' : 'fas fa-link';
+    button.querySelector('[data-telegram-action-label]').textContent = telegramAction === 'connect' ? 'Connecting...' : telegramAction === 'disconnect' ? 'Disconnecting...' : state.connected ? 'Disconnect Telegram' : 'Connect Telegram';
     if (preferences) {
         notificationPage.querySelectorAll('[data-notification-filter]').forEach(input => { input.checked = Boolean(state.preferences[input.dataset.notificationFilter]); });
         document.getElementById('popup-enabled').checked = state.popup_enabled;
@@ -97,35 +161,53 @@ if (notificationPage && notificationState) {
             input.checked = !input.checked;
         }
         const button = event.target.closest('button');
-        if (!button) return;
+        if (!button || button.disabled) return;
+        event.preventDefault();
         button.disabled = true;
+        const label = button.innerHTML;
+        button.closest('.save-bar, .tg-card')?.append(notificationFeedback);
+        notificationFeedback.textContent = '';
+        notificationFeedback.setAttribute('role', 'status');
         let telegramWindow;
         try {
-            if (['btnConnectTelegram', 'btnConnectTelegramWeb', 'btnRetryConnect', 'btnRetryConnectWeb'].includes(button.id)) {
+            if (button.id === 'btnConnectTelegram' && !latestNotificationState.connected) {
+                telegramAction = 'connect';
+                updateNotificationStatus({ ...latestNotificationState, error: null });
                 telegramWindow = window.open('about:blank', '_blank');
                 if (telegramWindow) telegramWindow.opener = null;
                 const data = await notificationRequest(notificationPage.dataset.connectUrl, 'POST');
-                const destination = button.id.endsWith('Web') ? data.web_url : data.url;
+                const destination = data.url;
                 if (telegramWindow) telegramWindow.location.replace(destination);
                 else window.location.assign(destination);
                 notificationFeedback.textContent = 'Open @BFMarketsAlertsBot and press Start to finish connecting.';
-                connectionExpiry = setTimeout(() => { notificationFeedback.textContent = 'Telegram connection token expired. Please connect again.'; }, data.expires_in * 1000);
-            } else if (button.id === 'btnDisconnectTelegram') {
+                if (!latestNotificationState.connected && telegramAction === 'connect') {
+                    connectionExpiresAt = Date.now() + data.expires_in * 1000;
+                    updateNotificationStatus(latestNotificationState);
+                }
+            } else if (button.id === 'btnConnectTelegram') {
+                telegramAction = 'disconnect';
+                updateNotificationStatus(latestNotificationState);
                 updateNotificationStatus(await notificationRequest(notificationPage.dataset.disconnectUrl, 'DELETE'));
                 notificationFeedback.textContent = 'Telegram disconnected. Your preferences are saved.';
             } else if (button.id === 'btnSavePreferences') {
+                button.textContent = 'Saving...';
                 const preferences = Object.fromEntries(Array.from(notificationPage.querySelectorAll('[data-notification-filter]'), input => [input.dataset.notificationFilter, input.checked]));
-                updateNotificationStatus(await notificationRequest(alertContainer.dataset.preferencesUrl, 'PATCH', { preferences, popup_enabled: document.getElementById('popup-enabled').checked }), true);
-                notificationFeedback.textContent = 'Preferences saved.';
+                updateNotificationStatus(await notificationRequest(alertContainer.dataset.preferencesUrl, 'PATCH', { preferences, popup_enabled: document.getElementById('popup-enabled').checked }));
+                notificationFeedback.textContent = 'Notification preferences saved successfully.';
             } else if (button.id === 'btnTestNotification') {
                 const data = await notificationRequest(notificationPage.dataset.testUrl, 'POST', { request_id: crypto.randomUUID() });
                 notificationFeedback.textContent = data.message;
             }
         } catch (error) {
             if (telegramWindow) telegramWindow.close();
+            if (button.id === 'btnConnectTelegram' && telegramAction === 'connect') updateNotificationStatus({ ...latestNotificationState, error: error.message });
             notificationFeedback.textContent = error.message;
+            notificationFeedback.setAttribute('role', 'alert');
         } finally {
             button.disabled = false;
+            if (button.id === 'btnSavePreferences') button.innerHTML = label;
+            if (button.id === 'btnConnectTelegram' && (telegramAction === 'disconnect' || !connectionExpiresAt)) telegramAction = null;
+            updateNotificationStatus(latestNotificationState);
         }
     });
 }

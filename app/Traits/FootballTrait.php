@@ -456,7 +456,7 @@ trait FootballTrait
         $groups = [];
         if (in_array($filter, ['prematch_drops', 'market_shock'], true)) {
             $shockCutoff = time() - 1200;
-            foreach ($match['pinnacle_markets'] ?? [] as $state) {
+            foreach ($match['pinnacle_markets'] ?? [] as $selectionKey => $state) {
                 $qualifies = $filter === 'prematch_drops'
                     ? ($state['drop_triggered'] ?? false) === true
                     : (int) ($state['shock_detected_at'] ?? 0) >= $shockCutoff;
@@ -481,6 +481,11 @@ trait FootballTrait
                     default => $outcome,
                 };
                 $odd = $this->footballOddsRunner($runner, $state['current_odds'] ?? null, $state['baseline_odds'] ?? $quote['from_price'] ?? null);
+                if ($filter === 'prematch_drops') {
+                    $odd += ['history' => oddsMovementHistory($state), 'detected_at' => $quote['alerted'] ?? $state['updated_at'] ?? null];
+                } else {
+                    $odd += ['detected_at' => $state['shock_detected_at'] ?? null, 'alert_id' => (string) $selectionKey];
+                }
                 if ($odd['currentBackOdds'] === null) {
                     continue;
                 }
@@ -504,7 +509,10 @@ trait FootballTrait
                         (string) ($runner['runner'] ?? 'Selection'),
                         $runner['currentBackOdds'] ?? $runner['backOdds'] ?? null,
                         $runner['initialBackOdds'] ?? null
-                    ), $runners),
+                    ) + ($filter === 'prematch_drops' ? ['history' => oddsMovementHistory($runner), 'detected_at' => $runner['prematch_drop_detected_at'] ?? null] : [
+                        'detected_at' => $runner['market_shock_detected_at'] ?? null,
+                        'alert_id' => implode('|', [$runner['marketId'] ?? '', $runner['marketType'] ?? '', $runner['runnerId'] ?? $runner['runner'] ?? '', $runner['handicap'] ?? 0]),
+                    ]), $runners),
                 ];
             }
             $outcomeOrder = [strtolower(trim($match['team1'])) => 0, 'draw' => 1, 'the draw' => 1, 'x' => 1, strtolower(trim($match['team2'])) => 2];

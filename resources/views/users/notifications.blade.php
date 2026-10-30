@@ -3,7 +3,14 @@
 @section('title', 'Notifications · BF Markets')
 
 @section('content')
-    <div id="notification-settings" data-connect-url="{{ route('notifications.connect') }}" data-disconnect-url="{{ route('notifications.disconnect') }}" data-test-url="{{ route('notifications.test') }}">
+    @php
+        $telegramButtonClasses = [
+            'connect' => 'btn-tg btn-tg-connect inline-flex items-center [gap:8px] [padding:10px_20px] [border-radius:60px] [font-size:13.5px] font-bold border-0 cursor-pointer [transition:transform_0.2s,_box-shadow_0.2s] [text-decoration:none] [font-family:inherit] [background:linear-gradient(135deg,_#229ED9,_#1a6b9c)] text-white [box-shadow:0_4px_12px_rgba(34,_158,_217,_0.3)] [&:hover]:[transform:translateY(-2px)] [&:hover]:[box-shadow:0_8px_20px_rgba(34,_158,_217,_0.4)]',
+            'disconnect' => 'btn-tg btn-tg-disconnect inline-flex items-center [gap:8px] [padding:10px_20px] [border-radius:60px] [font-size:13.5px] font-bold border-0 cursor-pointer [transition:transform_0.2s,_box-shadow_0.2s] [text-decoration:none] [font-family:inherit] bg-transparent [color:#c74e4e] [border:1px_solid_#f0c9c9] dark:[color:#e08080] dark:[border-color:#3a1f1f] [&:hover]:[background:#fde8e8] [&:hover]:[border-color:#e08080] dark:[&:hover]:[background:#3a1f1f]',
+        ];
+    @endphp
+
+    <div id="notification-settings" data-status-url="{{ route('notifications.status') }}" data-connect-url="{{ route('notifications.connect') }}" data-disconnect-url="{{ route('notifications.disconnect') }}" data-test-url="{{ route('notifications.test') }}">
     <script id="notification-state" type="application/json">{!! json_encode($notificationState, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) !!}</script>
     <p id="notification-feedback" role="status" class="my-3 text-sm text-[#1a6b9c] dark:text-[#8aaccc]"></p>
 
@@ -31,11 +38,10 @@
                     <span class="tg-status-text disconnected [&.connected]:[color:#1f9a6e] [&.disconnected]:[color:#c74e4e] [&.error]:[color:#b8860b]">{{ __('Not connected') }}</span>
                 </div>
                 <div class="tg-status-actions flex items-center [gap:8px] flex-wrap max-[480px]:[width:100%] max-[480px]:[&_.btn-tg]:[flex:1] max-[480px]:[&_.btn-tg]:[justify-content:center]">
-                    <button class="btn-tg btn-tg-connect inline-flex items-center [gap:8px] [padding:10px_20px] [border-radius:60px] [font-size:13.5px] font-bold border-0 cursor-pointer [transition:transform_0.2s,_box-shadow_0.2s] [text-decoration:none] [font-family:inherit] [background:linear-gradient(135deg,_#229ED9,_#1a6b9c)] text-white [box-shadow:0_4px_12px_rgba(34,_158,_217,_0.3)] [&:hover]:[transform:translateY(-2px)] [&:hover]:[box-shadow:0_8px_20px_rgba(34,_158,_217,_0.4)]" id="btnConnectTelegram">
+                    <button type="button" class="{{ $telegramButtonClasses[$notificationState['connected'] ? 'disconnect' : 'connect'] }}" data-connect-class="{{ $telegramButtonClasses['connect'] }}" data-disconnect-class="{{ $telegramButtonClasses['disconnect'] }}" id="btnConnectTelegram">
                         <i class="fas fa-link"></i>
-                        {{ __('Connect Telegram') }}
+                        <span data-telegram-action-label>{{ __('Connect Telegram') }}</span>
                     </button>
-                    <button type="button" class="btn-tg btn-tg-connect inline-flex items-center [gap:8px] [padding:10px_20px] [border-radius:60px] [font-size:13.5px] font-bold border-0 cursor-pointer [transition:transform_0.2s,_box-shadow_0.2s] [text-decoration:none] [font-family:inherit] [background:linear-gradient(135deg,_#229ED9,_#1a6b9c)] text-white [box-shadow:0_4px_12px_rgba(34,_158,_217,_0.3)] [&:hover]:[transform:translateY(-2px)] [&:hover]:[box-shadow:0_8px_20px_rgba(34,_158,_217,_0.4)]" id="btnConnectTelegramWeb"><i class="fas fa-globe"></i> {{ __('Open Telegram Web') }}</button>
                 </div>
             </div>
 
@@ -50,10 +56,6 @@
                         <i class="fas fa-paper-plane"></i>
                         {{ __('Send Test Notification') }}
                     </button>
-                    <button class="btn-tg btn-tg-disconnect inline-flex items-center [gap:8px] [padding:10px_20px] [border-radius:60px] [font-size:13.5px] font-bold border-0 cursor-pointer [transition:transform_0.2s,_box-shadow_0.2s] [text-decoration:none] [font-family:inherit] bg-transparent [color:#c74e4e] [border:1px_solid_#f0c9c9] dark:[color:#e08080] dark:[border-color:#3a1f1f] [&:hover]:[background:#fde8e8] [&:hover]:[border-color:#e08080] dark:[&:hover]:[background:#3a1f1f]" id="btnDisconnectTelegram">
-                        <i class="fas fa-unlink"></i>
-                        {{ __('Disconnect') }}
-                    </button>
                 </div>
             </div>
 
@@ -64,11 +66,6 @@
                     <span class="tg-status-text error [&.connected]:[color:#1f9a6e] [&.disconnected]:[color:#c74e4e] [&.error]:[color:#b8860b]" id="tgErrorText">{{ __('Telegram connection failed') }}</span>
                 </div>
                 <div class="tg-status-actions flex items-center [gap:8px] flex-wrap max-[480px]:[width:100%] max-[480px]:[&_.btn-tg]:[flex:1] max-[480px]:[&_.btn-tg]:[justify-content:center]">
-                    <button class="btn-tg btn-tg-connect inline-flex items-center [gap:8px] [padding:10px_20px] [border-radius:60px] [font-size:13.5px] font-bold border-0 cursor-pointer [transition:transform_0.2s,_box-shadow_0.2s] [text-decoration:none] [font-family:inherit] [background:linear-gradient(135deg,_#229ED9,_#1a6b9c)] text-white [box-shadow:0_4px_12px_rgba(34,_158,_217,_0.3)] [&:hover]:[transform:translateY(-2px)] [&:hover]:[box-shadow:0_8px_20px_rgba(34,_158,_217,_0.4)]" id="btnRetryConnect">
-                        <i class="fas fa-redo"></i>
-                        {{ __('Retry') }}
-                    </button>
-                    <button type="button" class="btn-tg btn-tg-connect inline-flex items-center [gap:8px] [padding:10px_20px] [border-radius:60px] [font-size:13.5px] font-bold border-0 cursor-pointer [transition:transform_0.2s,_box-shadow_0.2s] [text-decoration:none] [font-family:inherit] [background:linear-gradient(135deg,_#229ED9,_#1a6b9c)] text-white [box-shadow:0_4px_12px_rgba(34,_158,_217,_0.3)] [&:hover]:[transform:translateY(-2px)] [&:hover]:[box-shadow:0_8px_20px_rgba(34,_158,_217,_0.4)]" id="btnRetryConnectWeb"><i class="fas fa-globe"></i> {{ __('Open Telegram Web') }}</button>
                 </div>
             </div>
         </div>

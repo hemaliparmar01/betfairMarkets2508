@@ -9,8 +9,33 @@ const getSelectedFilters = () => {
 };
 
 let openFootballTimeline = null;
+const openFootballPrematchMarkets = new Map();
 
 const restoreFootballTimeline = () => {
+    const visibleMarkets = new Set();
+    document.querySelectorAll('[data-prematch-markets]').forEach(panel => {
+        const id = panel.dataset.prematchMarkets;
+        visibleMarkets.add(id);
+        const state = openFootballPrematchMarkets.get(id);
+        const row = panel.closest('.event-row');
+        const toggle = row.querySelector('[data-prematch-toggle]');
+        const groups = panel.querySelectorAll('[data-football-odds-source]');
+        if (panel.dataset.layoutWidth !== String(panel.clientWidth)) {
+            const first = groups[0];
+            const previewHeight = first ? Math.max(first.querySelector('.odd-box')?.getBoundingClientRect().bottom ?? 0, first.querySelector('.football-market-label').getBoundingClientRect().bottom) - first.getBoundingClientRect().top : panel.firstElementChild.getBoundingClientRect().height;
+            panel.style.setProperty('--prematch-preview-height', `${Math.ceil(previewHeight)}px`);
+            panel.style.setProperty('--prematch-markets-height', `${Math.ceil(groups.length ? Array.from(groups).slice(0, 3).reduce((height, group) => height + group.getBoundingClientRect().height, 0) : previewHeight)}px`);
+            panel.dataset.layoutWidth = String(panel.clientWidth);
+        }
+        const restoreScroll = state?.expanded && row.dataset.prematchExpanded !== 'true';
+        row.dataset.prematchExpanded = state?.expanded ? 'true' : 'false';
+        toggle.disabled = groups.length === 0;
+        toggle.setAttribute('aria-expanded', row.dataset.prematchExpanded);
+        if (restoreScroll) panel.scrollTop = state.scrollTop;
+        else if (!state?.expanded) panel.scrollTop = 0;
+        else state.scrollTop = panel.scrollTop;
+    });
+    for (const id of openFootballPrematchMarkets.keys()) if (!visibleMarkets.has(id)) openFootballPrematchMarkets.delete(id);
     let found = false;
     document.querySelectorAll('[data-football-timeline]').forEach((timeline) => {
         const panel = timeline.querySelector('[data-timeline-panel]');
@@ -41,7 +66,32 @@ const restoreFootballTimeline = () => {
 };
 
 const footballTimelineClockAnchors = new WeakMap();
+let footballClockInterval = null;
 const refreshFootballTimelineClocks = () => {
+    const now = Date.now() / 1000;
+    document.querySelectorAll('[data-shock-alert]').forEach(card => {
+        const remaining = Math.max(0, Math.ceil(Number(card.dataset.shockExpiresAt) - now));
+        if (remaining === 0) {
+            card.remove();
+            return;
+        }
+        const countdown = card.querySelector('[data-shock-countdown]');
+        countdown.textContent = `Expires in ${String(Math.floor(remaining / 60)).padStart(2, '0')}:${String(remaining % 60).padStart(2, '0')}`;
+    });
+    const shockGrid = document.querySelector('[data-shock-heading]')?.closest('.fixtures-container');
+    if (shockGrid) {
+        shockGrid.querySelectorAll('.football-alert--shock').forEach(row => {
+            if (!row.querySelector('[data-shock-alert]')) row.remove();
+        });
+        if (!shockGrid.querySelector('[data-shock-alert], .no-fixtures-message')) {
+            const empty = document.createElement('div');
+            empty.className = 'no-fixtures-message';
+            empty.textContent = 'No data available.';
+            shockGrid.insertBefore(empty, shockGrid.querySelector('[data-shock-footer]'));
+        }
+    }
+    const markets = document.querySelector('[data-prematch-markets]');
+    if (markets && markets.dataset.layoutWidth !== String(markets.clientWidth)) restoreFootballTimeline();
     document.querySelectorAll('[data-football-timeline][data-timeline-running="true"]').forEach((timeline) => {
         if (!footballTimelineClockAnchors.has(timeline)) footballTimelineClockAnchors.set(timeline, performance.now() - Number(timeline.dataset.timelineSecond ?? 0) * 1000);
         const elapsed = Math.max(0, Math.floor((performance.now() - footballTimelineClockAnchors.get(timeline)) / 60000));
@@ -109,6 +159,10 @@ const appendFootballMatches = (html) => {
     }
 
     container.append(...incoming.childNodes);
+    const legend = container.querySelector('[data-prematch-legend]');
+    if (legend) container.append(legend);
+    const shockFooter = container.querySelector('[data-shock-footer]');
+    if (shockFooter) container.append(shockFooter);
 };
 
 const footballGoalState = new Map();
@@ -337,6 +391,17 @@ document.addEventListener('click', (event) => {
     const chartButton = event.target.closest('[data-action="chart"][data-chart-url]');
     if (chartButton && !chartButton.disabled) {
         window.location.href = chartButton.dataset.chartUrl;
+        return;
+    }
+
+    const marketToggle = event.target.closest('[data-prematch-toggle]');
+    if (marketToggle) {
+        const id = marketToggle.dataset.prematchToggle;
+        const panel = document.getElementById(`prematch-markets-${id}`);
+        const previous = openFootballPrematchMarkets.get(id);
+        openFootballPrematchMarkets.set(id, { expanded: !previous?.expanded, scrollTop: previous?.expanded ? panel.scrollTop : (previous?.scrollTop ?? 0) });
+        marketToggle.closest('.event-row').dataset.prematchAnimate = 'true';
+        restoreFootballTimeline();
         return;
     }
 
@@ -620,6 +685,10 @@ const callFixtureData = async (value, options = {}) => {
             template.innerHTML = data.html.trim();
             const responseContainer = template.content.querySelector('.fixtures-container');
             const incoming = responseContainer ?? template.content;
+            fixtures.querySelectorAll('[data-prematch-markets]').forEach(panel => {
+                const state = openFootballPrematchMarkets.get(panel.dataset.prematchMarkets);
+                if (state?.expanded) state.scrollTop = panel.scrollTop;
+            });
             preserveQuickStatsPanel(incoming);
             const existingNodes = new Map(Array.from(fixtures.children, node => [node.id || node.dataset.leagueHeader || node.getAttribute('data-sportApi-match-id'), node]));
             const nodes = Array.from(incoming.children, node => {
@@ -641,8 +710,8 @@ const callFixtureData = async (value, options = {}) => {
         restorePredictionPanel();
         restoreQuickStatsPanel();
         restoreStatisticsPanel();
-        refreshFootballTimelineClocks();
         restoreFootballTimeline();
+        refreshFootballTimelineClocks();
 
     } catch (error) {
         console.error('Request failed:', error);
@@ -748,7 +817,14 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('pageshow', (event) => {
     if (event.persisted) {
         refreshFixtureMinutes();
+        refreshFootballTimelineClocks();
+        if (footballClockInterval === null) footballClockInterval = setInterval(refreshFootballTimelineClocks, 1000);
     }
+});
+
+window.addEventListener('pagehide', () => {
+    clearInterval(footballClockInterval);
+    footballClockInterval = null;
 });
 
 window.Echo.channel('sports.football.live')
@@ -831,7 +907,7 @@ document.addEventListener('click', async (event) => {
 });
 
 refreshFootballTimelineClocks();
-setInterval(refreshFootballTimelineClocks, 1000);
+footballClockInterval = setInterval(refreshFootballTimelineClocks, 1000);
 document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && openFootballTimeline) {
         openFootballTimeline = null;

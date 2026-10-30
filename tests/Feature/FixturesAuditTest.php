@@ -115,13 +115,18 @@ class FixturesAuditTest extends TestCase
         $this->app->instance(FootballSyncController::class, $sync);
         $base = ['unique_key' => '1', 'timestamp' => time() - 6000, 'result_status' => 'Live', 'minutes_status' => '2nd half', 'current_period_start_timestamp' => time() - 1500, 'sportsApiPro_match_id' => '1', 'betfair_match_id' => '201', 'data_sync_complete' => true, 'tournament' => 'Test League', 'team1' => 'Home', 'team2' => 'Away', 'home_score' => 0, 'away_score' => 0, 'markets' => []];
         $runner = ['runner' => 'Home', 'runnerId' => '1', 'marketType' => 'MATCH_ODDS', 'backOdds' => 1.8, 'initialBackOdds' => 2.0, 'monitoring_baseline_version' => 1, 'opening_odds_source' => 'first_observed', 'initialBackOddsTimestamp' => time() - 1000, 'prematch_drop_triggered' => true];
+        $detectedAt = time() - 300;
         $data = [
             '1' => array_replace($base, ['minutes_status' => 'Half Time']),
             '2' => array_replace($base, ['unique_key' => '2', 'sportsApiPro_match_id' => '2']),
             '3' => array_replace($base, ['unique_key' => '3', 'sportsApiPro_match_id' => '3', 'away_score' => 1, 'bet365_prematch' => ['favorite_odds' => 1.8, 'favorite_side' => 'home']]),
             '4' => array_replace($base, ['unique_key' => '4', 'sportsApiPro_match_id' => '4', 'bet365_prematch' => ['favorite_odds' => 1.87, 'favorite_side' => 'home']]),
             '5' => array_replace($base, ['unique_key' => '5', 'sportsApiPro_match_id' => '5', 'timestamp' => time() + 120, 'result_status' => 'Prematch', 'markets' => ['m' => [$runner]]]),
-            '6' => array_replace($base, ['unique_key' => '6', 'sportsApiPro_match_id' => '6', 'timestamp' => time() + 120, 'result_status' => 'Prematch', 'pinnacle_market_shock_detected_at' => time()]),
+            '6' => array_replace($base, ['unique_key' => '6', 'sportsApiPro_match_id' => '6', 'timestamp' => time() + 120, 'result_status' => 'Prematch', 'pinnacle_market_shock_detected_at' => $detectedAt, 'pinnacle_markets' => ['home' => ['sect' => 'moneyline', 'outcome' => 'home', 'baseline_odds' => 2.0, 'current_odds' => 1.8, 'shock_detected_at' => $detectedAt]], 'markets' => ['m' => [
+                array_replace($runner, ['prematch_drop_triggered' => false, 'market_shock_detected_at' => $detectedAt]),
+                array_replace($runner, ['runner' => 'Away', 'runnerId' => '2', 'prematch_drop_triggered' => false, 'market_shock_detected_at' => time() - 1201]),
+                array_replace($runner, ['runner' => 'Draw', 'runnerId' => '3', 'prematch_drop_triggered' => false]),
+            ]]]),
             '7' => array_replace($base, ['unique_key' => '7', 'sportsApiPro_match_id' => '7', 'minutes_status' => 'Half Time', 'home_score' => null, 'away_score' => null]),
         ];
         Redis::shouldReceive('get')->andReturnUsing(static fn (string $key): ?string => $key === 'Football:matches' ? json_encode($data) : null);
@@ -140,6 +145,13 @@ class FixturesAuditTest extends TestCase
             }
             sort($ids);
             $this->assertSame($expected, $ids, $filter);
+            if ($filter === 'market_shock') {
+                $html = view('users.sports.football.footballDetails', ['data' => $groups, 'append' => false])->render();
+                $this->assertSame(2, substr_count($html, 'data-shock-alert='));
+                $this->assertSame(2, substr_count($html, 'data-shock-expires-at="'.($detectedAt + 1200).'"'));
+                $this->assertSame(2, substr_count($html, 'data-shock-chart'));
+                $this->assertStringContainsString('Alerts are automatically removed after 20 minutes.', $html);
+            }
             if ($filter === 'ht00') {
                 $html = view('users.sports.football.footballDetails', ['data' => $groups, 'append' => false])->render();
                 foreach (['livestats', 'quickstats', 'stats', 'prediction'] as $action) {

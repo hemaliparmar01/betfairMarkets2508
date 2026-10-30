@@ -1,5 +1,8 @@
 @php
     $customerIsAuthenticated = auth('customers')->check();
+    $isPrematchDrops = request()->input('type') === 'prematch_drops';
+    $isMarketShock = request()->input('type') === 'market_shock';
+    $shockCutoff = $isMarketShock ? time() - 1200 : 0;
     $checkAuthAndSubscription = $checkAuthAndSubscription ?? checkAuthAndSubscription();
     $data = array_filter($data, static fn (array $group): bool => ! empty($group['matches']));
 @endphp
@@ -12,13 +15,19 @@
             No data available.</div>
     @endif
     @if (! ($append ?? false) && count($data) > 0 && in_array(request()->input('type'), ['prematch_drops', 'market_shock'], true))
-        <header class="football-alert-heading">
+        <header class="football-alert-heading" @if ($isMarketShock) data-shock-heading @endif>
             <span class="football-alert-heading__icon" aria-hidden="true"><i class="fas {{ request()->input('type') === 'prematch_drops' ? 'fa-arrow-trend-down' : 'fa-bolt' }}"></i></span>
             <div>
-                <h2>{{ request()->input('type') === 'prematch_drops' ? __('Prematch Drops') : __('Market Shock Detector') }}</h2>
-                <p>{{ request()->input('type') === 'prematch_drops' ? __('Track ongoing price drops in real-time before the match starts') : __('Sudden odds movements across monitored markets') }}</p>
+                <h2>{{ request()->input('type') === 'prematch_drops' ? __('Prematch Drops') : __('Market Shock Detector') }} @if ($isPrematchDrops || $isMarketShock)<i class="fas fa-info-circle text-sm text-slate-500" title="{{ $isPrematchDrops ? __('Expand a match to see all markets and selections.') : __('Alerts are automatically removed after 20 minutes.') }}" aria-label="{{ $isPrematchDrops ? __('Expand a match to see all markets and selections.') : __('Alerts are automatically removed after 20 minutes.') }}"></i>@endif</h2>
+                <p>{{ request()->input('type') === 'prematch_drops' ? __('Track ongoing price drops in real-time before the match starts') : __('Detects sudden, significant market shocks in real-time') }}</p>
             </div>
         </header>
+    @endif
+    @if ($isPrematchDrops && ! ($append ?? false) && count($data) > 0)
+        <div data-prematch-columns>
+            <span>{{ __('Status') }}</span><span>{{ __('Match / League') }}</span><span>{{ __('Market') }}</span><span>{{ __('Selection') }}</span>
+            <span>{{ __('Odds Movement (Baseline → Current)') }}</span><span>{{ __('Drop %') }}</span><span>{{ __('Drop Started') }}</span><span>{{ __('Chart') }}</span>
+        </div>
     @endif
     @foreach ($data as $league => $matches)
         <div class="league-header break-words [font-size:13px] font-bold uppercase [letter-spacing:0.5px] [color:#1e4763] [padding:10px_0_6px_0] [border-bottom:2px_solid_#e6edf6] [margin-top:8px] [transition:0.3s] bg-white [z-index:2] dark:[color:#8aaccc] dark:[border-bottom-color:#2a3f50] dark:[background:#1a2a38] [&:first-of-type]:[margin-top:0] max-[480px]:text-[11px]"
@@ -75,19 +84,22 @@
                     ];
                 }
             @endphp
-            <div data-match-url="{{ route('football.matches.show', $event['sportsApiPro_match_id']) }}"
+            <div @if ($isPrematchDrops) data-prematch-expanded="false" @endif data-match-url="{{ route('football.matches.show', $event['sportsApiPro_match_id']) }}"
                 data-sportApi-match-id="{{ $event['sportsApiPro_match_id'] }}"
                 data-betfair-match-id="{{ $event['betfair_match_id'] }}"
                 data-home-score="{{ $event['home_score'] ?? '' }}" data-away-score="{{ $event['away_score'] ?? '' }}"
                 data-goal-signal="{{ $event['goal_highlight_until'] ?? 0 }}" data-match-status="{{ $event['status'] }}" data-goal-highlight-seconds="{{ config('services.fixtures.goal_highlight_seconds', 40) }}"
                 class="event-row {{ request()->input('type') === 'prematch_drops' ? 'football-alert football-alert--prematch' : (request()->input('type') === 'market_shock' ? 'football-alert football-alert--shock' : '') }} grid min-w-0 cursor-pointer grid-cols-[minmax(0,1fr)_148px_360px] items-center [background:#fafdff] [border-radius:12px] [padding:5px_12px_5px_16px] [border:1px_solid_#e6eff8] [gap:4px_12px] [transition:0.06s] [min-height:44px] dark:[background:#1a2a38] dark:[border-color:#2a3f50] dark:[&:hover]:[background:#223848] [&:hover]:[background:#f2f8ff] [&:hover]:[border-color:#c6d8ea] max-[1024px]:grid-cols-[148px_minmax(0,1fr)] max-[1024px]:gap-2 max-[480px]:grid-cols-1 max-[480px]:p-2.5">
-                @if (in_array(request()->input('type'), ['prematch_drops', 'market_shock'], true))
+                @if (request()->input('type') === 'market_shock')
                     <div class="football-alert-league">
                         @if ($matches['tournament_logo'] ?? null)
                             <img src="{{ $matches['tournament_logo'] }}" alt="" width="18" height="18" loading="lazy" decoding="async" onerror="this.remove()">
                         @endif
                         <span>{{ $matches['tournament_name'] }}</span>
                     </div>
+                @endif
+                @if ($isPrematchDrops)
+                    <span data-prematch-status title="{{ __('Drop classification is not supplied by the current data') }}"><span aria-hidden="true">●</span> —</span>
                 @endif
                 <div
                     class="event-left relative flex min-w-0 flex-nowrap items-center gap-2 overflow-hidden max-[1024px]:col-span-2 max-[480px]:col-span-1">
@@ -99,6 +111,17 @@
                         aria-pressed="{{ $event['is_favorite'] ?? false ? 'true' : 'false' }}"
                         aria-label="Favorite {{ $event['team1'] }} vs {{ $event['team2'] }}"><i
                             class="fas fa-star"></i></button>
+                    @if ($isPrematchDrops)
+                        <span data-prematch-sport aria-label="{{ __('Football') }}">⚽</span>
+                        <div data-prematch-match>
+                            <strong>{{ $event['team1'] }} vs {{ $event['team2'] }}</strong>
+                            <div>
+                                @if ($matches['tournament_logo'] ?? null)<img src="{{ $matches['tournament_logo'] }}" alt="" width="14" height="14" loading="lazy">@endif
+                                <span>{{ $matches['tournament_country'] ? $matches['tournament_country'].' · ' : '' }}{{ $matches['tournament_name'] }}</span>
+                                <time><i class="far fa-clock" aria-hidden="true"></i> {{ $event['minutes'] }}</time>
+                            </div>
+                        </div>
+                    @else
                     @php $color = $event['status'] == 'Live' ? '#dc2e08' : '#1f4b66'; @endphp
                     <span style="color: {{ $color }}"
                         class="event-time w-[52px] shrink-0 [font-size:13px] font-medium [transition:color_0.3s] text-right dark:[color:#b0c8dd]">{{ $event['minutes'] }}
@@ -179,6 +202,7 @@
                             <span aria-hidden="true"></span>
                         @endif
                     </div>
+                    @endif
                 </div>
                 <div
                     class="event-actions flex w-[148px] items-center justify-end [gap:2px] max-[1024px]:w-[148px] max-[1024px]:justify-start max-[480px]:w-full max-[480px]:justify-center">
@@ -313,6 +337,11 @@
                 @else
                     <div class="odds-group flex min-h-8 w-[360px] min-w-0 flex-col justify-center gap-2 max-[1024px]:w-full max-[480px]:col-span-1">
                         @if ($checkAuthAndSubscription['display_odds'])
+                            @if ($isPrematchDrops)
+                                <button type="button" data-prematch-toggle="{{ $event['sportsApiPro_match_id'] }}" aria-expanded="false" aria-controls="prematch-markets-{{ $event['sportsApiPro_match_id'] }}" aria-label="{{ __('Expand or collapse markets') }}"><i class="fas fa-chevron-down" aria-hidden="true"></i></button>
+                                <div data-prematch-markets="{{ $event['sportsApiPro_match_id'] }}" id="prematch-markets-{{ $event['sportsApiPro_match_id'] }}" tabindex="0" aria-label="{{ __('Markets for :home vs :away', ['home' => $event['team1'], 'away' => $event['team2']]) }}">
+                                    <div data-prematch-groups>
+                            @endif
                             @forelse ($event['odds_markets'] ?? [] as $market)
                                 <div data-football-odds-source="{{ $market['source'] }}">
                                     <div class="football-market-label mb-1 flex min-w-0 items-center gap-1 text-[10px] leading-tight text-[#48708d] dark:text-[#b0c8dd]">
@@ -327,8 +356,33 @@
                                         'grid-cols-3' => count($market['runners']) >= 3,
                                     ])>
                                         @foreach ($market['runners'] as $odd)
+                                            @continue($isMarketShock && (int) ($odd['detected_at'] ?? 0) <= $shockCutoff)
+                                            @if ($isPrematchDrops || $isMarketShock)
+                                            @php
+                                                $history = $odd['history'] ?? [];
+                                                $intermediateOdds = count($history) > 2 ? $history[count($history) - 2]['odds'] : null;
+                                                if ($intermediateOdds == $odd['previousBackOdds'] || $intermediateOdds == $odd['currentBackOdds']) {
+                                                    $intermediateOdds = null;
+                                                }
+                                                $movementPrevious = $intermediateOdds ?? $odd['previousBackOdds'];
+                                                $movementDirection = $movementPrevious === null || $odd['currentBackOdds'] === null || $odd['currentBackOdds'] == $movementPrevious
+                                                    ? 'same' : ($odd['currentBackOdds'] < $movementPrevious ? 'down' : 'up');
+                                                $dropPercent = $odd['previousBackOdds'] !== null && $odd['currentBackOdds'] !== null
+                                                    ? (($odd['previousBackOdds'] - $odd['currentBackOdds']) / $odd['previousBackOdds']) * 100 : null;
+                                            @endphp
+                                            @endif
                                             <div class="odd-box relative min-w-0 cursor-default rounded-[10px] border border-[#d7e3ef] bg-white px-2 py-1 text-center font-semibold text-[#0b2a40] shadow-[0_1px_2px_rgba(0,0,0,0.02)] dark:border-[#3a5568] dark:bg-[#1f3444] dark:text-[#e8edf2] dark:[&_.tooltip]:bg-[#2a4050] dark:[&_.tooltip]:text-[#e8edf2] [&_.tooltip]:invisible [&_.tooltip]:absolute [&_.tooltip]:bottom-[110%] [&_.tooltip]:left-1/2 [&_.tooltip]:z-10 [&_.tooltip]:-translate-x-1/2 [&_.tooltip]:whitespace-nowrap [&_.tooltip]:rounded-md [&_.tooltip]:bg-[#0b2a40] [&_.tooltip]:px-2 [&_.tooltip]:py-1 [&_.tooltip]:text-[11px] [&_.tooltip]:font-normal [&_.tooltip]:text-white [&_.tooltip]:opacity-0 [&:hover_.tooltip]:visible [&:hover_.tooltip]:opacity-100"
-                                                title="{{ $odd['runner'] }}">
+                                                title="{{ $odd['runner'] }}" @if ($isMarketShock) data-shock-alert="{{ $event['sportsApiPro_match_id'].'|'.$market['source'].'|'.$odd['alert_id'].'|'.$odd['detected_at'] }}" data-shock-detected-at="{{ (int) $odd['detected_at'] }}" data-shock-expires-at="{{ (int) $odd['detected_at'] + 1200 }}" @endif>
+                                                @if ($isMarketShock)
+                                                    <span data-shock-badge><i class="fas fa-bolt" aria-hidden="true"></i> {{ __('SHOCK DETECTED') }}</span>
+                                                    <a data-shock-match href="{{ route('football.matches.show', $event['sportsApiPro_match_id']) }}"><span aria-label="{{ __('Football') }}">⚽</span> {{ $event['team1'] }} vs {{ $event['team2'] }}</a>
+                                                    <div data-shock-league>
+                                                        @if ($matches['tournament_logo'] ?? null)<img src="{{ $matches['tournament_logo'] }}" alt="" width="14" height="14" loading="lazy">@else<i class="fas fa-flag" aria-hidden="true"></i>@endif
+                                                        <span>{{ $matches['tournament_name'] }}</span>
+                                                    </div>
+                                                    <div data-shock-times><time><i class="far fa-clock" aria-hidden="true"></i> {{ \Carbon\Carbon::createFromTimestamp($event['timestamp'])->isToday() ? __('Today') : \Carbon\Carbon::createFromTimestamp($event['timestamp'])->format('d M') }} {{ $event['minutes'] }}</time><span aria-hidden="true">|</span><time datetime="{{ \Carbon\Carbon::createFromTimestampUTC($odd['detected_at'])->toIso8601String() }}">{{ __('Detected:') }} {{ \Carbon\Carbon::createFromTimestampUTC($odd['detected_at'])->diffForHumans(short: true) }}</time></div>
+                                                    <div data-shock-market><span>{{ __('Market') }}</span><strong>{{ $market['label'] }}</strong><small>{{ $market['source'] }}</small></div>
+                                                @endif
                                                 @if (in_array(request()->input('type'), ['prematch_drops', 'market_shock'], true))
                                                     <span class="football-alert-field-label">{{ __('Selection') }}</span>
                                                 @endif
@@ -339,10 +393,18 @@
                                                 <span class="football-alert-movement flex items-center justify-center gap-1 whitespace-nowrap text-[15px] tabular-nums">
                                                     @if (in_array(request()->input('type'), ['prematch_drops', 'market_shock'], true) && $odd['previousBackOdds'] !== null && $odd['currentBackOdds'] !== null)
                                                         <span class="football-alert-previous">{{ number_format($odd['previousBackOdds'], 2) }}</span>
-                                                        <span class="football-alert-arrow" aria-hidden="true">→</span>
+                                                        @if ($isPrematchDrops)
+                                                            @if ($intermediateOdds !== null)
+                                                                <i class="fas {{ $intermediateOdds < $odd['previousBackOdds'] ? 'fa-arrow-down text-red-600' : 'fa-arrow-up text-green-600' }}" aria-hidden="true"></i>
+                                                                <span class="football-alert-previous">{{ number_format($intermediateOdds, 2) }}</span>
+                                                            @endif
+                                                            <i class="fas {{ $movementDirection === 'down' ? 'fa-arrow-down text-red-600' : ($movementDirection === 'up' ? 'fa-arrow-up text-green-600' : 'fa-minus text-slate-400') }}" aria-hidden="true"></i>
+                                                        @else
+                                                            <span class="football-alert-arrow" aria-hidden="true">→</span>
+                                                        @endif
                                                     @endif
                                                     @if ($odd['currentBackOdds'] !== null)
-                                                        {{ number_format($odd['currentBackOdds'], 2) }}
+                                                        @if ($isPrematchDrops)<span data-prematch-current="{{ $movementDirection }}">@elseif ($isMarketShock)<span data-shock-current="{{ $odd['odds_direction'] }}">@endif{{ number_format($odd['currentBackOdds'], 2) }}@if ($isPrematchDrops || $isMarketShock)</span>@endif
                                                         @if ($odd['odds_direction'] === 'down')
                                                             <i class="fas fa-arrow-down text-xs text-[#c74e4e]" aria-label="{{ __('Odds decreased') }}"></i>
                                                         @elseif ($odd['odds_direction'] === 'up')
@@ -355,6 +417,16 @@
                                                         <span aria-label="{{ __('Odds unavailable') }}">—</span>
                                                     @endif
                                                 </span>
+                                                @if ($isMarketShock)
+                                                    <div data-shock-movement="{{ $odd['odds_direction'] }}"><i class="fas {{ $odd['odds_direction'] === 'down' ? 'fa-arrow-down' : ($odd['odds_direction'] === 'up' ? 'fa-arrow-up' : 'fa-minus') }}" aria-hidden="true"></i> {{ $dropPercent !== null ? sprintf('%+.1f%%', -$dropPercent) : '—' }}</div>
+                                                    <span data-shock-countdown aria-live="off">{{ __('Expires in') }} —</span>
+                                                    <button type="button" data-shock-chart data-action="chart" data-chart-url="{{ route('football.matches.show', $event['sportsApiPro_match_id']) }}"><i class="fas fa-chart-bar" aria-hidden="true"></i> {{ __('Chart') }}</button>
+                                                @endif
+                                                @if ($isPrematchDrops)
+                                                    <span data-prematch-drop data-label="{{ __('Drop %') }}">{{ $dropPercent !== null ? sprintf('%+.1f%%', -$dropPercent) : '—' }}</span>
+                                                    <time data-prematch-started data-label="{{ __('Drop Started') }}" @if ($odd['detected_at'] ?? null) datetime="{{ \Carbon\Carbon::createFromTimestampUTC($odd['detected_at'])->toIso8601String() }}" @endif>{{ ($odd['detected_at'] ?? null) ? \Carbon\Carbon::createFromTimestampUTC($odd['detected_at'])->diffForHumans(short: true) : '—' }}</time>
+                                                    <button type="button" data-action="chart" data-chart-url="{{ route('football.matches.show', $event['sportsApiPro_match_id']) }}" title="{{ __('Markets & odds charts') }}" aria-label="{{ __('Chart for :selection', ['selection' => $odd['runner']]) }}"><i class="fas fa-chart-bar" aria-hidden="true"></i></button>
+                                                @endif
                                             </div>
                                         @endforeach
                                     </div>
@@ -362,6 +434,10 @@
                             @empty
                                 <span class="text-center text-xs text-[#7891a5] dark:text-[#b0c4d4]">{{ __('Odds unavailable') }}</span>
                             @endforelse
+                            @if ($isPrematchDrops)
+                                    </div>
+                                </div>
+                            @endif
                         @else
                             <div class="flex min-h-8 items-center justify-center">@include('lock_icon')</div>
                         @endif
@@ -531,6 +607,12 @@
             @endif
         @endforeach
     @endforeach
+    @if ($isPrematchDrops && ! ($append ?? false) && count($data) > 0)
+        <footer data-prematch-legend><span><i class="text-green-600">●</i> {{ __('NEW – Drop just detected') }}</span><span><i class="text-amber-500">●</i> {{ __('ACTIVE – Drop is continuing') }}</span><span><i class="text-red-600">●</i> {{ __('WEAK – Drop is weakening or reversing') }}</span></footer>
+    @endif
+    @if ($isMarketShock && ! ($append ?? false) && count($data) > 0)
+        <footer data-shock-footer><i class="fas fa-info-circle" aria-hidden="true"></i> {{ __('Alerts are automatically removed after 20 minutes.') }}</footer>
+    @endif
     @unless ($append ?? false)
     </div>
 @endunless
