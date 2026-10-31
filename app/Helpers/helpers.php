@@ -731,7 +731,7 @@ if (! function_exists('withRedisLock')) {
 
 if (! function_exists('getCurrentUserTimezone')) {
     function getCurrentUserTimezone() {
-        return auth('customer')->user()?->timezone ?? fetch_local_timezone();
+        return auth('customers')->user()?->timezone ?? fetch_local_timezone();
         return 'Asia/Kolkata';
     }
 }
