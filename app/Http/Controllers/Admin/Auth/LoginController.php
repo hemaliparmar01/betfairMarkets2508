@@ -28,7 +28,7 @@ class LoginController extends Controller
         $customer = Auth::guard('customers')->user();
 
         if (! Auth::guard('web')->attempt($request->safe()->only(['email', 'password']), $request->boolean('remember'))) {
-            throw ValidationException::withMessages(['email' => 'Invalid admin credentials.']);
+            throw ValidationException::withMessages(['email' => __('Invalid admin credentials.')]);
         }
 
         $request->session()->regenerate();
@@ -45,7 +45,7 @@ class LoginController extends Controller
             $customer->refresh();
         }
 
-        return redirect()->route('admin.dashboard')->with('status', 'Login successful.');
+        return redirect()->route('admin.dashboard')->with('status', __('Login successful.'));
     }
 
     public function logout(Request $request): RedirectResponse
@@ -53,6 +53,6 @@ class LoginController extends Controller
         Auth::guard('web')->logout();
         $request->session()->regenerateToken();
 
-        return redirect()->route('admin.logins.index')->with('status', 'Logout successful.');
+        return redirect()->route('admin.logins.index')->with('status', __('Logout successful.'));
     }
 }

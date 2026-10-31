@@ -241,7 +241,7 @@ class FootballController extends Controller
         $prediction = request()->input('prediction');
         if (is_array($prediction)) {
             $customerId = request()->user('customers')?->getAuthIdentifier();
-            abort_if($customerId === null, 401, 'Please log in to submit predictions.');
+            abort_if($customerId === null, 401, __('Please log in to submit predictions.'));
             $matchId = $prediction['match_id'] ?? null;
             $poll = $prediction['poll'] ?? null;
             $value = $prediction['value'] ?? null;

@@ -33,7 +33,7 @@ class SubscriptionPaymentController extends Controller
         } catch (Throwable $exception) {
             report($exception);
 
-            return back()->withErrors(['payment' => 'Checkout could not be confirmed. Your pending attempt is retained; retry safely or contact support.']);
+            return back()->withErrors(['payment' => __('Checkout could not be confirmed. Your pending attempt is retained; retry safely or contact support.')]);
         }
 
         return redirect()->away($record->checkout_url);
@@ -46,7 +46,7 @@ class SubscriptionPaymentController extends Controller
 
     public function returned(): RedirectResponse
     {
-        return redirect()->route('customers.profile', ['section' => 'subscription'])->with('status', 'Payment is being verified. Access updates only after provider confirmation.');
+        return redirect()->route('customers.profile', ['section' => 'subscription'])->with('status', __('Payment is being verified. Access updates only after provider confirmation.'));
     }
 
     public function cancel(Request $request, CustomerSubscriptions $subscription, SubscriptionService $subscriptions): RedirectResponse
@@ -57,10 +57,10 @@ class SubscriptionPaymentController extends Controller
         } catch (Throwable $exception) {
             report($exception);
 
-            return back()->withErrors(['subscription' => 'The provider has not confirmed cancellation. Please retry; no successful cancellation has been recorded.']);
+            return back()->withErrors(['subscription' => __('The provider has not confirmed cancellation. Please retry; no successful cancellation has been recorded.')]);
         }
 
-        return back()->with('status', $confirmed ? 'AutoPay cancelled. Already-paid access continues until the end of the billing period.' : 'Cancellation requested. Provider confirmation is pending; no new local renewal will be initiated.');
+        return back()->with('status', $confirmed ? __('AutoPay cancelled. Already-paid access continues until the end of the billing period.') : __('Cancellation requested. Provider confirmation is pending; no new local renewal will be initiated.'));
     }
 
     public function webhook(Request $request, string $gateway, SubscriptionService $subscriptions): JsonResponse

@@ -1,6 +1,6 @@
 @extends('admin.layouts.main', ['active' => 'contact_messages'])
 
-@section('title', 'Contact Messages | Admin')
+@section('title', __('Contact Messages | Admin'))
 
 @section('content')
     <div class="min-h-screen px-4 py-6 sm:px-6 lg:px-8 theme-bg-base">
@@ -8,13 +8,13 @@
             <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                     <p class="text-sm font-semibold uppercase tracking-[0.22em] theme-text-primary">
-                        Admin Panel
+                        {{ __('Admin Panel') }}
                     </p>
                     <h1 class="mt-2 text-3xl font-bold theme-text-main">
-                        Contact Messages
+                        {{ __('Contact Messages') }}
                     </h1>
                     <p class="mt-2 text-sm theme-text-muted">
-                        Review messages submitted from the contact us page.
+                        {{ __('Review messages submitted from the contact us page.') }}
                     </p>
                 </div>
             </div>
@@ -30,38 +30,38 @@
                         </svg>
 
                         <input type="text" name="search" value="{{ request('search') }}"
-                            placeholder="Search by name, email, subject, message..."
+                            placeholder="{{ __('Search by name, email, subject, message...') }}"
                             class="betguru-input betguru-pl-11">
                     </div>
 
                     <div class="flex flex-col gap-3 sm:flex-row">
                         <button type="submit"
                             class="rounded-2xl px-5 py-3 text-sm font-semibold text-white betguru-gradient-cta-flat">
-                            Filter
+                            {{ __('Filter') }}
                         </button>
 
                         <a href="{{ route('admin.contact_messages.index') }}"
                             class="rounded-2xl px-5 py-3 text-sm font-semibold theme-panel-subtle">
-                            Reset
+                            {{ __('Reset') }}
                         </a>
                     </div>
                 </form>
 
                 <div class="overflow-x-auto">
-                    <table class="min-w-full divide-y divide-slate-100">
+                    <table class="min-w-full divide-y divide-[var(--border-slate-100)]">
                         <thead class="theme-bg-surface-soft">
                             <tr>
-                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">Name</th>
-                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">Email</th>
-                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">Subject</th>
-                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">Message</th>
-                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">Date</th>
+                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">{{ __('Name') }}</th>
+                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">{{ __('Email') }}</th>
+                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">{{ __('Subject') }}</th>
+                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">{{ __('Message') }}</th>
+                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">{{ __('Date') }}</th>
                             </tr>
                         </thead>
 
-                        <tbody class="divide-y divide-slate-100">
+                        <tbody class="divide-y divide-[var(--border-slate-100)]">
                             @forelse ($contactMessages as $contactMessage)
-                                <tr class="transition hover:bg-slate-50">
+                                <tr class="transition hover:bg-[var(--surface-slate-50)]">
                                     <td class="px-5 py-5 text-sm font-semibold theme-text-main">
                                         {{ $contactMessage->name }}
                                     </td>
@@ -89,7 +89,7 @@
                             @empty
                                 <tr>
                                     <td colspan="5" class="px-5 py-10 text-center text-sm theme-text-muted">
-                                        No contact messages found.
+                                        {{ __('No contact messages found.') }}
                                     </td>
                                 </tr>
                             @endforelse

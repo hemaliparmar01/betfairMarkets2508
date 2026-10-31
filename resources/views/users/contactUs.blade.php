@@ -1,7 +1,6 @@
 @extends('users.layout.main')
 
 @push('head')
-    @vite('resources/users/css/auth.css')
 @endpush
 
 @section('title', __('Contact Us | BF Markets'))
@@ -73,7 +72,7 @@
                             @endif
 
                             @if (session('error'))
-                                <div role="alert" class="mt-6 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                                <div role="alert" class="mt-6 rounded-2xl border border-[var(--border-red-200)] bg-[var(--surface-red-50)] px-4 py-3 text-sm text-[var(--text-red-700)]">
                                     {{ session('error') }}
                                 </div>
                             @endif
@@ -179,7 +178,7 @@
                                             {{ __('Email Support') }}
                                         </p>
                                         <a href="mailto:office@betfairmarkets.com" class="mt-2 inline-flex text-base font-semibold theme-text-main hover:opacity-80">
-                                            📧 office@betfairmarkets.com
+                                            {{ __('📧 office') }}@betfairmarkets{{ __('.com') }}
                                         </a>
                                     </div>
 

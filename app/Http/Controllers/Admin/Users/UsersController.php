@@ -49,7 +49,7 @@ class UsersController extends Controller
         $data['mobile_code'] = $country['calling_code'];
         $customer = $users->create($data);
 
-        return redirect()->route('admin.users.edit', $customer)->with('success', 'Customer created successfully.');
+        return redirect()->route('admin.users.edit', $customer)->with('success', __('Customer created successfully.'));
     }
 
     public function edit(Customer $customer, UserManagementService $userManagementService): View
@@ -98,7 +98,7 @@ class UsersController extends Controller
 
             return redirect()
                 ->route('admin.users.edit', $customer)
-                ->with('success', 'User updated successfully.');
+                ->with('success', __('User updated successfully.'));
         } catch (ValidationException $exception) {
             throw $exception;
         } catch (Throwable $exception) {
@@ -110,7 +110,7 @@ class UsersController extends Controller
 
             return back()
                 ->withInput()
-                ->with('error', 'Something went wrong while updating the user.');
+                ->with('error', __('Something went wrong while updating the user.'));
         }
     }
 

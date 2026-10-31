@@ -8,7 +8,7 @@
         style="left: {{ $incident['left'] }}%{{ $incident['lane'] > 0 ? '; '.($incident['is_home'] ? 'bottom' : 'top').': calc(50% + '.($incident['lane'] * 14).'px)' : '' }}"
     @endif
     @class([
-        'z-10 flex h-3.5 w-3.5 shrink-0 cursor-pointer items-center justify-center rounded-sm outline-none hover:ring-2 hover:ring-[#90a7b9]/60 focus-visible:ring-2 focus-visible:ring-cyan-500',
+        'z-10 flex h-3.5 w-3.5 shrink-0 cursor-pointer items-center justify-center rounded-sm outline-none hover:ring-2 hover:ring-[var(--border-brand-25)]/60 focus-visible:ring-2 focus-visible:ring-[var(--border-cyan-500)]',
         'absolute -translate-x-1/2' => $positioned,
         'bottom-1/2' => $positioned && $incident['is_home'],
         'top-1/2' => $positioned && ! $incident['is_home'],
@@ -19,6 +19,6 @@
     @elseif ($incident['kind'] === 'corner')
         <span class="text-[10px] leading-none" aria-hidden="true">⚑</span>
     @else
-        <span class="h-3 w-2 rounded-[1px] shadow-sm {{ $incident['kind'] === 'yellow' ? 'bg-[#e6b422]' : 'bg-[#c74e4e]' }}" aria-hidden="true"></span>
+        <span class="h-3 w-2 rounded-[1px] shadow-sm {{ $incident['kind'] === 'yellow' ? 'bg-[var(--surface-warning)]' : 'bg-[var(--surface-danger)]' }}" aria-hidden="true"></span>
     @endif
 </button>

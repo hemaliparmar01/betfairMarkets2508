@@ -1,6 +1,6 @@
 @extends('users.layout.main')
 
-@section('title', 'BF Markets Analytics | Subscription Plans & Pricing')
+@section('title', __('BF Markets Analytics | Subscription Plans & Pricing'))
 @section('meta_description', 'BF Markets Analytics subscription plans - Weekly, monthly, and quarterly plans for
     professional sports exchange data terminal.')
 
@@ -11,7 +11,6 @@
     @endpush
 
 @push('head')
-    @vite('resources/users/css/auth.css')
 @endpush
 
 @section('content')
@@ -33,9 +32,9 @@
                     <p class="text-[rgb(var(--text-soft))] text-lg max-w-3xl mx-auto">{{ __('Get real-time market data, advanced analytics, and professional tools designed for serious traders.') }}</p>
                     <p class="mt-4 text-lg font-bold text-[rgb(var(--secondary))]">
                         @if ($current_country == 'Georgia')
-                            სრული Betfair ანალიტიკური პლატფორმა — დღეში დაახლოებით 2 ლარად.
+                            {{ __('Complete Betfair analytics platform for about GEL 2 per day.') }}
                         @else
-                            Complete Betfair analytics platform for less than €1 per day.
+                            {{ __('Complete Betfair analytics platform for less than €1 per day.') }}
                         @endif
                     </p>
                 </div>
@@ -57,14 +56,14 @@
                             @endphp
                         @else
                             @php
-                                $planLabel = data_get($plan->label_translations, $locale);
-                                $planDescription = data_get(json_decode($plan->description_translations), $locale);
-                                $priceLabel = data_get(json_decode($plan->price_label_translations), $locale);
+                                $planLabel = data_get($plan->label_translations, $locale) ?: __($plan->label);
+                                $planDescription = data_get(json_decode($plan->description_translations), $locale) ?: __($plan->description ?? '');
+                                $priceLabel = data_get(json_decode($plan->price_label_translations), $locale) ?: __($plan->price_label ?? '');
                                 if(data_get(json_decode($plan->saving_label_translations), $locale) != null) {
                                     $priceLabel .= " • ".data_get(json_decode($plan->saving_label_translations), $locale);
                                 }
                                 $popularLabel = __('Most Popular');
-                                $buttonText = data_get(json_decode($plan->button_text_translations), $locale);
+                                $buttonText = data_get(json_decode($plan->button_text_translations), $locale) ?: __($plan->button_text ?? '');
                             @endphp
                         @endif
                         <div
@@ -77,7 +76,7 @@
                             @endif
 
                             <div class="p-6 text-center flex-1 flex flex-col">
-                                <div class="text-4xl mb-2 m-auto"><img src="{{ asset('storage/' . $plan->icon) }}" alt="Subscription Icon"></div>
+                                <div class="text-4xl mb-2 m-auto"><img src="{{ asset('storage/' . $plan->icon) }}" alt="{{ __('Subscription Icon') }}"></div>
 
                                 <h3 class="text-xl font-bold text-[rgb(var(--text-main))] mb-1">{{ $planLabel }}</h3>
 
@@ -101,7 +100,7 @@
                                             @endphp
                                         @else
                                             @php
-                                                $featureText = data_get($item->translations, $locale);
+                                                $featureText = data_get($item->translations ?? [], $locale) ?: __($item->text);
                                             @endphp
                                         @endif
 

@@ -1,6 +1,6 @@
 @extends('admin.layouts.main', ['active' => 'users'])
 
-@section('title', 'User Management | Admin')
+@section('title', __('User Management | Admin'))
 
 @section('content')
     <div class="min-h-screen px-4 py-6 sm:px-6 lg:px-8 theme-bg-base">
@@ -8,18 +8,18 @@
             <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                     <p class="text-sm font-semibold uppercase tracking-[0.22em] theme-text-primary">
-                        Admin Panel
+                        {{ __('Admin Panel') }}
                     </p>
                     <h1 class="mt-2 text-3xl font-bold theme-text-main">
-                        User Management
+                        {{ __('User Management') }}
                     </h1>
                     <p class="mt-2 text-sm theme-text-muted">
-                        Review customer access, login activity, subscription status, and free active-day adjustments.
+                        {{ __('Review customer access, login activity, subscription status, and free active-day adjustments.') }}
                     </p>
                 </div>
             </div>
 
-            <a href="{{ route('admin.users.create') }}" class="mb-5 inline-flex rounded-xl px-5 py-3 font-semibold text-white betguru-gradient-cta">Add Customer</a>
+            <a href="{{ route('admin.users.create') }}" class="mb-5 inline-flex rounded-xl px-5 py-3 font-semibold text-white betguru-gradient-cta">{{ __('Add Customer') }}</a>
             @if (session('success'))
                 <div class="mb-5 rounded-2xl px-4 py-3 text-sm font-semibold theme-chip-success">
                     {{ session('success') }}
@@ -35,28 +35,28 @@
             <div class="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
                 <div class="rounded-3xl p-5 betguru-card-elevated">
                     <p class="text-xs font-semibold uppercase tracking-[0.2em] theme-text-muted">
-                        Total Users
+                        {{ __('Total Users') }}
                     </p>
                     <p class="mt-3 text-2xl font-bold theme-text-main">{{ $getState['totalUsers'] ?? 0 }}</p>
                 </div>
 
                 <div class="rounded-3xl p-5 betguru-card-elevated">
                     <p class="text-xs font-semibold uppercase tracking-[0.2em] theme-text-muted">
-                        Online Users
+                        {{ __('Online Users') }}
                     </p>
                     <p class="mt-3 text-2xl font-bold theme-text-success">{{ $getState['onlineUsers'] ?? 0 }}</p>
                 </div>
 
                 <div class="rounded-3xl p-5 betguru-card-elevated">
                     <p class="text-xs font-semibold uppercase tracking-[0.2em] theme-text-muted">
-                        Restricted Users
+                        {{ __('Restricted Users') }}
                     </p>
                     <p class="mt-3 text-2xl font-bold theme-text-danger">{{ $getState['restrictedUsers'] ?? 0 }}</p>
                 </div>
 
                 <div class="rounded-3xl p-5 betguru-card-elevated">
                     <p class="text-xs font-semibold uppercase tracking-[0.2em] theme-text-muted">
-                        Expiring Soon
+                        {{ __('Expiring Soon') }}
                     </p>
                     <p class="mt-3 text-2xl font-bold theme-text-main">{{ $getState['expiringSoonUsers'] ?? 0 }}</p>
                 </div>
@@ -73,39 +73,39 @@
                         </svg>
 
                         <input type="text" name="search" value="{{ request('search') }}"
-                            placeholder="Search by email, name, username, mobile, country..."
+                            placeholder="{{ __('Search by email, name, username, mobile, country...') }}"
                             class="betguru-input betguru-pl-11">
                     </div>
 
                     <div class="flex flex-col gap-3 sm:flex-row">
                         <button type="submit"
                             class="rounded-2xl px-5 py-3 text-sm font-semibold text-white betguru-gradient-cta-flat">
-                            Filter
+                            {{ __('Filter') }}
                         </button>
 
                         <a href="{{ route('admin.users') }}"
                             class="rounded-2xl px-5 py-3 text-sm font-semibold theme-panel-subtle">
-                            Reset
+                            {{ __('Reset') }}
                         </a>
                     </div>
                 </form>
 
                 <div class="overflow-x-auto">
-                    <table class="min-w-full divide-y divide-slate-100">
+                    <table class="min-w-full divide-y divide-[var(--border-slate-100)]">
                         <thead class="theme-bg-surface-soft">
                             <tr>
-                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">User</th>
-                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">Mobile</th>
-                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">Country</th>
-                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">Subscription</th>
-                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">Trial End</th>
-                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">Last Login</th>
-                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">Login Count</th>
-                                <th class="px-5 py-4 text-right text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">Action</th>
+                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">{{ __('User') }}</th>
+                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">{{ __('Mobile') }}</th>
+                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">{{ __('Country') }}</th>
+                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">{{ __('Subscription') }}</th>
+                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">{{ __('Trial End') }}</th>
+                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">{{ __('Last Login') }}</th>
+                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">{{ __('Login Count') }}</th>
+                                <th class="px-5 py-4 text-right text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">{{ __('Action') }}</th>
                             </tr>
                         </thead>
 
-                        <tbody class="divide-y divide-slate-100">
+                        <tbody class="divide-y divide-[var(--border-slate-100)]">
                             @forelse ($customers as $customer)
                                 @php
                                     $displaySubscription = $customer->getRelation('displaySubscription');
@@ -135,7 +135,7 @@
                                     }
                                 @endphp
 
-                                <tr class="transition hover:bg-slate-50">
+                                <tr class="transition hover:bg-[var(--surface-slate-50)]">
                                     <td class="px-5 py-5">
                                         <div class="flex items-center gap-3">
                                             @if ($customer->avatar_path)
@@ -156,29 +156,29 @@
 
                                                     @if ($isOnline)
                                                         <span class="rounded-full px-2.5 py-1 text-xs font-semibold theme-chip-success">
-                                                            Online
+                                                            {{ __('Online') }}
                                                         </span>
                                                     @endif
 
                                                     @if ((int) $customer->is_verified === 1)
                                                         <span class="rounded-full px-2.5 py-1 text-xs font-semibold theme-chip-success">
-                                                            Verified
+                                                            {{ __('Verified') }}
                                                         </span>
                                                     @else
                                                         <span class="rounded-full px-2.5 py-1 text-xs font-semibold theme-chip-accent">
-                                                            Unverified
+                                                            {{ __('Unverified') }}
                                                         </span>
                                                     @endif
 
                                                     @if ($customer->is_blocked)
                                                         <span class="rounded-full px-2.5 py-1 text-xs font-semibold theme-chip-danger-strong">
-                                                            Blocked
+                                                            {{ __('Blocked') }}
                                                         </span>
                                                     @endif
 
                                                     @if ($customer->is_suspended)
                                                         <span class="rounded-full px-2.5 py-1 text-xs font-semibold theme-chip-accent">
-                                                            Suspended
+                                                            {{ __('Suspended') }}
                                                         </span>
                                                     @endif
                                                 </div>
@@ -204,12 +204,12 @@
                                                 {{ $customer->hasLifetimeAccess() ? 'Lifetime Access' : ($customer->hasActiveSubscription() ? 'Active' : ($customer->hasActiveTrial() ? 'Trial' : 'Expired')) }}
                                             </span>
 
-                                            <p class="text-xs theme-text-muted">{{ $customer->subscription_plan ?? 'No plan' }} · {{ $customer->hasLifetimeAccess() || $customer->admin_free_days > 0 || $displaySubscription?->gateway === 'admin' ? 'Admin Granted' : ($displaySubscription ? 'Paid' : 'None') }}<br>Admin free days: {{ (int) $customer->admin_free_days }}<br>Starts: {{ $customer->subscription_starts_at?->format('d M Y H:i') ?? '—' }}<br>Expires: {{ $customer->hasLifetimeAccess() ? 'Lifetime Access' : ($customer->subscription_ends_at?->format('d M Y H:i') ?? '—') }}</p>
+                                            <p class="text-xs theme-text-muted">{{ $customer->subscription_plan ?? 'No plan' }} · {{ $customer->hasLifetimeAccess() || $customer->admin_free_days > 0 || $displaySubscription?->gateway === 'admin' ? 'Admin Granted' : ($displaySubscription ? 'Paid' : 'None') }}<br>{{ __('Admin free days:') }} {{ (int) $customer->admin_free_days }}<br>{{ __('Starts:') }} {{ $customer->subscription_starts_at?->format('d M Y H:i') ?? '—' }}<br>{{ __('Expires:') }} {{ $customer->hasLifetimeAccess() ? 'Lifetime Access' : ($customer->subscription_ends_at?->format('d M Y H:i') ?? '—') }}</p>
                                             @if ($displaySubscription)
                                                 <p class="text-xs theme-text-muted">
                                                     {{ $displaySubscription->subscriptionPlan?->label ?? 'Plan' }}
                                                     @if ($customer->subscription_ends_at)
-                                                        • Ends {{ $customer->subscription_ends_at->format('d M Y') }}
+                                                        {{ __('• Ends') }} {{ $customer->subscription_ends_at->format('d M Y') }}
                                                     @endif
                                                 </p>
                                             @endif
@@ -231,14 +231,14 @@
                                     <td class="px-5 py-5 text-right">
                                         <a href="{{ route('admin.users.edit', $customer) }}"
                                             class="inline-flex rounded-xl px-4 py-2 text-xs font-semibold theme-panel-subtle">
-                                            Edit / Activate / Extend
+                                            {{ __('Edit / Activate / Extend') }}
                                         </a>
                                     </td>
                                 </tr>
                             @empty
                                 <tr>
                                     <td colspan="8" class="px-5 py-10 text-center text-sm theme-text-muted">
-                                        No users found.
+                                        {{ __('No users found.') }}
                                     </td>
                                 </tr>
                             @endforelse

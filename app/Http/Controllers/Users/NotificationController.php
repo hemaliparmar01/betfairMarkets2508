@@ -49,7 +49,7 @@ class NotificationController extends Controller
 
     public function connect(Request $request): JsonResponse
     {
-        abort_unless(config('services.telegram.enabled') && filled(config('services.telegram.bot_token')), 503, 'Telegram is not configured.');
+        abort_unless(config('services.telegram.enabled') && filled(config('services.telegram.bot_token')), 503, __('Telegram is not configured.'));
         $token = bin2hex(random_bytes(24));
         $customer = $request->user('customers');
         Cache::lock('alerts:customer:'.$customer->id, 30)->block(5, function () use ($customer, $token): void {
@@ -78,13 +78,13 @@ class NotificationController extends Controller
     public function test(Request $request, AlertService $alerts): JsonResponse
     {
         $customer = $request->user('customers');
-        abort_unless($customer->telegram_available && $customer->telegram_chat_id !== null, 422, 'Connect Telegram first.');
-        abort_unless($alerts->eligible($customer), 403, 'An active trial or subscription is required.');
-        abort_unless(config('services.telegram.enabled'), 503, 'Telegram is not configured.');
+        abort_unless($customer->telegram_available && $customer->telegram_chat_id !== null, 422, __('Connect Telegram first.'));
+        abort_unless($alerts->eligible($customer), 403, __('An active trial or subscription is required.'));
+        abort_unless(config('services.telegram.enabled'), 503, __('Telegram is not configured.'));
         $data = $request->validate(['request_id' => ['required', 'uuid']]);
         $id = $alerts->process('test', [], ['request_id' => $data['request_id']], $customer->id);
 
-        return response()->json(['alert_id' => (string) $id, 'message' => 'Test notification queued.'], 202);
+        return response()->json(['alert_id' => (string) $id, 'message' => __('Test notification queued.')], 202);
     }
 
     public function webhook(Request $request, AlertService $alerts): JsonResponse

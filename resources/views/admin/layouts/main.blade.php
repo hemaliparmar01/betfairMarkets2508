@@ -1,15 +1,24 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ str_replace('_', '-', app()->getLocale()) }}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ $title ?? 'Admin Panel' }}</title>
+    <title>{{ __($title ?? 'Admin Panel') }}</title>
 
     @stack('css')
 
     @vite(['resources/admin/css/app.css', 'resources/admin/js/app.js'])
+    <script>window.bfTranslations = {{ Illuminate\Support\Js::from($uiTranslations) }};</script>
 </head>
-<body class="h-screen overflow-hidden bg-slate-100 text-slate-900 antialiased">
+<body class="admin-theme h-screen overflow-hidden bg-[var(--surface-slate-100)] text-[var(--text-slate-900)] antialiased">
+    <script>
+        try {
+            if (localStorage.getItem('bf-markets-theme') === 'dark') {
+                document.body.classList.add('dark-mode');
+                document.documentElement.style.colorScheme = 'dark';
+            }
+        } catch {}
+    </script>
     <div class="flex h-full flex-col">
 
         <!-- Navbar -->

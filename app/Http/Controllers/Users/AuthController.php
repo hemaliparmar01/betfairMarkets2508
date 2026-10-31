@@ -33,7 +33,7 @@ class AuthController extends Controller
         try {
             $this->auth->register($request, $request->validated());
         } catch (UniqueConstraintViolationException) {
-            throw ValidationException::withMessages(['email' => 'These account details are already registered. Please log in.']);
+            throw ValidationException::withMessages(['email' => __('These account details are already registered. Please log in.')]);
         }
 
         return redirect()->route('customers.verification');
@@ -72,15 +72,15 @@ class AuthController extends Controller
         try {
             $passwordChanged = $this->auth->updateProfile($request, $request->validated());
         } catch (UniqueConstraintViolationException) {
-            throw ValidationException::withMessages(['username' => 'The account details are already in use. Please try another username or country.']);
+            throw ValidationException::withMessages(['username' => __('The account details are already in use. Please try another username or country.')]);
         }
         if ($passwordChanged) {
             $this->auth->logout($request);
 
-            return redirect()->route('login')->with('status', 'Profile and password updated. Please log in with your new password.');
+            return redirect()->route('login')->with('status', __('Profile and password updated. Please log in with your new password.'));
         }
 
-        return redirect()->route('customers.profile')->with('status', 'Your profile has been updated.');
+        return redirect()->route('customers.profile')->with('status', __('Your profile has been updated.'));
     }
 
     public function avatar(Request $request): StreamedResponse
@@ -105,14 +105,14 @@ class AuthController extends Controller
     {
         $this->auth->verifyEmail($request, $request->validated('code'));
 
-        return redirect()->route('login')->with('status', 'Email verified successfully. You can now log in.');
+        return redirect()->route('login')->with('status', __('Email verified successfully. You can now log in.'));
     }
 
     public function resendVerification(Request $request): RedirectResponse
     {
         $this->auth->sendVerification($request);
 
-        return redirect()->route('customers.verification')->with('status', $request->session()->has('verification_delivery_error') ? 'Please retry sending your code.' : 'A new verification code has been sent.');
+        return redirect()->route('customers.verification')->with('status', $request->session()->has('verification_delivery_error') ? __('Please retry sending your code.') : __('A new verification code has been sent.'));
     }
 
     public function sendLoginCode(CustomerAuthRequest $request): RedirectResponse
@@ -144,7 +144,7 @@ class AuthController extends Controller
     {
         $this->auth->resendLoginCode($request);
 
-        return redirect()->route('login.mobile.verification')->with('status', 'A new login code has been sent.');
+        return redirect()->route('login.mobile.verification')->with('status', __('A new login code has been sent.'));
     }
 
     public function forgotPassword(): View
@@ -156,7 +156,7 @@ class AuthController extends Controller
     {
         $passwords->sendResetLink($request->validated('email'));
 
-        return back()->with('status', 'If the account is available, a password reset link has been sent to its email address.');
+        return back()->with('status', __('If the account is available, a password reset link has been sent to its email address.'));
     }
 
     public function resetPassword(Request $request, string $token): View
@@ -169,7 +169,7 @@ class AuthController extends Controller
         $passwords->reset($request->validated());
         $request->session()->forget(['customer_login_otp', 'customer_pending_login']);
 
-        return redirect()->route('login')->with('status', 'Password reset successfully. Please log in with your new password.');
+        return redirect()->route('login')->with('status', __('Password reset successfully. Please log in with your new password.'));
     }
 
     public function logout(Request $request): RedirectResponse

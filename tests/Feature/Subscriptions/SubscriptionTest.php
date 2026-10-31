@@ -62,6 +62,12 @@ class SubscriptionTest extends TestCase
         $this->assertFalse(Schema::hasColumn('customers_subscriptions', 'ends_at'));
     }
 
+    public function test_georgian_plan_display_falls_back_to_existing_english_content(): void
+    {
+        app()->setLocale('ka');
+        $this->get('/subscriptions')->assertOk()->assertSee('Premium')->assertSee('აირჩიეთ თქვენი ვაჭრობის საჭიროებებზე მორგებული გეგმა');
+    }
+
     public function test_checkout_requires_customer_authentication(): void
     {
         $this->post('/subscriptions/'.$this->plan->id.'/checkout', ['gateway' => 'paypal', 'checkout_key' => (string) Str::uuid(), 'auto_renew' => 1])

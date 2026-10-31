@@ -1,6 +1,6 @@
 @extends('admin.layouts.main', ['active' => 'users'])
 
-@section('title', 'Manage User | Admin')
+@section('title', __('Manage User | Admin'))
 
 @section('content')
     @php
@@ -23,19 +23,19 @@
             <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                     <p class="text-sm font-semibold uppercase tracking-[0.22em] theme-text-primary">
-                        User Management
+                        {{ __('User Management') }}
                     </p>
                     <h1 class="mt-2 text-3xl font-bold theme-text-main">
-                        Manage {{ $customer->name }} {{ $customer->surname }}
+                        {{ __('Manage') }} {{ $customer->name }} {{ $customer->surname }}
                     </h1>
                     <p class="mt-2 text-sm theme-text-muted">
-                        Update account access, review login history, and control subscription visibility from one screen.
+                        {{ __('Update account access, review login history, and control subscription visibility from one screen.') }}
                     </p>
                 </div>
 
                 <a href="{{ route('admin.users') }}"
                     class="rounded-2xl px-4 py-2 text-sm font-semibold theme-panel-subtle">
-                    ← Back
+                    {{ __('← Back') }}
                 </a>
             </div>
 
@@ -72,29 +72,29 @@
 
                                 @if ((int) ($customer->is_online ?? 0) === 1)
                                     <span class="rounded-full px-3 py-1 text-xs font-semibold theme-chip-success">
-                                        Online
+                                        {{ __('Online') }}
                                     </span>
                                 @endif
 
                                 @if ((int) $customer->is_verified === 1)
                                     <span class="rounded-full px-3 py-1 text-xs font-semibold theme-chip-success">
-                                        Verified
+                                        {{ __('Verified') }}
                                     </span>
                                 @else
                                     <span class="rounded-full px-3 py-1 text-xs font-semibold theme-chip-accent">
-                                        Unverified
+                                        {{ __('Unverified') }}
                                     </span>
                                 @endif
 
                                 @if ($customer->is_blocked)
                                     <span class="rounded-full px-3 py-1 text-xs font-semibold theme-chip-danger-strong">
-                                        Blocked
+                                        {{ __('Blocked') }}
                                     </span>
                                 @endif
 
                                 @if ($customer->is_suspended)
                                     <span class="rounded-full px-3 py-1 text-xs font-semibold theme-chip-accent">
-                                        Suspended
+                                        {{ __('Suspended') }}
                                     </span>
                                 @endif
                             </div>
@@ -110,7 +110,7 @@
                 </div>
 
                 <div class="rounded-3xl p-5 betguru-card-elevated">
-                    <p class="text-xs font-semibold uppercase tracking-[0.18em] theme-text-muted">Current Subscription</p>
+                    <p class="text-xs font-semibold uppercase tracking-[0.18em] theme-text-muted">{{ __('Current Subscription') }}</p>
                     <p class="mt-3 text-lg font-bold theme-text-main">
                         {{ $currentSubscription?->subscriptionPlan?->label ?? 'No Active Plan' }}
                     </p>
@@ -123,15 +123,15 @@
                 </div>
 
                 <div class="rounded-3xl p-5 betguru-card-elevated">
-                    <p class="text-xs font-semibold uppercase tracking-[0.18em] theme-text-muted">Login Activity</p>
+                    <p class="text-xs font-semibold uppercase tracking-[0.18em] theme-text-muted">{{ __('Login Activity') }}</p>
                     <p class="mt-3 text-lg font-bold theme-text-main">
-                        {{ (int) $customer->login_count }} logins
+                        {{ (int) $customer->login_count }} {{ __('logins') }}
                     </p>
                     <p class="mt-2 text-sm theme-text-muted">
-                        Last login: {{ $lastLoginAt ? $lastLoginAt->format('d M Y h:i A') : '—' }}
+                        {{ __('Last login:') }} {{ $lastLoginAt ? $lastLoginAt->format('d M Y h:i A') : '—' }}
                     </p>
                     <p class="mt-1 text-sm theme-text-muted">
-                        Gateway: {{ $currentGatewayLabel }}
+                        {{ __('Gateway:') }} {{ $currentGatewayLabel }}
                     </p>
                 </div>
             </div>
@@ -144,15 +144,15 @@
                     <input type="hidden" name="section" value="profile">
 
                     <div>
-                        <h2 class="text-xl font-bold theme-text-main">Account Access</h2>
+                        <h2 class="text-xl font-bold theme-text-main">{{ __('Account Access') }}</h2>
                         <p class="mt-2 text-sm theme-text-muted">
-                            Update customer identity details, block status, temporary suspension, and trial end date.
+                            {{ __('Update customer identity details, block status, temporary suspension, and trial end date.') }}
                         </p>
                     </div>
 
                     <div class="grid grid-cols-1 gap-5 md:grid-cols-2">
                         <div>
-                            <label class="betguru-label">Name</label>
+                            <label class="betguru-label">{{ __('Name') }}</label>
                             <input type="text" name="name" value="{{ old('name', $customer->name) }}" class="betguru-input">
                             @error('name')
                                 <p class="mt-1 text-xs theme-text-danger">{{ $message }}</p>
@@ -160,7 +160,7 @@
                         </div>
 
                         <div>
-                            <label class="betguru-label">Surname</label>
+                            <label class="betguru-label">{{ __('Surname') }}</label>
                             <input type="text" name="surname" value="{{ old('surname', $customer->surname) }}" class="betguru-input">
                             @error('surname')
                                 <p class="mt-1 text-xs theme-text-danger">{{ $message }}</p>
@@ -168,7 +168,7 @@
                         </div>
 
                         <div>
-                            <label class="betguru-label">Username</label>
+                            <label class="betguru-label">{{ __('Username') }}</label>
                             <input type="text" name="username" value="{{ old('username', $customer->username) }}" class="betguru-input">
                             @error('username')
                                 <p class="mt-1 text-xs theme-text-danger">{{ $message }}</p>
@@ -176,7 +176,7 @@
                         </div>
 
                         <div>
-                            <label class="betguru-label">Email</label>
+                            <label class="betguru-label">{{ __('Email') }}</label>
                             <input type="email" name="email" value="{{ old('email', $customer->email) }}" class="betguru-input">
                             @error('email')
                                 <p class="mt-1 text-xs theme-text-danger">{{ $message }}</p>
@@ -184,7 +184,7 @@
                         </div>
 
                         <div>
-                            <label class="betguru-label">Mobile</label>
+                            <label class="betguru-label">{{ __('Mobile') }}</label>
                             <input type="text" name="mobile" value="{{ old('mobile', $customer->mobile) }}" class="betguru-input">
                             @error('mobile')
                                 <p class="mt-1 text-xs theme-text-danger">{{ $message }}</p>
@@ -192,7 +192,7 @@
                         </div>
 
                         <div>
-                            <label class="betguru-label">Country</label>
+                            <label class="betguru-label">{{ __('Country') }}</label>
                             <input type="text" name="country" value="{{ old('country', $customer->country) }}" class="betguru-input">
                             @error('country')
                                 <p class="mt-1 text-xs theme-text-danger">{{ $message }}</p>
@@ -200,24 +200,24 @@
                         </div>
 
                         <div>
-                            <label class="betguru-label">Verification Status</label>
+                            <label class="betguru-label">{{ __('Verification Status') }}</label>
                             <div class="rounded-2xl border px-4 py-3 text-sm font-semibold {{ (int) $customer->is_verified === 1 ? 'theme-chip-success' : 'theme-chip-accent' }}">
-                                {{ (int) $customer->is_verified === 1 ? 'Verified' : 'Unverified' }}
+                                {{ __((int) $customer->is_verified === 1 ? 'Verified' : 'Unverified') }}
                             </div>
                         </div>
 
                         <div>
-                            <label class="betguru-label">Verification Via</label>
+                            <label class="betguru-label">{{ __('Verification Via') }}</label>
                             <div class="rounded-2xl border px-4 py-3 text-sm font-semibold theme-panel-subtle">
                                 {{ $customer->verification_via ? ucfirst((string) $customer->verification_via) : '—' }}
                             </div>
                         </div>
 
                         <div>
-                            <label class="betguru-label">Blocked</label>
+                            <label class="betguru-label">{{ __('Blocked') }}</label>
                             <select name="is_blocked" class="betguru-select">
-                                <option value="0" {{ old('is_blocked', (int) $customer->is_blocked) == 0 ? 'selected' : '' }}>No</option>
-                                <option value="1" {{ old('is_blocked', (int) $customer->is_blocked) == 1 ? 'selected' : '' }}>Yes</option>
+                                <option value="0" {{ old('is_blocked', (int) $customer->is_blocked) == 0 ? 'selected' : '' }}>{{ __('No') }}</option>
+                                <option value="1" {{ old('is_blocked', (int) $customer->is_blocked) == 1 ? 'selected' : '' }}>{{ __('Yes') }}</option>
                             </select>
                             @error('is_blocked')
                                 <p class="mt-1 text-xs theme-text-danger">{{ $message }}</p>
@@ -225,10 +225,10 @@
                         </div>
 
                         <div>
-                            <label class="betguru-label">Temporary Suspension</label>
+                            <label class="betguru-label">{{ __('Temporary Suspension') }}</label>
                             <select name="is_suspended" class="betguru-select">
-                                <option value="0" {{ old('is_suspended', (int) $customer->is_suspended) == 0 ? 'selected' : '' }}>No</option>
-                                <option value="1" {{ old('is_suspended', (int) $customer->is_suspended) == 1 ? 'selected' : '' }}>Yes</option>
+                                <option value="0" {{ old('is_suspended', (int) $customer->is_suspended) == 0 ? 'selected' : '' }}>{{ __('No') }}</option>
+                                <option value="1" {{ old('is_suspended', (int) $customer->is_suspended) == 1 ? 'selected' : '' }}>{{ __('Yes') }}</option>
                             </select>
                             @error('is_suspended')
                                 <p class="mt-1 text-xs theme-text-danger">{{ $message }}</p>
@@ -236,10 +236,10 @@
                         </div>
 
                         <div class="md:col-span-2">
-                            <label class="betguru-label">Trial End Date</label>
+                            <label class="betguru-label">{{ __('Trial End Date') }}</label>
                             <input type="datetime-local" name="trial_ends_at" value="{{ $trialEndsAtValue }}" class="betguru-input">
                             <p class="mt-1 text-xs theme-text-muted">
-                                Leave empty if the user should not have a trial end date.
+                                {{ __('Leave empty if the user should not have a trial end date.') }}
                             </p>
                             @error('trial_ends_at')
                                 <p class="mt-1 text-xs theme-text-danger">{{ $message }}</p>
@@ -250,7 +250,7 @@
                     <div class="flex items-center justify-end gap-3 pt-2">
                         <button type="submit"
                             class="rounded-2xl px-6 py-3 text-sm font-semibold text-white betguru-gradient-cta">
-                            Update Account
+                            {{ __('Update Account') }}
                         </button>
                     </div>
                 </form>
@@ -262,10 +262,10 @@
                     <input type="hidden" name="section" value="subscription">
 
                     <div>
-                        <h2 class="text-xl font-bold theme-text-main">Manual Subscription Control</h2>
-                        <p class="mt-2 font-semibold theme-text-main">{{ $customer->hasLifetimeAccess() ? 'Lifetime Access' : ($customer->hasActiveSubscription() ? 'Active' : 'Expired') }} · Admin free days: {{ (int) $customer->admin_free_days }} · Source: {{ $customer->hasLifetimeAccess() || $customer->admin_free_days > 0 || $currentSubscription?->gateway === 'admin' ? 'Admin Granted' : 'Paid' }}</p>
+                        <h2 class="text-xl font-bold theme-text-main">{{ __('Manual Subscription Control') }}</h2>
+                        <p class="mt-2 font-semibold theme-text-main">{{ $customer->hasLifetimeAccess() ? 'Lifetime Access' : ($customer->hasActiveSubscription() ? 'Active' : 'Expired') }} {{ __('· Admin free days:') }} {{ (int) $customer->admin_free_days }} {{ __('· Source:') }} {{ $customer->hasLifetimeAccess() || $customer->admin_free_days > 0 || $currentSubscription?->gateway === 'admin' ? 'Admin Granted' : 'Paid' }}</p>
                         <p class="mt-2 text-sm theme-text-muted">
-                            Activate Subscription, Grant Free Days, Extend Subscription, or Grant Lifetime Access. Disable paid AutoPay first; no provider billing is changed here.
+                            {{ __('Activate Subscription, Grant Free Days, Extend Subscription, or Grant Lifetime Access. Disable paid AutoPay first; no provider billing is changed here.') }}
                         </p>
                     </div>
 
@@ -274,17 +274,17 @@
                     <div class="flex items-center justify-end gap-3 pt-2">
                         <button type="submit"
                             class="rounded-2xl px-6 py-3 text-sm font-semibold text-white betguru-gradient-cta">
-                            Update Subscription
+                            {{ __('Update Subscription') }}
                         </button>
                     </div>
                 </form>
             </div>
 
             <section class="mt-6 overflow-x-auto rounded-[2rem] p-6 betguru-card-elevated">
-            <h2 class="mb-4 text-xl font-bold theme-text-main">Subscription History</h2>
-            <p class="mb-4 text-sm theme-text-muted">Current access starts: {{ $customer->subscription_starts_at?->format('d M Y H:i') ?? '—' }} · Ends: {{ $customer->hasLifetimeAccess() ? 'Lifetime Access' : ($customer->subscription_ends_at?->format('d M Y H:i') ?? '—') }} · Plan: {{ $customer->subscription_plan ?? '—' }}</p>
+            <h2 class="mb-4 text-xl font-bold theme-text-main">{{ __('Subscription History') }}</h2>
+            <p class="mb-4 text-sm theme-text-muted">{{ __('Current access starts:') }} {{ $customer->subscription_starts_at?->format('d M Y H:i') ?? '—' }} {{ __('· Ends:') }} {{ $customer->hasLifetimeAccess() ? 'Lifetime Access' : ($customer->subscription_ends_at?->format('d M Y H:i') ?? '—') }} {{ __('· Plan:') }} {{ $customer->subscription_plan ?? '—' }}</p>
             <table class="w-full text-left text-sm theme-text-main">
-                <thead><tr><th class="p-3">Plan</th><th class="p-3">Status</th><th class="p-3">Amount</th><th class="p-3">Gateway</th><th class="p-3">Next billing</th></tr></thead>
+                <thead><tr><th class="p-3">{{ __('Plan') }}</th><th class="p-3">{{ __('Status') }}</th><th class="p-3">{{ __('Amount') }}</th><th class="p-3">{{ __('Gateway') }}</th><th class="p-3">{{ __('Next billing') }}</th></tr></thead>
                 <tbody>
                     @forelse ($customer->subscriptions as $record)
                         <tr class="border-t theme-border">
@@ -295,7 +295,7 @@
                             <td class="p-3">{{ $record->next_billing_at?->format('d M Y H:i') ?? '—' }}</td>
                         </tr>
                     @empty
-                        <tr><td colspan="5" class="p-3 theme-text-muted">No subscription history yet.</td></tr>
+                        <tr><td colspan="5" class="p-3 theme-text-muted">{{ __('No subscription history yet.') }}</td></tr>
                     @endforelse
                 </tbody>
             </table>
@@ -303,26 +303,26 @@
 
         <section class="mt-6 overflow-hidden rounded-[2rem] betguru-card-elevated">
                 <div class="border-b px-6 py-5 theme-border">
-                    <h2 class="text-xl font-bold theme-text-main">Login History</h2>
+                    <h2 class="text-xl font-bold theme-text-main">{{ __('Login History') }}</h2>
                     <p class="mt-1 text-sm theme-text-muted">
-                        Review when the customer logged in, the IP address, device type, and session duration.
+                        {{ __('Review when the customer logged in, the IP address, device type, and session duration.') }}
                     </p>
                 </div>
 
                 <div class="overflow-x-auto">
-                    <table class="min-w-full divide-y divide-slate-100">
+                    <table class="min-w-full divide-y divide-[var(--border-slate-100)]">
                         <thead class="theme-bg-surface-soft">
                             <tr>
-                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">Logged In</th>
-                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">IP Address</th>
-                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">Device</th>
-                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">Duration</th>
-                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">Logged Out</th>
-                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">User Agent</th>
+                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">{{ __('Logged In') }}</th>
+                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">{{ __('IP Address') }}</th>
+                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">{{ __('Device') }}</th>
+                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">{{ __('Duration') }}</th>
+                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">{{ __('Logged Out') }}</th>
+                                <th class="px-5 py-4 text-left text-xs font-bold uppercase tracking-[0.16em] theme-text-muted">{{ __('User Agent') }}</th>
                             </tr>
                         </thead>
 
-                        <tbody class="divide-y divide-slate-100">
+                        <tbody class="divide-y divide-[var(--border-slate-100)]">
                             @forelse ($loginHistory as $history)
                                 @php
                                     $loggedInAt = filled($history->logged_in_at) ? \Illuminate\Support\Carbon::parse($history->logged_in_at) : null;
@@ -359,7 +359,7 @@
                             @empty
                                 <tr>
                                     <td colspan="6" class="px-5 py-10 text-center text-sm theme-text-muted">
-                                        No login history found.
+                                        {{ __('No login history found.') }}
                                     </td>
                                 </tr>
                             @endforelse

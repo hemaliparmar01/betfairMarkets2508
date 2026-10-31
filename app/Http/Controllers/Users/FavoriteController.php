@@ -13,7 +13,7 @@ class FavoriteController extends Controller
     public function toggle(Request $request): JsonResponse
     {
         $customer = $request->user('customers');
-        abort_if($customer === null, 401, 'Please log in to save favorites.');
+        abort_if($customer === null, 401, __('Please log in to save favorites.'));
 
         $data = $request->validate([
             'sport' => ['required', 'string', 'max:50'],

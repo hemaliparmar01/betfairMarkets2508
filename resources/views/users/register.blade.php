@@ -1,6 +1,6 @@
 @extends('users.layout.main')
 
-@section('title', 'Create BF Markets Account | Live Betfair Access')
+@section('title', __('Create BF Markets Account | Live Betfair Access'))
 @section('meta_description', 'Create your BF Markets account to access live Betfair odds, liquidity tracking, and
     real-time market monitoring across multiple sports.')
 
@@ -16,7 +16,7 @@
 @endpush
 
 @push('head')
-    @vite(['resources/users/css/auth.css', 'resources/users/js/auth/app.js'])
+    @vite('resources/users/js/auth/app.js')
 @endpush
 
 @section('content')

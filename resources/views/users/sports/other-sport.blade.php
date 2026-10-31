@@ -1,6 +1,6 @@
 @extends('users.layouts.app')
 
-@section('title', 'BetGuru | ' . $sportLabel)
+@section('title', __('BetGuru | ') . $sportLabel)
 @section('meta_description', 'BetGuru ' . $sportLabel . ' fixtures overview.')
 
 @push('css')
@@ -21,10 +21,10 @@
 
                         <div class="countrywise-main-tabs">
                             <button type="button" class="countrywise-main-tab is-active" data-simple-tab data-tab-group="main">
-                                Fixtures
+                                {{ __('Fixtures') }}
                             </button>
                             <button type="button" class="countrywise-main-tab" data-simple-tab data-tab-group="main">
-                                Moneyway
+                                {{ __('Moneyway') }}
                             </button>
                         </div>
                     </article>
@@ -32,13 +32,13 @@
                     <article class="countrywise-card countrywise-filter-bar">
                         <div class="countrywise-filter-pills">
                             <button type="button" class="countrywise-pill is-active" data-simple-tab data-tab-group="market">
-                                Live
+                                {{ __('Live') }}
                             </button>
                             <button type="button" class="countrywise-pill" data-simple-tab data-tab-group="market">
-                                Upcoming
+                                {{ __('Upcoming') }}
                             </button>
                             <button type="button" class="countrywise-pill" data-simple-tab data-tab-group="market">
-                                Finished
+                                {{ __('Finished') }}
                             </button>
                         </div>
                     </article>

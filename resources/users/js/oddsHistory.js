@@ -16,5 +16,5 @@ export const renderOddsHistory = (runner) => {
     }
     if (prices.length === 0) return '';
     const incomplete = runner.odds_history_incomplete ?? runner.history_incomplete ?? false;
-    return `<div data-odds-history class="mt-2 min-w-0 text-left text-xs"><span class="font-semibold text-slate-500 dark:text-slate-400">Odds history</span><p class="mt-1 max-h-24 overflow-y-auto break-words font-mono leading-5 text-[#245f84] dark:text-[#8ec8e9]">${prices.join(' → ')}</p>${incomplete ? '<p class="mt-1 text-[10px] text-slate-500 dark:text-slate-400">Earlier movements may be missing from the previously limited history.</p>' : ''}</div>`;
+    return `<div data-odds-history class="mt-2 min-w-0 text-left text-xs"><span class="font-semibold text-[var(--text-slate-500)] dark:text-[var(--text-slate-400)]">${(globalThis.bfTranslations?.["Odds history"] ?? "Odds history")}</span><p class="mt-1 max-h-24 overflow-y-auto break-words font-mono leading-5 text-[var(--text-brand-50-2)] dark:text-[rgb(var(--primary))]">${prices.join(' → ')}</p>${incomplete ? `<p class="mt-1 text-[10px] text-[var(--text-slate-500)] dark:text-[var(--text-slate-400)]">${(globalThis.bfTranslations?.["Earlier movements may be missing from the previously limited history."] ?? "Earlier movements may be missing from the previously limited history.")}</p>` : ''}</div>`;
 };

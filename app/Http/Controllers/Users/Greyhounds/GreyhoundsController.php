@@ -92,7 +92,7 @@ class GreyhoundsController extends Controller
         $prediction = request()->input('prediction');
         if (is_array($prediction)) {
             $customerId = request()->user('customers')?->getAuthIdentifier();
-            abort_if($customerId === null, 401, 'Please log in to submit predictions.');
+            abort_if($customerId === null, 401, __('Please log in to submit predictions.'));
             request()->validate(['prediction.match_id' => ['required', 'string', 'max:255'], 'prediction.poll' => ['required', 'in:winner'], 'prediction.value' => ['required', 'string', 'max:50']]);
             $matchId = $prediction['match_id'] ?? null;
             $poll = $prediction['poll'] ?? null;
@@ -125,10 +125,10 @@ class GreyhoundsController extends Controller
                         return;
                     }
 
-                    abort_unless(now()->timestamp >= (int) $matches[$matchKey]['timestamp'] - 300, 422, 'Race details become available five minutes before the start.');
+                    abort_unless(now()->timestamp >= (int) $matches[$matchKey]['timestamp'] - 300, 422, __('Race details become available five minutes before the start.'));
                     $runners = $matches[$matchKey]['markets'][$matchId.'_WIN'] ?? [];
-                    abort_unless(array_any($runners, static fn (array $runner): bool => (string) $runner['runnerId'] === (string) $value), 422, 'Select a valid race runner.');
-                    abort_unless((int) $matches[$matchKey]['timestamp'] > time(), 422, 'Voting closes at the off time.');
+                    abort_unless(array_any($runners, static fn (array $runner): bool => (string) $runner['runnerId'] === (string) $value), 422, __('Select a valid race runner.'));
+                    abort_unless((int) $matches[$matchKey]['timestamp'] > time(), 422, __('Voting closes at the off time.'));
 
                     $ownerQuery = PredictionVote::query()
                         ->where('customer_id', $customerId)

@@ -76,7 +76,7 @@ const refreshFootballTimelineClocks = () => {
             return;
         }
         const countdown = card.querySelector('[data-shock-countdown]');
-        countdown.textContent = `Expires in ${String(Math.floor(remaining / 60)).padStart(2, '0')}:${String(remaining % 60).padStart(2, '0')}`;
+        countdown.textContent = `${globalThis.bfTranslations?.['Expires in'] ?? 'Expires in'} ${String(Math.floor(remaining / 60)).padStart(2, '0')}:${String(remaining % 60).padStart(2, '0')}`;
     });
     const shockGrid = document.querySelector('[data-shock-heading]')?.closest('.fixtures-container');
     if (shockGrid) {
@@ -86,7 +86,7 @@ const refreshFootballTimelineClocks = () => {
         if (!shockGrid.querySelector('[data-shock-alert], .no-fixtures-message')) {
             const empty = document.createElement('div');
             empty.className = 'no-fixtures-message';
-            empty.textContent = 'No data available.';
+            empty.textContent = (globalThis.bfTranslations?.["No data available."] ?? "No data available.");
             shockGrid.insertBefore(empty, shockGrid.querySelector('[data-shock-footer]'));
         }
     }
@@ -133,7 +133,7 @@ const updateFootballLazyLoader = (hasMore, nextPage = null) => {
 
     footballLazyLoader.dataset.hasMore = footballHasMore ? 'true' : 'false';
     footballLazyLoader.classList.toggle('hidden', !footballHasMore);
-    footballLazyLoader.querySelector('[data-lazy-loader-text]').textContent = '↓ Scroll for more matches ↓';
+    footballLazyLoader.querySelector('[data-lazy-loader-text]').textContent = (globalThis.bfTranslations?.["↓ Scroll for more matches ↓"] ?? "↓ Scroll for more matches ↓");
 };
 
 const appendFootballMatches = (html) => {
@@ -169,7 +169,7 @@ const footballGoalState = new Map();
 let footballGoalTimer = null;
 let footballLiveSnapshotReceived = false;
 const clearGoalHighlight = (row) => {
-    row.classList.remove('fixture-goal-active', '!bg-[#ffe4ec]', '!border-[#f7a8bd]', 'dark:!bg-[#4a2633]');
+    row.classList.remove('fixture-goal-active', '!bg-[var(--surface-goal)]', '!border-[var(--border-accent-5-3)]', 'dark:!bg-[var(--status-accent-surface)]');
     row.removeAttribute('data-goal-highlight-until');
     row.querySelectorAll('[data-goal-indicator]').forEach(indicator => indicator.remove());
     row.querySelectorAll('.fixture-goal-team').forEach(team => team.classList.remove('fixture-goal-team'));
@@ -208,7 +208,7 @@ const scheduleGoalHighlights = (detectChanges = false) => {
                 team.classList.add('fixture-goal-team');
                 const label = document.createElement('span');
                 label.dataset.goalIndicator = '';
-                label.className = 'shrink-0 text-xs font-bold';
+                label.className = "shrink-0 text-xs font-bold";
                 label.textContent = 'Goal';
                 team.append(label);
             }
@@ -645,7 +645,7 @@ const callFixtureData = async (value, options = {}) => {
     }
     const requestVersion = realtime ? footballRequestVersion : ++footballRequestVersion;
     if (append && footballLazyLoader) {
-        footballLazyLoader.querySelector('[data-lazy-loader-text]').textContent = 'Loading matches…';
+        footballLazyLoader.querySelector('[data-lazy-loader-text]').textContent = (globalThis.bfTranslations?.["Loading matches…"] ?? "Loading matches…");
     }
 
     try {
@@ -714,13 +714,13 @@ const callFixtureData = async (value, options = {}) => {
         refreshFootballTimelineClocks();
 
     } catch (error) {
-        console.error('Request failed:', error);
+        console.error((globalThis.bfTranslations?.["Request failed:"] ?? "Request failed:"), error);
         if (options.realtime !== true) {
             let notice = document.querySelector('[data-football-request-error]');
             if (!notice) {
                 notice = document.createElement('p');
                 notice.dataset.footballRequestError = '';
-                notice.className = 'my-3 text-sm text-red-600 dark:text-red-400';
+                notice.className = "my-3 text-sm text-[var(--text-red-600)] dark:text-[var(--text-red-400)]";
                 notice.setAttribute('role', 'alert');
                 fixtures?.before(notice);
             }
@@ -878,7 +878,7 @@ document.addEventListener('click', async (event) => {
                 await callFixtureData(getSelectedFilters(), { reset: true });
             }
         } catch (error) {
-            console.error('Favorite update failed:', error);
+            console.error((globalThis.bfTranslations?.["Favorite update failed:"] ?? "Favorite update failed:"), error);
         } finally {
             favoriteButton.disabled = false;
         }

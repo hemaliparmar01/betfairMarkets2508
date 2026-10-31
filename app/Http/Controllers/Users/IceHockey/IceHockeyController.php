@@ -62,7 +62,7 @@ class IceHockeyController extends Controller
         $prediction = request()->input('prediction');
         if (is_array($prediction)) {
             $customerId = request()->user('customers')?->getAuthIdentifier();
-            abort_if($customerId === null, 401, 'Please log in to submit predictions.');
+            abort_if($customerId === null, 401, __('Please log in to submit predictions.'));
             $matchId = $prediction['match_id'] ?? null;
             $poll = $prediction['poll'] ?? null;
             $value = $prediction['value'] ?? null;
@@ -95,7 +95,7 @@ class IceHockeyController extends Controller
                     }
                     if ($value === 'X') {
                         $hasDraw = array_any($matches[$matchKey]['markets'] ?? [], static fn (array $runners): bool => array_any($runners, static fn (array $runner): bool => ($runner['marketType'] ?? '') === 'RT_MATCH_ODDS' && in_array(strtolower((string) ($runner['runner'] ?? '')), ['draw', 'the draw', 'tie'], true)));
-                        abort_unless($hasDraw, 422, 'Tie is not a selection in this match market.');
+                        abort_unless($hasDraw, 422, __('Tie is not a selection in this match market.'));
                     }
 
                     $ownerQuery = PredictionVote::query()

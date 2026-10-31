@@ -24,8 +24,8 @@ test('Betfair edge uses displayed valid odds and fair price without suppressing 
     assert.equal(app.evaluate('betfairEdgeText({...state.alerts[0], bf_back: 0})'), 'N/A');
     assert.equal(app.evaluate('betfairEdgeText({...state.alerts[0], bf_back: 4})'), '+163.2%');
     assert.equal(app.evaluate('betfairEdgeText({...state.alerts[0], nvp: null})'), '— (fair price pending)');
-    assert.equal(app.evaluate('edgeClass(-1)'), 'text-[#b52f3c] dark:text-red-400');
-    assert.equal(app.evaluate('edgeClass(1)'), 'text-emerald-600 dark:text-emerald-400');
+    assert.equal(app.evaluate('edgeClass(-1)'), 'text-[var(--text-danger-edge)] dark:text-[var(--text-red-400)]');
+    assert.equal(app.evaluate('edgeClass(1)'), 'text-[var(--text-emerald-600)] dark:text-[var(--text-emerald-400)]');
 });
 
 test('market and position names keep the affected side and line explicit', () => {

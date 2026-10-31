@@ -163,7 +163,7 @@ class CustomerForm {
         const Georgian = document.documentElement.lang === 'ka';
         const messages = Georgian
             ? ['გამოიყენეთ მინიმუმ 8 სიმბოლო ასოებით, ციფრებით და ნიშნებით.', 'სუსტი პაროლი', 'საშუალო სირთულის პაროლი', 'ძლიერი პაროლი']
-            : ['Use at least 8 characters with letters, numbers, and symbols.', 'Weak password', 'Medium password', 'Strong password'];
+            : [(globalThis.bfTranslations?.["Use at least 8 characters with letters, numbers, and symbols."] ?? "Use at least 8 characters with letters, numbers, and symbols."), (globalThis.bfTranslations?.["Weak password"] ?? "Weak password"), (globalThis.bfTranslations?.["Medium password"] ?? "Medium password"), (globalThis.bfTranslations?.["Strong password"] ?? "Strong password")];
         const label = this.root.querySelector('[data-password-strength-text]');
         if (label) {
             label.textContent = messages[level];

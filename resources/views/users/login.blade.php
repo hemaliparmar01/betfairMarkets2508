@@ -1,6 +1,6 @@
 @extends('users.layout.main')
 
-@section('title', 'Login to BF Markets | Live Betfair Access')
+@section('title', __('Login to BF Markets | Live Betfair Access'))
 @section('meta_description',
     'Login to BF Markets to access live Betfair odds, liquidity tracking, smart filters, and
     real-time market monitoring.')
@@ -76,7 +76,7 @@
 @endpush
 
 @push('head')
-    @vite(['resources/users/css/auth.css', 'resources/users/js/auth/app.js'])
+    @vite('resources/users/js/auth/app.js')
 @endpush
 
 @section('content')
@@ -145,7 +145,7 @@
                             </form>
                             <form method="POST" action="{{ route('login.sessions.cancel') }}" class="mt-3">
                                 @csrf
-                                <button type="submit" class="betguru-link">Cancel</button>
+                                <button type="submit" class="betguru-link">{{ __('Cancel') }}</button>
                             </form>
                         </div>
                     @endif

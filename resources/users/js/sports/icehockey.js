@@ -8,7 +8,7 @@ const showOddsTooltip = (event) => {
     oddsTooltip = document.createElement('div');
     oddsTooltip.setAttribute('role', 'tooltip');
     oddsTooltip.dataset.icehockeyTooltip = '';
-    oddsTooltip.className = 'pointer-events-none fixed z-[10001] whitespace-nowrap rounded-md bg-[#0b2a40] px-2 py-1 text-[11px] font-normal text-white shadow-sm dark:bg-[#2a4050] dark:text-[#e8edf2]';
+    oddsTooltip.className = 'pointer-events-none fixed z-[10001] whitespace-nowrap rounded-md bg-[var(--surface-heading)] px-2 py-1 text-[11px] font-normal text-white shadow-sm dark:bg-[rgb(var(--surface))] dark:text-[var(--text-on-primary)]';
     oddsTooltip.textContent = target.dataset.icehockeyOddsTooltip;
     document.body.append(oddsTooltip);
     const rect = target.getBoundingClientRect();
@@ -34,7 +34,7 @@ if (dashboard) {
     const filters = document.getElementById('icehockeyFilters');
     const dropdown = document.getElementById('marketDropdown');
     const markets = dashboard.dataset.sourceKind === 'markets';
-    let selectedFilter = 'all';
+    let selectedFilter = filters?.querySelector('.filter-pill.active')?.dataset.filter ?? 'all';
     let loadedPages = 1;
     let loading = false;
     let refreshPending = false;
@@ -49,7 +49,7 @@ if (dashboard) {
     const content = () => dashboard.querySelector(markets ? '[data-icehockey-market-rows]' : '.fixtures-container');
     const showError = (message) => {
         let notice = dashboard.querySelector('[data-icehockey-error]');
-        if (!notice) { notice = document.createElement('p'); notice.dataset.icehockeyError = ''; notice.className = 'p-3 text-center text-sm text-red-600'; dashboard.prepend(notice); }
+        if (!notice) { notice = document.createElement('p'); notice.dataset.icehockeyError = ''; notice.className = "p-3 text-center text-sm text-[var(--text-red-600)]"; dashboard.prepend(notice); }
         notice.textContent = message;
     };
     function scheduleRefresh() {
@@ -70,7 +70,7 @@ if (dashboard) {
         const params = { type: selectedFilter, market_name: dropdown?.value ?? '', page, per_page: perPage, append };
         if (prediction) params.prediction = prediction;
         const text = loader()?.querySelector('[data-lazy-loader-text]');
-        if (text) text.textContent = 'Loading matches…';
+        if (text) text.textContent = (globalThis.bfTranslations?.["Loading matches…"] ?? "Loading matches…");
         try {
             const url = new URL(dashboard.dataset.sourceUrl, window.location.origin);
             const options = { headers: { Accept: 'application/json', 'X-CSRF-TOKEN': csrf, 'X-Requested-With': 'XMLHttpRequest' }, cache: 'no-store' };
@@ -78,7 +78,7 @@ if (dashboard) {
             else Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value === true ? '1' : value === false ? '0' : String(value)));
             const response = await fetch(url, options);
             if (response.status === 401) { window.location.assign(dashboard.dataset.loginUrl); return; }
-            if (!response.ok) throw new Error('Unable to load matches. Please try again.');
+            if (!response.ok) throw new Error((globalThis.bfTranslations?.["Unable to load matches. Please try again."] ?? "Unable to load matches. Please try again."));
             const result = await response.json();
             hideOddsTooltip();
             const target = content();
@@ -112,7 +112,7 @@ if (dashboard) {
             content()?.classList.remove('fixtures-loading');
             content()?.removeAttribute('aria-busy');
             const text = loader()?.querySelector('[data-lazy-loader-text]');
-            if (text) text.textContent = '↓ Scroll for more matches ↓';
+            if (text) text.textContent = (globalThis.bfTranslations?.["↓ Scroll for more matches ↓"] ?? "↓ Scroll for more matches ↓");
             if (pendingAction) { const action = pendingAction; pendingAction = null; load(action); } else if (refreshPending && document.visibilityState === 'visible') { refreshPending = false; scheduleRefresh(); }
         }
     }
@@ -121,7 +121,7 @@ if (dashboard) {
         let nextExpiry = Infinity;
         dashboard.querySelectorAll('[data-incident-highlight-until]').forEach((row) => {
             const remaining = Number(row.dataset.incidentHighlightUntil) * 1000 - Date.now();
-            if (remaining <= 0) { row.classList.remove('!bg-[#ffe4ec]', 'dark:!bg-[#4a2633]'); row.querySelector('[data-incident-indicator]')?.remove(); delete row.dataset.incidentHighlightUntil; }
+            if (remaining <= 0) { row.classList.remove('!bg-[var(--surface-goal)]', 'dark:!bg-[var(--status-accent-surface)]'); row.querySelector('[data-incident-indicator]')?.remove(); delete row.dataset.incidentHighlightUntil; }
             else nextExpiry = Math.min(nextExpiry, remaining);
         });
         if (Number.isFinite(nextExpiry)) highlightTimer = window.setTimeout(expireHighlights, nextExpiry + 50);
@@ -147,29 +147,29 @@ if (dashboard) {
         const scoreStatus = escape(row.dataset.matchStatus ?? '');
         let title = ''; let body = '';
         if (activeModal.action === 'stats') {
-            const data = parse(row.dataset.icehockeyStats); title = 'Live Match Statistics';
+            const data = parse(row.dataset.icehockeyStats); title = (globalThis.bfTranslations?.["Live Match Statistics"] ?? "Live Match Statistics");
             body = `<div class="grid gap-3 sm:grid-cols-2">${[['home', data.team1], ['away', data.team2]].map(([side, team]) => {
                 const score = data[side] ?? {};
-                return `<section class="rounded-xl border border-[#d4e0ec] p-4"><h3 class="mb-2 font-bold">${escape(team)}</h3><p class="mb-2 text-xl font-bold"><span class="match-score" data-score-status="${scoreStatus}">${escape(score.current ?? score.display ?? '—')}</span></p>${[['period1', 'P1'], ['period2', 'P2'], ['period3', 'P3'], ['overtime', 'OT'], ['penalties', 'SO']].filter(([key]) => score[key] != null).map(([key, label]) => `<p class="py-1">${label}: <b>${escape(score[key])}</b></p>`).join('')}</section>`;
+                return `<section class="rounded-xl border border-[var(--border-control)] p-4"><h3 class="mb-2 font-bold">${escape(team)}</h3><p class="mb-2 text-xl font-bold"><span class="match-score" data-score-status="${scoreStatus}">${escape(score.current ?? score.display ?? '—')}</span></p>${[['period1', 'P1'], ['period2', 'P2'], ['period3', 'P3'], ['overtime', 'OT'], ['penalties', 'SO']].filter(([key]) => score[key] != null).map(([key, label]) => `<p class="py-1">${label}: <b>${escape(score[key])}</b></p>`).join('')}</section>`;
             }).join('')}</div>`;
             const statistics = Array.isArray(data.statistics) ? data.statistics : [data.statistics];
-            body += statistics.map((period) => (period?.groups ?? []).map((group) => `<h3 class="mt-4 font-bold">${escape(group.groupName)}</h3>${(group.statisticsItems ?? []).map((item) => `<div class="grid grid-cols-[1fr_2fr_1fr] border-b border-[#e3ecf5] py-2 text-center text-sm"><span>${escape(item.home ?? item.homeValue ?? '—')}</span><span>${escape(item.name)}</span><span>${escape(item.away ?? item.awayValue ?? '—')}</span></div>`).join('')}`).join('')).join('');
+            body += statistics.map((period) => (period?.groups ?? []).map((group) => `<h3 class="mt-4 font-bold">${escape(globalThis.bfTranslations?.[group.groupName] ?? group.groupName)}</h3>${(group.statisticsItems ?? []).map((item) => `<div class="grid grid-cols-[1fr_2fr_1fr] border-b border-[var(--border-neutral-5-2)] py-2 text-center text-sm"><span>${escape(item.home ?? item.homeValue ?? '—')}</span><span>${escape(globalThis.bfTranslations?.[item.name] ?? item.name)}</span><span>${escape(item.away ?? item.awayValue ?? '—')}</span></div>`).join('')}`).join('')).join('');
         } else if (activeModal.action === 'prediction') {
-            const data = parse(row.dataset.icehockeyPrediction); title = 'Match Predictions';
+            const data = parse(row.dataset.icehockeyPrediction); title = (globalThis.bfTranslations?.["Match Predictions"] ?? "Match Predictions");
             const total = Object.values(data.counts ?? {}).reduce((sum, count) => sum + Number(count), 0);
-            body = `<p class="mb-4 text-sm">${data.locked ? 'Voting closes when the match starts.' : data.vote ? 'Your prediction has been recorded.' : 'Who will win this match?'}</p><div class="grid gap-3">${Object.entries(data.choices ?? {}).map(([value, label]) => `<button type="button" data-action="vote" data-value="${escape(value)}" ${data.locked || data.vote ? 'disabled' : ''} class="rounded-xl border border-[#b9d7f3] p-3 text-left disabled:cursor-default ${data.vote === value ? 'bg-[#d5edff] text-[#1a6b9c]' : ''}"><b>${escape(label)}</b><span class="float-right">${Number(data.counts?.[value] ?? 0)} votes · ${total ? Math.round(Number(data.counts?.[value] ?? 0) / total * 100) : 0}%</span></button>`).join('')}</div>`;
+            body = `<p class="mb-4 text-sm">${data.locked ? (globalThis.bfTranslations?.["Voting closes when the match starts."] ?? "Voting closes when the match starts.") : data.vote ? (globalThis.bfTranslations?.["Your prediction has been recorded."] ?? "Your prediction has been recorded.") : (globalThis.bfTranslations?.["Who will win this match?"] ?? "Who will win this match?")}</p><div class="grid gap-3">${Object.entries(data.choices ?? {}).map(([value, label]) => `<button type="button" data-action="vote" data-value="${escape(value)}" ${data.locked || data.vote ? 'disabled' : ''} class="rounded-xl border border-[var(--border-brand-5-5)] p-3 text-left disabled:cursor-default ${data.vote === value ? 'bg-[var(--surface-brand-0-2)] text-[rgb(var(--primary))]' : ''}"><b>${escape(label)}</b><span class="float-right">${Number(data.counts?.[value] ?? 0)} votes · ${total ? Math.round(Number(data.counts?.[value] ?? 0) / total * 100) : 0}%</span></button>`).join('')}</div>`;
         } else {
-            const data = parse(row.dataset.icehockeyMarket); title = data.title ?? 'Market Details';
-            body = `<p class="mb-2 font-bold">${escape(data.team1)} vs ${escape(data.team2)}</p><p class="mb-4 text-sm"><span class="match-score" data-score-status="${escape(data.status)}">${escape(data.score)}</span> · ${escape(data.status)} · ${escape(data.minutes)}</p>`;
-            if (data.locked) body += '<p>Login with an active subscription to view odds.</p>';
-            else body += `<div class="overflow-x-auto"><table class="w-full text-left text-sm"><thead><tr>${['Selection', 'Initial', 'Back', 'Size', 'Lay', 'Size'].map((label) => `<th class="px-2 py-2">${label}</th>`).join('')}</tr></thead><tbody>${(data.runners ?? []).map((runner) => {
+            const data = parse(row.dataset.icehockeyMarket); title = data.title ?? (globalThis.bfTranslations?.["Market Details"] ?? "Market Details");
+            body = `<p class="mb-2 font-bold">${escape(data.team1)} vs ${escape(data.team2)}</p><p class="mb-4 text-sm"><span class="match-score" data-score-status="${escape(data.status)}">${escape(data.score)}</span> · ${escape(globalThis.bfTranslations?.[data.status] ?? data.status)} · ${escape(globalThis.bfTranslations?.[data.minutes] ?? data.minutes)}</p>`;
+            if (data.locked) body += `<p>${(globalThis.bfTranslations?.["Login with an active subscription to view odds."] ?? "Login with an active subscription to view odds.")}</p>`;
+            else body += `<div class="overflow-x-auto"><table class="w-full text-left text-sm"><thead><tr>${['Selection', 'Initial', (globalThis.bfTranslations?.["Back"] ?? "Back"), 'Size', (globalThis.bfTranslations?.["Lay"] ?? "Lay"), 'Size'].map((label) => `<th class="px-2 py-2">${label}</th>`).join('')}</tr></thead><tbody>${(data.runners ?? []).map((runner) => {
                 const initial = Number(runner.initialBackOdds ?? 0); const current = Number(runner.currentBackOdds ?? runner.backOdds ?? 0);
                 const arrow = initial > 0 && current > 0 ? current > initial ? ' ↑' : current < initial ? ' ↓' : '' : '';
-                return `<tr class="border-t border-[#e3ecf5]"><td class="px-2 py-3">${escape(runner.runner)}${renderOddsHistory(runner)}</td>${[initial, current, runner.backSize, runner.layOdds, runner.laySize].map((value, index) => `<td ${index === 1 && current > 0 ? `tabindex="0" data-icehockey-odds-tooltip="${number(initial)} ${current > initial ? '&lt;&lt;' : '&gt;&gt;'} ${number(current)}"` : ''} class="whitespace-nowrap px-2 py-3 font-semibold">${number(value)}${index === 1 ? arrow : ''}</td>`).join('')}</tr>`;
-            }).join('')}</tbody></table></div><a class="mt-4 inline-block rounded-xl bg-[#0b2a40] px-4 py-2 text-sm font-bold text-white" href="${escape(row.dataset.icehockeyMatchUrl)}">Match markets &amp; charts →</a>`;
+                return `<tr class="border-t border-[var(--border-neutral-5-2)]"><td class="px-2 py-3">${escape(runner.runner)}${renderOddsHistory(runner)}</td>${[initial, current, runner.backSize, runner.layOdds, runner.laySize].map((value, index) => `<td ${index === 1 && current > 0 ? `tabindex="0" data-icehockey-odds-tooltip="${number(initial)} ${current > initial ? '&lt;&lt;' : '&gt;&gt;'} ${number(current)}"` : ''} class="whitespace-nowrap px-2 py-3 font-semibold">${number(value)}${index === 1 ? arrow : ''}</td>`).join('')}</tr>`;
+            }).join('')}</tbody></table></div><a class="mt-4 inline-block rounded-xl bg-[var(--surface-heading)] px-4 py-2 text-sm font-bold text-white" href="${escape(row.dataset.icehockeyMatchUrl)}">${(globalThis.bfTranslations?.["Match markets &amp; charts →"] ?? "Match markets &amp; charts →")}</a>`;
         }
         hideOddsTooltip();
-        panel.innerHTML = `<div class="mb-5 flex items-center justify-between gap-3"><h2 id="icehockeyModalTitle" class="text-lg font-extrabold">${escape(title)}</h2><button type="button" data-action="close-modal" aria-label="Close" class="px-2 text-2xl">×</button></div>${body}`;
+        panel.innerHTML = `<div class="mb-5 flex items-center justify-between gap-3"><h2 id="icehockeyModalTitle" class="text-lg font-extrabold">${escape(title)}</h2><button type="button" data-action="close-modal" aria-label="${(globalThis.bfTranslations?.["Close"] ?? "Close")}" class="px-2 text-2xl">×</button></div>${body}`;
         panel.scrollTop = scrollTop;
         modal.classList.remove('hidden');
         modal.classList.add('flex');
@@ -205,7 +205,7 @@ if (dashboard) {
         try {
             const response = await fetch(dashboard.dataset.favoriteUrl, { method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrf }, body: JSON.stringify({ sport: 'icehockey', event_key: button.dataset.eventKey, event_id: button.dataset.eventId, team1: button.dataset.team1, team2: button.dataset.team2, start_timestamp: button.dataset.startTimestamp }) });
             if (response.status === 401) { window.location.assign(button.dataset.loginUrl); return; }
-            if (!response.ok) throw new Error('Unable to save favorite. Please try again.');
+            if (!response.ok) throw new Error((globalThis.bfTranslations?.["Unable to save favorite. Please try again."] ?? "Unable to save favorite. Please try again."));
             await load();
         } catch (error) { showError(error.message); }
         finally { button.disabled = false; }

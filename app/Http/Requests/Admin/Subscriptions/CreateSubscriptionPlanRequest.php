@@ -48,8 +48,8 @@ class CreateSubscriptionPlanRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'price_for_local.min' => 'The price for local subscriptions must be at least 0.01.',
-            'price_for_international.min' => 'The price for international subscriptions must be at least 0.01.',
+            'price_for_local.min' => __('The price for local subscriptions must be at least 0.01.'),
+            'price_for_international.min' => __('The price for international subscriptions must be at least 0.01.'),
         ];
     }
 }

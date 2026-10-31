@@ -92,8 +92,9 @@ class FootballSyncController extends Controller
                     }
                     $event['is_home'] = str_starts_with($group, 'home_');
                     $event['kind'] = str_ends_with($group, 'goals') ? 'goal' : (str_ends_with($group, 'yellow_cards') ? 'yellow' : (str_ends_with($group, 'red_cards') ? 'red' : 'corner'));
-                    if (($event['time_known'] ?? true) === false && ($events[(string) $event['id']]['time_known'] ?? false)) {
-                        foreach (['minute', 'added_time', 'seconds', 'time_known'] as $field) {
+                    if (($events[(string) $event['id']]['time_known'] ?? false)
+                        && (($event['time_known'] ?? true) === false || (($event['time_estimated'] ?? false) && ! ($events[(string) $event['id']]['time_estimated'] ?? false)))) {
+                        foreach (['minute', 'added_time', 'seconds', 'time_known', 'time_estimated'] as $field) {
                             unset($event[$field]);
                         }
                     }
@@ -104,6 +105,8 @@ class FootballSyncController extends Controller
         }
         $timeline['removed'] = array_replace($storedTimeline['removed'] ?? [], $match['timeline']['removed'] ?? $previous['timeline']['removed'] ?? []);
         $timeline['events'] = array_diff_key($events, $timeline['removed']);
+        $canEstimateCards = $frameType === 'update' && $requestedAt === null && ($timeline['initialized'] ?? false) && ($match['result_status'] ?? '') === 'Live';
+        $cardClock = null;
         if ($channel !== '') {
             if (! preg_match('/^match:(\d+)(?::(incidents|stats))?$/', $channel, $channelMatch)
                 || (string) ($match['sportsApiPro_match_id'] ?? '') !== $channelMatch[1]) {
@@ -154,7 +157,7 @@ class FootballSyncController extends Controller
                     $incidentTime = (string) ($incident['time'] ?? '-1');
                     $stoppage = [];
                     preg_match('/^(\d+)\+(\d+)$/', $incidentTime, $stoppage);
-                    $incidentMinute = (int) ($stoppage[1] ?? $incidentTime);
+                    $incidentMinute = is_numeric($incidentTime) || $stoppage !== [] ? (int) ($stoppage[1] ?? $incidentTime) : -1;
                     $incidentSeconds = is_numeric($incident['timeSeconds'] ?? null) ? (int) $incident['timeSeconds'] : null;
                     $timeKnown = $incidentMinute >= 0 || $incidentSeconds > 0;
                     $minute = $incidentMinute >= 0 ? $incidentMinute : ($incidentSeconds > 0 ? (int) floor($incidentSeconds / 60) : 0);
@@ -181,15 +184,29 @@ class FootballSyncController extends Controller
                             $timestamp = null;
                         }
                     }
-                    if ($timestamp === null && ! isset($events[$id]) && $requestedAt === null && $frameType === 'update'
-                        && ($timeline['initialized'] ?? false) && ($match['result_status'] ?? '') === 'Live' && ($incident['isLive'] ?? true) !== false) {
-                        $timestamp = now('UTC')->toIso8601ZuluString();
-                    }
+                    $timeEstimated = ! $timeKnown && ($events[$id]['time_estimated'] ?? false);
                     if (! $timeKnown && ($events[$id]['time_known'] ?? false)) {
                         $minute = $events[$id]['minute'];
                         $added = $events[$id]['added_time'];
                         $incidentSeconds = $events[$id]['seconds'];
                         $timeKnown = true;
+                    } elseif (! $timeKnown && $kind === 'card' && ! isset($events[$id]) && $canEstimateCards && ($incident['isLive'] ?? true) !== false) {
+                        $estimated = array_find($events, static fn (array $event): bool => ($event['source'] ?? '') === 'statistics'
+                            && ($event['kind'] ?? '') === ($class === 'yellow' ? 'yellow' : 'red') && $event['is_home'] === $home);
+                        if ($estimated !== null) {
+                            $minute = $estimated['minute'];
+                            $added = $estimated['added_time'];
+                            $incidentSeconds = $estimated['seconds'];
+                            $timeKnown = $timeEstimated = true;
+                            unset($events[$estimated['id']]);
+                        } else {
+                            $cardClock ??= app(FootballController::class)->footballTimeline($match, $timeline);
+                        }
+                        if (! $timeKnown && ! $cardClock['finished'] && ($cardClock['minute'] > 0 || $cardClock['running'])) {
+                            $minute = min($cardClock['period_limit'], $cardClock['minute']);
+                            $added = max(0, $cardClock['minute'] - $minute);
+                            $timeKnown = $timeEstimated = true;
+                        }
                     }
                     $events[$id] = array_replace($events[$id] ?? [], array_filter([
                         'timestamp' => $timestamp,
@@ -198,6 +215,7 @@ class FootballSyncController extends Controller
                         'incident_class' => $class,
                         'minute' => $minute,
                         'time_known' => $timeKnown,
+                        'time_estimated' => $kind === 'card' ? $timeEstimated : null,
                         'added_time' => $added,
                         'seconds' => $incidentSeconds !== null && $incidentSeconds >= 0 ? $incidentSeconds : ($minute + $added) * 60,
                         'is_home' => $home,
@@ -291,11 +309,36 @@ class FootballSyncController extends Controller
         foreach (['yellow_cards', 'red_cards', 'corners'] as $stat) {
             foreach (['home', 'away'] as $side) {
                 $group = $side.'_'.$stat;
+                $previousCount = $timeline['reported_counts'][$group] ?? (($timeline['initialized'] ?? false) && $timeline[$group] !== [] ? count($timeline[$group]) : null);
                 $reported = $payload['timeline_counts'][$group] ?? $match['card_stats'][$stat][$side] ?? $match['live_stats'][$stat][$side] ?? ($stat === 'corners' ? ($match['corners'][$side] ?? null) : ($match['card_counts'][$side][$stat === 'yellow_cards' ? 'yellow' : 'total_red'] ?? null));
                 if ($reported !== null) {
                     $timeline['reported_counts'][$group] = (int) $reported;
                 }
-                if (isset($timeline['reported_counts'][$group]) && $timeline['reported_counts'][$group] <= count(array_filter($timeline[$group], static fn (array $event): bool => (bool) ($event['time_known'] ?? false))) && ($timeline['initialized'] ?? false)) {
+                if ($stat !== 'corners') {
+                    $actualCount = count(array_filter($timeline[$group], static fn (array $event): bool => ($event['source'] ?? '') !== 'statistics'));
+                    $remainingEstimates = max(0, (int) ($timeline['reported_counts'][$group] ?? 0) - $actualCount);
+                    $timeline[$group] = array_values(array_filter($timeline[$group], static function (array $event) use (&$remainingEstimates): bool {
+                        return ($event['source'] ?? '') !== 'statistics' || $remainingEstimates-- > 0;
+                    }));
+                    if ($reported !== null && $previousCount !== null && (int) $reported > $previousCount && count($timeline[$group]) < (int) $reported && $canEstimateCards) {
+                        $cardClock ??= app(FootballController::class)->footballTimeline($match, $timeline);
+                        if (! $cardClock['finished'] && ($cardClock['minute'] > 0 || $cardClock['running'])) {
+                            for ($index = max($previousCount, count($timeline[$group])); $index < (int) $reported; $index++) {
+                                $minute = min($cardClock['period_limit'], $cardClock['minute']);
+                                $added = max(0, $cardClock['minute'] - $minute);
+                                $timeline[$group][] = ['id' => 'stats-'.$side.'-'.($stat === 'yellow_cards' ? 'yellow' : 'red').'-'.$index,
+                                    'minute' => $minute, 'added_time' => $added, 'seconds' => ($minute + $added) * 60,
+                                    'time_known' => true, 'time_estimated' => true, 'source' => 'statistics', 'timestamp' => null,
+                                    'player' => '', 'player_surname' => null, 'home_score' => null, 'away_score' => null];
+                            }
+                        }
+                    }
+                    if ($actualCount > 0) {
+                        $timeline['reported_counts'][$group] = max((int) ($timeline['reported_counts'][$group] ?? 0), $actualCount);
+                    }
+                }
+                if (isset($timeline['reported_counts'][$group]) && ($stat === 'corners' || $timeline['reported_counts'][$group] > 0)
+                    && $timeline['reported_counts'][$group] <= count(array_filter($timeline[$group], static fn (array $event): bool => ($event['time_known'] ?? false) && ! ($event['time_estimated'] ?? false))) && ($timeline['initialized'] ?? false)) {
                     unset($timeline['reported_counts'][$group]);
                 }
             }
@@ -332,7 +375,7 @@ class FootballSyncController extends Controller
                 Log::warning('Football timeline persistence failed', ['match_id' => $matchId, 'exception' => $exception::class]);
             }
         }
-        $missingTimedEvents = array_any($groups, static fn (string $group): bool => array_any($match['timeline'][$group], static fn (array $event): bool => ! ($event['time_known'] ?? false)));
+        $missingTimedEvents = array_any($groups, static fn (string $group): bool => array_any($match['timeline'][$group], static fn (array $event): bool => ! ($event['time_known'] ?? false) || ($event['time_estimated'] ?? false)));
         foreach ($match['timeline']['reported_counts'] ?? [] as $group => $count) {
             if (in_array($group, $groups, true) && count(array_filter($match['timeline'][$group], static fn (array $event): bool => (bool) ($event['time_known'] ?? false))) < (int) $count) {
                 $missingTimedEvents = true;
@@ -1253,7 +1296,10 @@ class FootballSyncController extends Controller
             }
         }
 
-        foreach ($payloads['liveMap'] as $payloadKey => $payload) {
+        foreach (($payloads['liveMap'] ?? []) as $payloadKey => $payload) {
+            if (! isset($payload['openTimestamp'], $payload['team1'], $payload['team2'])) {
+                continue;
+            }
             $currentTimestamp = Carbon::parse($payload['openTimestamp'])->timestamp;
             $team1 = $payload['team1'];
             $team2 = $payload['team2'];

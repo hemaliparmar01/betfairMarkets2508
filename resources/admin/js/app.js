@@ -1,3 +1,4 @@
+import '../../users/js/auth/dom.js';
 import Alpine from 'alpinejs';
 
 import subscriptionPlanTable from './subscription-plan-table';

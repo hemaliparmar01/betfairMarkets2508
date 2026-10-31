@@ -31,7 +31,7 @@ class SubscriptionsController extends Controller
     {
         $subscriptionPlanService->create($request->validated());
 
-        return redirect()->route('admin.subscriptions.index')->with('success', 'Subscription plan created successfully.');
+        return redirect()->route('admin.subscriptions.index')->with('success', __('Subscription plan created successfully.'));
     }
 
     public function edit(Subscriptions $subscription): View
@@ -46,7 +46,7 @@ class SubscriptionsController extends Controller
 
             return redirect()
                 ->route('admin.subscriptions.index')
-                ->with('success', 'Subscription plan updated successfully.');
+                ->with('success', __('Subscription plan updated successfully.'));
         } catch (Throwable $e) {
             Log::error('Subscription plan update failed',
                 [
@@ -54,7 +54,7 @@ class SubscriptionsController extends Controller
                     'error' => $e->getMessage(),
                 ]);
 
-            return back()->withInput()->with('error', 'Something went wrong while updating the plan.');
+            return back()->withInput()->with('error', __('Something went wrong while updating the plan.'));
         }
     }
 
@@ -65,14 +65,14 @@ class SubscriptionsController extends Controller
 
             return redirect()
                 ->route('admin.subscriptions.index')
-                ->with('success', 'Subscription plan deleted successfully.');
+                ->with('success', __('Subscription plan deleted successfully.'));
         } catch (Throwable $e) {
             Log::error('Subscription plan delete failed', [
                 'subscription_id' => $subscription->id,
                 'error' => $e->getMessage(),
             ]);
 
-            return back()->with('error', 'Something went wrong while deleting the subscription plan.');
+            return back()->with('error', __('Something went wrong while deleting the subscription plan.'));
         }
     }
 }

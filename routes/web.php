@@ -19,11 +19,24 @@ use App\Http\Controllers\Users\SubscriptionPaymentController;
 use App\Http\Controllers\Users\Tennis\TennisController;
 use App\Services\CustomerAuthService;
 use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Session\Middleware\StartSession;
-use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Validation\Rule;
 use Illuminate\View\Middleware\ShareErrorsFromSession;
+
+Route::post('locale', function (Request $request): RedirectResponse {
+    $data = $request->validate(['locale' => ['required', 'string', Rule::in(array_keys(config('app.supported_locales')))]]);
+    $request->session()->put('locale', $data['locale']);
+    app()->setLocale($data['locale']);
+    $returnTo = $request->input('return_to', '/');
+    if (! is_string($returnTo) || ! str_starts_with($returnTo, '/') || str_starts_with($returnTo, '//') || str_contains($returnTo, '\\') || preg_match('/[\x00-\x1F\x7F]/', $returnTo)) {
+        $returnTo = '/';
+    }
+
+    return redirect($returnTo);
+})->name('locale.update');
 
 Route::get('popup', function () {
     return view('popup');
@@ -55,8 +68,6 @@ Route::post('logout', [AuthController::class, 'logout'])->middleware('auth:custo
 Route::get('my-profile', [AuthController::class, 'profile'])->middleware('auth:customers')->name('customers.profile');
 Route::put('my-profile', [AuthController::class, 'updateProfile'])->middleware('auth:customers')->name('customers.profile.update');
 Route::get('my-profile/avatar', [AuthController::class, 'avatar'])->middleware('auth:customers')->name('customers.avatar');
-
-Route::get('temp-data-merge', [FootballController::class, 'tempDataMerge']);
 
 Route::get('/', [FootballController::class, 'football'])->name('football.home');
 Route::post('favorites/toggle', [FavoriteController::class, 'toggle'])->middleware('auth:customers')->name('favorites.toggle');
@@ -134,12 +145,6 @@ Route::prefix('baseball')->name('baseball.')->group(function () {
     Route::post('websocket-baseball', [BaseballController::class, 'websocketBaseball'])->name('websocket-baseball');
 });
 
-Route::get('delete-cache-key/{forgot_cache_key}', function (Request $request) {
-    $cacheKey = $request->forgot_cache_key;
-
-    return Redis::del($cacheKey);
-});
-
 Route::get('contact-us', [ContactController::class, 'contact'])->name('contact-us');
 Route::post('contact-us', [ContactController::class, 'store'])->name('contact-us.store');
 Route::middleware('auth:customers')->group(function (): void {
@@ -178,14 +183,3 @@ Route::post('subscriptions/payments/webhooks/{gateway}', [SubscriptionPaymentCon
 
 Route::post('subscriptions/payment/return', [SubscriptionPaymentController::class, 'returnedPost'])
     ->withoutMiddleware([PreventRequestForgery::class, StartSession::class, ShareErrorsFromSession::class, CustomerAuthService::class]);
-
-Route::get('get-sport-data/{cache_key_name}', function (string $cache_key_name) {
-    $data = getInRedis($cache_key_name);
-    if (! is_array($data)) {
-        dd('No data found', $data);
-    }
-    foreach ($data as $key => $value) {
-        dump($key, $value);
-    }
-    dd('Done');
-});

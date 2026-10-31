@@ -126,7 +126,7 @@ class CustomerAuthService
     {
         $customer = Customer::query()->where('country_code', $data['country_code'])->where('mobile', $data['mobile'])->first();
         if ($customer === null || $customer->is_blocked || $customer->is_suspended) {
-            throw ValidationException::withMessages(['mobile' => 'A login code cannot be sent for these account details.']);
+            throw ValidationException::withMessages(['mobile' => __('A login code cannot be sent for these account details.')]);
         }
         $request->session()->forget('customer_pending_login');
         if (! $customer->is_verified) {
@@ -138,7 +138,7 @@ class CustomerAuthService
 
         $key = 'customer-login-code:'.$customer->id;
         if (RateLimiter::tooManyAttempts($key, 5)) {
-            throw ValidationException::withMessages(['mobile' => 'Too many login codes requested. Please try again later.']);
+            throw ValidationException::withMessages(['mobile' => __('Too many login codes requested. Please try again later.')]);
         }
         $code = (string) random_int(100000, 999999);
         $nonce = Str::random(32);
@@ -146,11 +146,11 @@ class CustomerAuthService
         DB::transaction(function () use ($customer, $payload): void {
             $stored = $this->customers->find((int) $customer->id, true);
             if ($stored === null || $stored->is_blocked || $stored->is_suspended || ! $stored->is_verified) {
-                throw ValidationException::withMessages(['mobile' => 'Your account is unavailable.']);
+                throw ValidationException::withMessages(['mobile' => __('Your account is unavailable.')]);
             }
             $previous = json_decode($stored->login_otp ?? '', true);
             if (is_array($previous) && ($previous['sent_at'] ?? 0) > now()->timestamp - 60) {
-                throw ValidationException::withMessages(['mobile' => 'Please wait 60 seconds before requesting another code.']);
+                throw ValidationException::withMessages(['mobile' => __('Please wait 60 seconds before requesting another code.')]);
             }
             $this->customers->update((int) $customer->id, ['login_otp' => $payload]);
         });
@@ -160,7 +160,7 @@ class CustomerAuthService
         } catch (\Throwable $exception) {
             Customer::query()->whereKey($customer->id)->where('login_otp', $payload)->update(['login_otp' => null]);
             report($exception);
-            throw ValidationException::withMessages(['mobile' => 'We could not send your login code. Please try again.']);
+            throw ValidationException::withMessages(['mobile' => __('We could not send your login code. Please try again.')]);
         }
         $this->customers->update((int) $customer->id, ['login_channel_via' => $channel]);
         $request->session()->put('customer_login_otp', [
@@ -168,7 +168,7 @@ class CustomerAuthService
             'credential_hash' => hash('sha256', $customer->password),
             'data' => $data, 'channel' => $channel,
         ]);
-        $request->session()->flash('status', 'Your login code has been sent via '.$channel.'.');
+        $request->session()->flash('status', __('Your login code has been sent via :channel.', ['channel' => __($channel)]));
     }
 
     public function loginCodeCustomer(Request $request): ?Customer
@@ -187,7 +187,7 @@ class CustomerAuthService
     public function resendLoginCode(Request $request): void
     {
         if ($this->loginCodeCustomer($request) === null) {
-            throw ValidationException::withMessages(['code' => 'Your login code session expired. Please start again.']);
+            throw ValidationException::withMessages(['code' => __('Your login code session expired. Please start again.')]);
         }
         $this->sendLoginCode($request, $request->session()->get('customer_login_otp')['data']);
     }
@@ -196,7 +196,7 @@ class CustomerAuthService
     {
         $customer = $this->loginCodeCustomer($request);
         if ($customer === null) {
-            throw ValidationException::withMessages(['code' => 'Your login code session expired. Please start again.']);
+            throw ValidationException::withMessages(['code' => __('Your login code session expired. Please start again.')]);
         }
         $pending = $request->session()->get('customer_login_otp');
         $valid = DB::transaction(function () use ($customer, $pending, $code): bool {
@@ -220,7 +220,7 @@ class CustomerAuthService
             return true;
         });
         if (! $valid) {
-            throw ValidationException::withMessages(['code' => 'The code is incorrect, expired, or has reached five attempts.']);
+            throw ValidationException::withMessages(['code' => __('The code is incorrect, expired, or has reached five attempts.')]);
         }
         $request->session()->forget('customer_login_otp');
         $data = $pending['data'] + ['credential_hash' => $pending['credential_hash']];
@@ -252,7 +252,7 @@ class CustomerAuthService
                         'messages' => [[
                             'from' => config('services.infobip.sender'),
                             'destinations' => [['to' => ltrim($customer->mobile_code, '+').$customer->mobile]],
-                            'text' => "Your BF Markets verification code is {$code}. It expires in 10 minutes.",
+                            'text' => __('Your BF Markets verification code is :code. It expires in 10 minutes.', ['code' => $code]),
                         ]],
                     ]);
                 if ($response->successful() && in_array((int) $response->json('messages.0.status.groupId'), [1, 3], true)) {
@@ -264,8 +264,8 @@ class CustomerAuthService
                 report($exception);
             }
         }
-        Mail::raw("Your BF Markets verification code is: {$code}\n\nThis code expires in 10 minutes. If you did not request this, ignore this email.", function (Message $message) use ($customer, $purpose): void {
-            $message->to($customer->email)->subject($purpose === 'login' ? 'Your BF Markets login code' : 'Verify your BF Markets account');
+        Mail::raw(__("Your BF Markets verification code is: :code\n\nThis code expires in 10 minutes. If you did not request this, ignore this email.", ['code' => $code]), function (Message $message) use ($customer, $purpose): void {
+            $message->to($customer->email)->subject($purpose === 'login' ? __('Your BF Markets login code') : __('Verify your BF Markets account'));
         });
 
         return 'email';
@@ -334,7 +334,7 @@ class CustomerAuthService
     {
         $customer = $this->verificationCustomer($request);
         if ($customer === null) {
-            throw ValidationException::withMessages(['code' => 'Please log in or register to request a verification code.']);
+            throw ValidationException::withMessages(['code' => __('Please log in or register to request a verification code.')]);
         }
 
         $key = 'customer-verification-send:'.$customer->id;
@@ -347,11 +347,11 @@ class CustomerAuthService
         DB::transaction(function () use ($customer, $payload): void {
             $stored = $this->customers->find((int) $customer->id, true);
             if ($stored === null || $stored->is_verified || $stored->is_blocked || $stored->is_suspended) {
-                throw ValidationException::withMessages(['code' => 'Your account is unavailable or already verified.']);
+                throw ValidationException::withMessages(['code' => __('Your account is unavailable or already verified.')]);
             }
             $previous = json_decode($stored->code ?? '', true);
             if (is_array($previous) && ($previous['sent_at'] ?? 0) > now()->timestamp - 60) {
-                throw ValidationException::withMessages(['code' => 'Please wait 60 seconds before requesting another code.']);
+                throw ValidationException::withMessages(['code' => __('Please wait 60 seconds before requesting another code.')]);
             }
             $this->customers->update((int) $customer->id, ['code' => $payload]);
         });
@@ -363,7 +363,7 @@ class CustomerAuthService
         } catch (\Throwable $exception) {
             Customer::query()->where('id', $customer->id)->where('code', $payload)->update(['code' => null]);
             report($exception);
-            $request->session()->flash('verification_delivery_error', 'We could not send your email. Please try Resend Code.');
+            $request->session()->flash('verification_delivery_error', __('We could not send your email. Please try Resend Code.'));
         }
     }
 
@@ -371,7 +371,7 @@ class CustomerAuthService
     {
         $customer = $this->verificationCustomer($request);
         if ($customer === null) {
-            throw ValidationException::withMessages(['code' => 'Your verification session expired. Please log in again.']);
+            throw ValidationException::withMessages(['code' => __('Your verification session expired. Please log in again.')]);
         }
 
         $verified = DB::transaction(function () use ($customer, $code): bool {
@@ -394,7 +394,7 @@ class CustomerAuthService
             return true;
         });
         if (! $verified) {
-            throw ValidationException::withMessages(['code' => 'The code is incorrect, expired, or has reached five attempts. Request a new code if needed.']);
+            throw ValidationException::withMessages(['code' => __('The code is incorrect, expired, or has reached five attempts. Request a new code if needed.')]);
         }
         $request->session()->forget('customer_verification');
         $request->session()->regenerate();
@@ -423,17 +423,17 @@ class CustomerAuthService
         $customerId = (int) $request->user('customers')->getAuthIdentifier();
         $avatarPath = $request->hasFile('avatar') ? $request->file('avatar')->store('customer-avatars', 'local') : null;
         if ($avatarPath === false) {
-            throw ValidationException::withMessages(['avatar' => 'Your image could not be saved. Please try again.']);
+            throw ValidationException::withMessages(['avatar' => __('Your image could not be saved. Please try again.')]);
         }
         $passwordChanged = ! empty($data['password']);
         try {
             $oldAvatar = DB::transaction(function () use ($request, $customerId, $data, $avatarPath, $passwordChanged): ?string {
                 $stored = $this->customers->find($customerId, true);
                 if ($stored === null || $stored->is_blocked || $stored->is_suspended || ! $stored->is_verified || $stored->active_session_id !== $request->session()->getId()) {
-                    throw ValidationException::withMessages(['name' => 'Your session has ended. Please log in again.']);
+                    throw ValidationException::withMessages(['name' => __('Your session has ended. Please log in again.')]);
                 }
                 if ($passwordChanged && ! Hash::check($data['current_password'] ?? '', $stored->password)) {
-                    throw ValidationException::withMessages(['current_password' => 'Your current password is incorrect.']);
+                    throw ValidationException::withMessages(['current_password' => __('Your current password is incorrect.')]);
                 }
                 $country = $this->countries()->firstWhere('code', $data['country_code']);
                 $attributes = [
@@ -480,7 +480,7 @@ class CustomerAuthService
             $field => $data['identity'],
             'password' => $data['password'],
         ]) || $guard->getLastAttempted()->is_blocked || $guard->getLastAttempted()->is_suspended) {
-            throw ValidationException::withMessages(['identity' => 'The login details are incorrect or your account is unavailable.']);
+            throw ValidationException::withMessages(['identity' => __('The login details are incorrect or your account is unavailable.')]);
         }
 
         $customer = $guard->getLastAttempted();
@@ -526,12 +526,12 @@ class CustomerAuthService
     {
         $pending = $request->session()->pull('customer_pending_login');
         if (! is_array($pending) || ($pending['expires_at'] ?? 0) < now()->timestamp) {
-            throw ValidationException::withMessages(['identity' => 'The login confirmation expired. Please enter your login details again.']);
+            throw ValidationException::withMessages(['identity' => __('The login confirmation expired. Please enter your login details again.')]);
         }
 
         $customer = $this->customers->find((int) $pending['customer_id']);
         if ($customer === null) {
-            throw ValidationException::withMessages(['identity' => 'Your account is unavailable.']);
+            throw ValidationException::withMessages(['identity' => __('Your account is unavailable.')]);
         }
 
         $this->authenticate($request, $customer, $pending['data'], $pending['channel'] ?? 'password', (bool) ($pending['data']['remember'] ?? false), $pending['previous_session_id']);
@@ -546,13 +546,13 @@ class CustomerAuthService
             DB::transaction(function () use ($request, $customer, $data, $channel, $remember, $previousSessionId, $country, $guard): void {
                 $storedCustomer = $this->customers->find((int) $customer->getAuthIdentifier(), true);
                 if ($storedCustomer === null || $storedCustomer->is_blocked || $storedCustomer->is_suspended || ! $storedCustomer->is_verified) {
-                    throw ValidationException::withMessages(['identity' => 'Your account is unavailable.']);
+                    throw ValidationException::withMessages(['identity' => __('Your account is unavailable.')]);
                 }
                 if (isset($data['credential_hash']) && ! hash_equals($data['credential_hash'], hash('sha256', $storedCustomer->password))) {
-                    throw ValidationException::withMessages(['identity' => 'Your login details changed. Please log in again.']);
+                    throw ValidationException::withMessages(['identity' => __('Your login details changed. Please log in again.')]);
                 }
                 if ($storedCustomer->active_session_id !== null && $storedCustomer->active_session_id !== $previousSessionId) {
-                    throw ValidationException::withMessages(['session_conflict' => 'Your active session changed. Please log in again to confirm.']);
+                    throw ValidationException::withMessages(['session_conflict' => __('Your active session changed. Please log in again to confirm.')]);
                 }
 
                 $authenticatedCustomer = $storedCustomer;
@@ -606,12 +606,19 @@ class CustomerAuthService
         } else {
             $guard->logoutCurrentDevice();
         }
+        $locale = $request->session()->get('locale');
         $request->session()->invalidate();
+        if (is_string($locale) && array_key_exists($locale, config('app.supported_locales'))) {
+            $request->session()->put('locale', $locale);
+        }
         $request->session()->regenerateToken();
     }
 
     public function handle(Request $request, Closure $next): Response
     {
+        $locale = $request->session()->get('locale', config('app.locale', 'en'));
+        app()->setLocale(is_string($locale) && array_key_exists($locale, config('app.supported_locales')) ? $locale : 'en');
+
         if ($request->is('admin', 'admin/*', 'subscriptions/payments/webhooks/*')) {
             return $next($request);
         }
@@ -626,7 +633,7 @@ class CustomerAuthService
                 $request->session()->put('customer_verification', ['customer_id' => $customerId, 'expires_at' => now()->timestamp + 86400]);
 
                 return $request->expectsJson()
-                    ? response()->json(['message' => 'Please verify your email before logging in.'], 401)
+                    ? response()->json(['message' => __('Please verify your email before logging in.')], 401)
                     : redirect()->route('customers.verification');
             }
             if (! $customer->is_blocked && ! $customer->is_suspended && $guard->viaRemember()) {
@@ -635,8 +642,8 @@ class CustomerAuthService
                 $this->logout($request, false);
 
                 return $request->expectsJson()
-                    ? response()->json(['message' => 'Please log in again.'], 401)
-                    : redirect()->route('login')->withErrors(['identity' => 'Your session has ended. Please log in again.']);
+                    ? response()->json(['message' => __('Please log in again.')], 401)
+                    : redirect()->route('login')->withErrors(['identity' => __('Your session has ended. Please log in again.')]);
             }
         }
 

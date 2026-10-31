@@ -1,6 +1,6 @@
 @extends('users.layout.main')
 
-@section('title', 'Choose Your Plan | Secure Checkout')
+@section('title', __('Choose Your Plan | Secure Checkout'))
 @section('meta_description',
     'Compare BF Markets subscription plans and continue to a clear secure checkout with PayPal or
     Georgian card options.')
@@ -177,7 +177,7 @@
             color: rgb(var(--text-soft));
         }
 
-        .checkout-chip.dark {
+        .checkout-chip.dark-mode {
             background: rgb(var(--text-main));
             border-color: rgb(var(--text-main));
             color: rgb(var(--surface));
@@ -476,7 +476,6 @@
 @endphp
 
 @push('head')
-    @vite('resources/users/css/auth.css')
 @endpush
 
 @section('content')
@@ -542,14 +541,14 @@
                                             <div class="space-y-4">
                                                 <div class="checkout-price">
                                                     {{ number_format((float) $plan->price_for_local, 2) }}
-                                                    <small>/ GEL</small>
+                                                    <small>{{ __('/ GEL') }}</small>
                                                 </div>
                                             </div>
                                         @else
                                             <div class="space-y-4">
                                                 <div class="checkout-price">
                                                     {{ number_format((float) $plan->price_for_international, 2) }}
-                                                    <small>/ EUR</small>
+                                                    <small>{{ __('/ EUR') }}</small>
                                                 </div>
                                             </div>
                                         @endif
@@ -611,12 +610,12 @@
                                             <span class="text-3xl font-bold theme-text-main">
                                                 {{ number_format((float) $selectedPlan->price_for_local, 2) }}
                                             </span>
-                                            <span class="text-sm font-medium theme-text-muted">/ GEL</span>
+                                            <span class="text-sm font-medium theme-text-muted">{{ __('/ GEL') }}</span>
                                         @else
                                             <span class="text-3xl font-bold theme-text-main">
                                                 {{ number_format((float) $selectedPlan->price_for_international, 2) }}
                                             </span>
-                                            <span class="text-sm font-medium theme-text-muted">/ EUR</span>
+                                            <span class="text-sm font-medium theme-text-muted">{{ __('/ EUR') }}</span>
                                         @endif
                                     </div>
                                     <a href="{{ route('checkout-single') }}"
@@ -650,12 +649,12 @@
                                     @if ((auth('customers')->user()?->country_code === 'GE' ? 'Georgia' : 'International') == 'Georgia')
                                         <strong>
                                             {{ number_format((float) $selectedPlan->price_for_local, 2) }}
-                                            GEL
+                                            {{ __('GEL') }}
                                         </strong>
                                     @else
                                         <strong>
                                             {{ number_format((float) $selectedPlan->price_for_international, 2) }}
-                                            EUR
+                                            {{ __('EUR') }}
                                         </strong>
                                     @endif
                                 </div>
@@ -723,7 +722,7 @@
                             <div class="mt-8 space-y-4">
                                 @if ($errors->any())<div role="alert" class="checkout-feedback is-visible error">@foreach ($errors->all() as $error)<p>{{ $error }}</p>@endforeach</div>@endif
                                 @guest('customers')
-                                    <a class="betguru-btn-primary" href="{{ route('login') }}">Log in to continue</a>
+                                    <a class="betguru-btn-primary" href="{{ route('login') }}">{{ __('Log in to continue') }}</a>
                                 @else
                                     @forelse ($gateways as $gateway => $options)
                                         @if ($gateway !== 'paypal' || filled($selectedPlan->paypal_plan_id))
@@ -732,17 +731,17 @@
                                                 <input type="hidden" name="gateway" value="{{ $gateway }}">
                                                 <input type="hidden" name="checkout_key" value="{{ (string) \Illuminate\Support\Str::uuid() }}">
                                                 <h3 class="text-xl font-bold theme-text-main">{{ $options['label'] }}</h3>
-                                                <p class="theme-text-main">{{ $gateway === 'bog' || ($gateway === 'tbc_flitt' && config('services.flitt.currency') === 'GEL') ? $selectedPlan->price_for_local.' GEL' : $selectedPlan->price_for_international.' EUR' }} · {{ $selectedPlan->duration_days }} days</p>
+                                                <p class="theme-text-main">{{ $gateway === 'bog' || ($gateway === 'tbc_flitt' && config('services.flitt.currency') === 'GEL') ? $selectedPlan->price_for_local.' GEL' : $selectedPlan->price_for_international.' EUR' }} · {{ $selectedPlan->duration_days }} {{ __('days') }}</p>
                                                 @if ($options['recurring'])
-                                                    <label class="flex items-start gap-3 theme-text-soft"><input type="checkbox" name="auto_renew" value="1" {{ $gateway === 'paypal' ? 'required' : '' }}>Enable AutoPay. I authorize recurring payments at this price and period until I cancel from my profile or the provider billing schedule ends.</label>
+                                                    <label class="flex items-start gap-3 theme-text-soft"><input type="checkbox" name="auto_renew" value="1" {{ $gateway === 'paypal' ? 'required' : '' }}>{{ __('Enable AutoPay. I authorize recurring payments at this price and period until I cancel from my profile or the provider billing schedule ends.') }}</label>
                                                 @else
-                                                    <p class="text-sm theme-text-muted">One-time payment. AutoPay is unavailable for this gateway.</p>
+                                                    <p class="text-sm theme-text-muted">{{ __('One-time payment. AutoPay is unavailable for this gateway.') }}</p>
                                                 @endif
-                                                <button type="submit" class="betguru-btn-primary">Continue with {{ $options['label'] }}</button>
+                                                <button type="submit" class="betguru-btn-primary">{{ __('Continue with') }} {{ $options['label'] }}</button>
                                             </form>
                                         @endif
                                     @empty
-                                        <p class="theme-text-muted">Payments are currently unavailable. Please contact support.</p>
+                                        <p class="theme-text-muted">{{ __('Payments are currently unavailable. Please contact support.') }}</p>
                                     @endforelse
                                 @endguest
                             </div>

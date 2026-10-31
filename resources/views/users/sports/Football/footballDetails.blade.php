@@ -11,14 +11,14 @@
     @endunless
     @if (count($data) === 0 && !($append ?? false))
         <div
-            class="no-fixtures-message [padding:10px_0] [text-align:center] [font-size:13px] [color:#1e4763] dark:[color:#8aaccc]">
-            No data available.</div>
+            class="no-fixtures-message [padding:10px_0] [text-align:center] [font-size:13px] [color:var(--text-brand-60)] dark:[color:rgb(var(--text-soft))]">
+            {{ __('No data available.') }}</div>
     @endif
     @if (! ($append ?? false) && count($data) > 0 && in_array(request()->input('type'), ['prematch_drops', 'market_shock'], true))
         <header class="football-alert-heading" @if ($isMarketShock) data-shock-heading @endif>
             <span class="football-alert-heading__icon" aria-hidden="true"><i class="fas {{ request()->input('type') === 'prematch_drops' ? 'fa-arrow-trend-down' : 'fa-bolt' }}"></i></span>
             <div>
-                <h2>{{ request()->input('type') === 'prematch_drops' ? __('Prematch Drops') : __('Market Shock Detector') }} @if ($isPrematchDrops || $isMarketShock)<i class="fas fa-info-circle text-sm text-slate-500" title="{{ $isPrematchDrops ? __('Expand a match to see all markets and selections.') : __('Alerts are automatically removed after 20 minutes.') }}" aria-label="{{ $isPrematchDrops ? __('Expand a match to see all markets and selections.') : __('Alerts are automatically removed after 20 minutes.') }}"></i>@endif</h2>
+                <h2>{{ request()->input('type') === 'prematch_drops' ? __('Prematch Drops') : __('Market Shock Detector') }} @if ($isPrematchDrops || $isMarketShock)<i class="fas fa-info-circle text-sm text-[var(--text-slate-500)]" title="{{ $isPrematchDrops ? __('Expand a match to see all markets and selections.') : __('Alerts are automatically removed after 20 minutes.') }}" aria-label="{{ $isPrematchDrops ? __('Expand a match to see all markets and selections.') : __('Alerts are automatically removed after 20 minutes.') }}"></i>@endif</h2>
                 <p>{{ request()->input('type') === 'prematch_drops' ? __('Track ongoing price drops in real-time before the match starts') : __('Detects sudden, significant market shocks in real-time') }}</p>
             </div>
         </header>
@@ -30,7 +30,7 @@
         </div>
     @endif
     @foreach ($data as $league => $matches)
-        <div class="league-header break-words [font-size:13px] font-bold uppercase [letter-spacing:0.5px] [color:#1e4763] [padding:10px_0_6px_0] [border-bottom:2px_solid_#e6edf6] [margin-top:8px] [transition:0.3s] bg-white [z-index:2] dark:[color:#8aaccc] dark:[border-bottom-color:#2a3f50] dark:[background:#1a2a38] [&:first-of-type]:[margin-top:0] max-[480px]:text-[11px]"
+        <div class="league-header break-words [font-size:13px] font-bold uppercase [letter-spacing:0.5px] [color:var(--text-brand-60)] [padding:10px_0_6px_0] [border-bottom:2px_solid_var(--border-subtle)] [margin-top:8px] [transition:0.3s] bg-[rgb(var(--surface))] [z-index:2] dark:[color:rgb(var(--text-soft))] dark:[border-bottom-color:rgb(var(--border))] dark:[background:rgb(var(--surface))] [&:first-of-type]:[margin-top:0] max-[480px]:text-[11px]"
             data-league-header="{{ $league }}">
             <span class="inline-flex items-center gap-1.5">
                 @if ($matches['tournament_logo'] ?? null)
@@ -88,8 +88,8 @@
                 data-sportApi-match-id="{{ $event['sportsApiPro_match_id'] }}"
                 data-betfair-match-id="{{ $event['betfair_match_id'] }}"
                 data-home-score="{{ $event['home_score'] ?? '' }}" data-away-score="{{ $event['away_score'] ?? '' }}"
-                data-goal-signal="{{ $event['goal_highlight_until'] ?? 0 }}" data-match-status="{{ $event['status'] }}" data-goal-highlight-seconds="{{ config('services.fixtures.goal_highlight_seconds', 40) }}"
-                class="event-row {{ request()->input('type') === 'prematch_drops' ? 'football-alert football-alert--prematch' : (request()->input('type') === 'market_shock' ? 'football-alert football-alert--shock' : '') }} grid min-w-0 cursor-pointer grid-cols-[minmax(0,1fr)_148px_360px] items-center [background:#fafdff] [border-radius:12px] [padding:5px_12px_5px_16px] [border:1px_solid_#e6eff8] [gap:4px_12px] [transition:0.06s] [min-height:44px] dark:[background:#1a2a38] dark:[border-color:#2a3f50] dark:[&:hover]:[background:#223848] [&:hover]:[background:#f2f8ff] [&:hover]:[border-color:#c6d8ea] max-[1024px]:grid-cols-[148px_minmax(0,1fr)] max-[1024px]:gap-2 max-[480px]:grid-cols-1 max-[480px]:p-2.5">
+                data-goal-signal="{{ $event['goal_highlight_until'] ?? 0 }}" data-match-status="{{ __($event['status']) }}" data-goal-highlight-seconds="{{ config('services.fixtures.goal_highlight_seconds', 40) }}"
+                class="event-row {{ request()->input('type') === 'prematch_drops' ? 'football-alert football-alert--prematch' : (request()->input('type') === 'market_shock' ? 'football-alert football-alert--shock' : '') }} grid min-w-0 cursor-pointer grid-cols-[minmax(0,1fr)_148px_360px] items-center [background:var(--surface-row)] [border-radius:12px] [padding:5px_12px_5px_16px] [border:1px_solid_var(--border-neutral-5)] [gap:4px_12px] [transition:0.06s] [min-height:44px] dark:[background:rgb(var(--surface))] dark:[border-color:rgb(var(--border))] dark:[&:hover]:[background:rgb(var(--bg))] [&:hover]:[background:var(--surface-neutral-0-16)] [&:hover]:[border-color:var(--border-brand-10)] max-[1024px]:grid-cols-[148px_minmax(0,1fr)] max-[1024px]:gap-2 max-[480px]:grid-cols-1 max-[480px]:p-2.5">
                 @if (request()->input('type') === 'market_shock')
                     <div class="football-alert-league">
                         @if ($matches['tournament_logo'] ?? null)
@@ -104,7 +104,7 @@
                 <div
                     class="event-left relative flex min-w-0 flex-nowrap items-center gap-2 overflow-hidden max-[1024px]:col-span-2 max-[480px]:col-span-1">
                     <button type="button"
-                        class="fav-star [color:#b8ccdf] [font-size:15px] cursor-pointer [background:none] border-0 [width:24px] [transition:0.2s] text-center dark:[color:#4a6a88] dark:[&.active-fav]:[color:#f5b342] [&.active-fav]:[color:#f5b342] disabled:cursor-wait disabled:opacity-60 {{ $event['is_favorite'] ?? false ? 'active-fav' : '' }}"
+                        class="fav-star [color:var(--text-brand-15-2)] [font-size:15px] cursor-pointer [background:none] border-0 [width:24px] [transition:0.2s] text-center dark:[color:rgb(var(--primary))] dark:[&.active-fav]:[color:rgb(var(--warning))] [&.active-fav]:[color:var(--text-warning-5-2)] disabled:cursor-wait disabled:opacity-60 {{ $event['is_favorite'] ?? false ? 'active-fav' : '' }}"
                         data-action="favorite" data-requires-login="{{ $customerIsAuthenticated ? 'false' : 'true' }}" data-login-url="{{ route('login') }}" data-sport="football" data-event-key="{{ $event['unique_key'] }}"
                         data-event-id="{{ $event['sportsApiPro_match_id'] }}" data-team1="{{ $event['team1'] }}"
                         data-team2="{{ $event['team2'] }}" data-start-timestamp="{{ $event['timestamp'] }}"
@@ -114,17 +114,17 @@
                     @if ($isPrematchDrops)
                         <span data-prematch-sport aria-label="{{ __('Football') }}">⚽</span>
                         <div data-prematch-match>
-                            <strong>{{ $event['team1'] }} vs {{ $event['team2'] }}</strong>
+                            <strong>{{ $event['team1'] }} {{ __('vs') }} {{ $event['team2'] }}</strong>
                             <div>
                                 @if ($matches['tournament_logo'] ?? null)<img src="{{ $matches['tournament_logo'] }}" alt="" width="14" height="14" loading="lazy">@endif
                                 <span>{{ $matches['tournament_country'] ? $matches['tournament_country'].' · ' : '' }}{{ $matches['tournament_name'] }}</span>
-                                <time><i class="far fa-clock" aria-hidden="true"></i> {{ $event['minutes'] }}</time>
+                                <time><i class="far fa-clock" aria-hidden="true"></i> {{ __($event['minutes']) }}</time>
                             </div>
                         </div>
                     @else
-                    @php $color = $event['status'] == 'Live' ? '#dc2e08' : '#1f4b66'; @endphp
+                    @php $color = $event['status'] == 'Live' ? 'var(--text-danger-15-2)' : 'var(--text-secondary)'; @endphp
                     <span style="color: {{ $color }}"
-                        class="event-time w-[52px] shrink-0 [font-size:13px] font-medium [transition:color_0.3s] text-right dark:[color:#b0c8dd]">{{ $event['minutes'] }}
+                        class="event-time w-[52px] shrink-0 [font-size:13px] font-medium [transition:color_0.3s] text-right dark:[color:rgb(var(--text-soft))]">{{ __($event['minutes']) }}
                         @if ($event['status'] === 'Live' && preg_match('/^\d+(?:\+\d*)?$/', (string) $event['minutes']) === 1)
                             <span class="minute-tick-blink">'</span>
                         @endif
@@ -140,18 +140,18 @@
                         $awayCards['total_red'] = $liveStats['red_cards']['away'] ?? $awayCards['total_red'] ?? null;
                     @endphp
                     <div
-                        class="team-score-group grid min-w-0 flex-1 grid-cols-[28px_28px_28px_minmax(0,180px)_44px_minmax(0,180px)_28px_28px_28px] items-center justify-center gap-x-0.5 overflow-hidden whitespace-nowrap font-semibold text-[15px] text-[#0b2a40] max-[768px]:grid-cols-[24px_24px_24px_minmax(0,1fr)_40px_minmax(0,1fr)_24px_24px_24px] max-[480px]:text-[12px]">
+                        class="team-score-group grid min-w-0 flex-1 grid-cols-[28px_28px_28px_minmax(0,180px)_44px_minmax(0,180px)_28px_28px_28px] items-center justify-center gap-x-0.5 overflow-hidden whitespace-nowrap font-semibold text-[15px] text-[rgb(var(--text-main))] max-[768px]:grid-cols-[24px_24px_24px_minmax(0,1fr)_40px_minmax(0,1fr)_24px_24px_24px] max-[480px]:text-[12px]">
                         @if ($checkAuthAndSubscription['display_odds'])
                         <span
-                            class="text-center text-xs text-[#48708d] max-[480px]:text-[10px] {{ ($event['corners']['home'] ?? null) === null || ($event['corners']['home'] ?? 0) > 0 ? '' : 'invisible' }}"
-                            title="Home corners"><i class="fas fa-flag"></i>
+                            class="text-center text-xs text-[var(--text-brand-45-3)] max-[480px]:text-[10px] {{ ($event['corners']['home'] ?? null) === null || ($event['corners']['home'] ?? 0) > 0 ? '' : 'invisible' }}"
+                            title="{{ __('Home corners') }}"><i class="fas fa-flag"></i>
                             {{ $event['corners']['home'] ?? '—' }}</span>
                         <span
-                            class="text-center text-xs text-[#e6b422] max-[480px]:text-[10px] {{ ($homeCards['yellow'] ?? null) === null || ($homeCards['yellow'] ?? 0) > 0 ? '' : 'invisible' }}"
-                            title="Home yellow cards"><i class="fas fa-square"></i>
+                            class="text-center text-xs text-[var(--text-warning)] max-[480px]:text-[10px] {{ ($homeCards['yellow'] ?? null) === null || ($homeCards['yellow'] ?? 0) > 0 ? '' : 'invisible' }}"
+                            title="{{ __('Home yellow cards') }}"><i class="fas fa-square"></i>
                             {{ $homeCards['yellow'] ?? '—' }}</span>
                         <span
-                            class="text-center text-xs text-[#c74e4e] max-[480px]:text-[10px] {{ ($homeCards['total_red'] ?? null) === null || ($homeCards['total_red'] ?? 0) > 0 ? '' : 'invisible' }}"
+                            class="text-center text-xs text-[var(--text-danger)] max-[480px]:text-[10px] {{ ($homeCards['total_red'] ?? null) === null || ($homeCards['total_red'] ?? 0) > 0 ? '' : 'invisible' }}"
                             title="Direct red: {{ $homeCards['direct_red'] ?? 0 }}, second yellow: {{ $homeCards['second_yellow'] ?? 0 }}"><i
                                 class="fas fa-square"></i> {{ $homeCards['total_red'] ?? '—' }}</span>
                         @else
@@ -161,7 +161,7 @@
                         @endif
 
                         <span
-                            data-goal-team="home" class="team-name flex w-full min-w-0 items-center justify-end gap-1 pr-1 text-right font-semibold [transition:color_0.3s] dark:text-[#e8edf2]"
+                            data-goal-team="home" class="team-name flex w-full min-w-0 items-center justify-end gap-1 pr-1 text-right font-semibold [transition:color_0.3s] dark:text-[var(--text-on-primary)]"
                             title="{{ $event['team1'] }}">
                             @if ($event['home_team_logo'] ?? null)
                                 <img src="{{ $event['home_team_logo'] }}" alt="" width="18" height="18"
@@ -171,9 +171,9 @@
                             <span class="min-w-0 truncate">{{ $event['team1'] }}</span>
                         </span>
                         <span
-                            data-score-status="{{ $event['status'] }}" class="score-badge match-score block w-[44px] min-w-[44px] max-w-[44px] justify-self-center whitespace-nowrap px-1 text-center text-[16px] font-bold tabular-nums [font-variant-numeric:tabular-nums] [transition:color_0.3s] max-[480px]:text-[14px]">{{ $event['score'] ?? '—' }}</span>
+                            data-score-status="{{ __($event['status']) }}" class="score-badge match-score block w-[44px] min-w-[44px] max-w-[44px] justify-self-center whitespace-nowrap px-1 text-center text-[16px] font-bold tabular-nums [font-variant-numeric:tabular-nums] [transition:color_0.3s] max-[480px]:text-[14px]">{{ $event['score'] ?? '—' }}</span>
                         <span
-                            data-goal-team="away" class="team-name away flex w-full min-w-0 items-center justify-start gap-1 pl-1 text-left font-normal text-[#1f4b66] [transition:color_0.3s] dark:text-[#b0c8dd]"
+                            data-goal-team="away" class="team-name away flex w-full min-w-0 items-center justify-start gap-1 pl-1 text-left font-normal text-[var(--text-secondary)] [transition:color_0.3s] dark:text-[rgb(var(--text-soft))]"
                             title="{{ $event['team2'] }}">
                             <span class="min-w-0 truncate">{{ $event['team2'] }}</span>
                             @if ($event['away_team_logo'] ?? null)
@@ -185,16 +185,16 @@
 
                         @if ($checkAuthAndSubscription['display_odds'])
                         <span
-                            class="text-center text-xs text-[#e6b422] max-[480px]:text-[10px] {{ ($awayCards['yellow'] ?? null) === null || ($awayCards['yellow'] ?? 0) > 0 ? '' : 'invisible' }}"
-                            title="Away yellow cards"><i class="fas fa-square"></i>
+                            class="text-center text-xs text-[var(--text-warning)] max-[480px]:text-[10px] {{ ($awayCards['yellow'] ?? null) === null || ($awayCards['yellow'] ?? 0) > 0 ? '' : 'invisible' }}"
+                            title="{{ __('Away yellow cards') }}"><i class="fas fa-square"></i>
                             {{ $awayCards['yellow'] ?? '—' }}</span>
                         <span
-                            class="text-center text-xs text-[#c74e4e] max-[480px]:text-[10px] {{ ($awayCards['total_red'] ?? null) === null || ($awayCards['total_red'] ?? 0) > 0 ? '' : 'invisible' }}"
+                            class="text-center text-xs text-[var(--text-danger)] max-[480px]:text-[10px] {{ ($awayCards['total_red'] ?? null) === null || ($awayCards['total_red'] ?? 0) > 0 ? '' : 'invisible' }}"
                             title="Direct red: {{ $awayCards['direct_red'] ?? 0 }}, second yellow: {{ $awayCards['second_yellow'] ?? 0 }}"><i
                                 class="fas fa-square"></i> {{ $awayCards['total_red'] ?? '—' }}</span>
                         <span
-                            class="text-center text-xs text-[#48708d] max-[480px]:text-[10px] {{ ($event['corners']['away'] ?? null) === null || ($event['corners']['away'] ?? 0) > 0 ? '' : 'invisible' }}"
-                            title="Away corners">{{ $event['corners']['away'] ?? '—' }} <i
+                            class="text-center text-xs text-[var(--text-brand-45-3)] max-[480px]:text-[10px] {{ ($event['corners']['away'] ?? null) === null || ($event['corners']['away'] ?? 0) > 0 ? '' : 'invisible' }}"
+                            title="{{ __('Away corners') }}">{{ $event['corners']['away'] ?? '—' }} <i
                                 class="fas fa-flag"></i></span>
                         @else
                             <span aria-hidden="true"></span>
@@ -207,47 +207,47 @@
                 <div
                     class="event-actions flex w-[148px] items-center justify-end [gap:2px] max-[1024px]:w-[148px] max-[1024px]:justify-start max-[480px]:w-full max-[480px]:justify-center">
                     <button type="button"
-                        class="live-stat-icon bg-transparent border-0 [color:#d63e3e] [font-size:15px] [padding:4px_4px] cursor-pointer [border-radius:8px] [width:28px] text-center [transition:0.2s] disabled:cursor-not-allowed disabled:opacity-30 dark:[color:#6a8aa8] dark:[&:hover]:[background:#2a4050] dark:[&:hover]:[color:#e8edf2] [&:hover]:[background:#dce8f5] [&:hover]:[color:#b52a2a]"
+                        class="live-stat-icon bg-transparent border-0 [color:var(--text-live)] [font-size:15px] [padding:4px_4px] cursor-pointer [border-radius:8px] [width:28px] text-center [transition:0.2s] disabled:cursor-not-allowed disabled:opacity-30 dark:[color:rgb(var(--primary))] dark:[&:hover]:[background:rgb(var(--surface))] dark:[&:hover]:[color:var(--text-on-primary)] [&:hover]:[background:var(--surface-neutral-5-7)] [&:hover]:[color:var(--text-danger-30)]"
                         @if ($checkAuthAndSubscription['display_odds']) data-action="livestats" data-match-id="{{ $event['sportsApiPro_match_id'] }}"
                             aria-expanded="false" aria-controls="live-stats-{{ $event['sportsApiPro_match_id'] }}"
-                            title="Live Statistics"
+                            title="{{ __('Live Statistics') }}"
                         @else
-                            disabled title="Live Statistics (requires subscription)"
+                            disabled title="{{ __('Live Statistics (requires subscription)') }}"
                         @endif
                         @disabled($event['status'] !== 'Live')>
                         <i class="fas fa-wave-square"></i>
                     </button>
                     <button type="button"
-                        class="action-icon w-7 cursor-pointer rounded-lg border-0 bg-transparent px-1 py-1 text-center text-[15px] text-[#427292] transition hover:bg-[#dce8f5] hover:text-[#0b2a40] disabled:cursor-not-allowed disabled:opacity-30 dark:text-[#6a8aa8] dark:hover:bg-[#2a4050] dark:hover:text-[#e8edf2]"
+                        class="action-icon w-7 cursor-pointer rounded-lg border-0 bg-transparent px-1 py-1 text-center text-[15px] text-[var(--text-brand-45)] transition hover:bg-[var(--surface-neutral-5-7)] hover:text-[rgb(var(--text-main))] disabled:cursor-not-allowed disabled:opacity-30 dark:text-[rgb(var(--primary))] dark:hover:bg-[rgb(var(--surface))] dark:hover:text-[var(--text-on-primary)]"
                         aria-label="{{ __('Quick Stats') }}"
                         @if ($checkAuthAndSubscription['display_odds']) data-action="quickstats" data-match-id="{{ $event['sportsApiPro_match_id'] }}"
                             aria-expanded="false" aria-controls="quick-stats-{{ $event['sportsApiPro_match_id'] }}"
-                            title="Quick Stats"
+                            title="{{ __('Quick Stats') }}"
                         @else
-                            disabled title="Quick Stats (requires subscription)"
+                            disabled title="{{ __('Quick Stats (requires subscription)') }}"
                         @endif
                         @disabled($event['status'] !== 'Live')>
                         <i class="fas fa-chart-pie" aria-hidden="true"></i>
                     </button>
                     <button type="button"
-                        class="action-icon bg-transparent border-0 [color:#427292] [font-size:15px] [padding:4px_4px] cursor-pointer [border-radius:8px] [width:28px] text-center [transition:0.2s] dark:[color:#6a8aa8] dark:[&:hover]:[background:#2a4050] dark:[&:hover]:[color:#e8edf2] [&:hover]:[background:#dce8f5] [&:hover]:[color:#0b2a40] [&.disabled]:[opacity:0.3] [&.disabled]:[pointer-events:none]"
+                        class="action-icon bg-transparent border-0 [color:var(--text-brand-45)] [font-size:15px] [padding:4px_4px] cursor-pointer [border-radius:8px] [width:28px] text-center [transition:0.2s] dark:[color:rgb(var(--primary))] dark:[&:hover]:[background:rgb(var(--surface))] dark:[&:hover]:[color:var(--text-on-primary)] [&:hover]:[background:var(--surface-neutral-5-7)] [&:hover]:[color:rgb(var(--text-main))] [&.disabled]:[opacity:0.3] [&.disabled]:[pointer-events:none]"
                         data-action="chart" data-chart-url="{{ route('football.matches.show', $event['sportsApiPro_match_id']) }}" title="{{ __('Markets & odds charts') }}" aria-label="{{ __('Markets & odds charts') }}"><i class="fas fa-chart-simple"></i></button>
                     <button type="button"
-                        class="action-icon bg-transparent border-0 [color:#427292] [font-size:15px] [padding:4px_4px] cursor-pointer [border-radius:8px] [width:28px] text-center [transition:0.2s] dark:[color:#6a8aa8] disabled:cursor-not-allowed disabled:opacity-30 dark:[&:hover]:[background:#2a4050] dark:[&:hover]:[color:#e8edf2] [&:hover]:[background:#dce8f5] [&:hover]:[color:#0b2a40] [&.disabled]:[opacity:0.3] [&.disabled]:[pointer-events:none]"
+                        class="action-icon bg-transparent border-0 [color:var(--text-brand-45)] [font-size:15px] [padding:4px_4px] cursor-pointer [border-radius:8px] [width:28px] text-center [transition:0.2s] dark:[color:rgb(var(--primary))] disabled:cursor-not-allowed disabled:opacity-30 dark:[&:hover]:[background:rgb(var(--surface))] dark:[&:hover]:[color:var(--text-on-primary)] [&:hover]:[background:var(--surface-neutral-5-7)] [&:hover]:[color:rgb(var(--text-main))] [&.disabled]:[opacity:0.3] [&.disabled]:[pointer-events:none]"
                         @if ($checkAuthAndSubscription['display_odds'])
-                            data-action="stats" data-match-id="{{ $event['sportsApiPro_match_id'] }}" aria-expanded="false" aria-controls="statistics-{{ $event['sportsApiPro_match_id'] }}" title="Statistics"
+                            data-action="stats" data-match-id="{{ $event['sportsApiPro_match_id'] }}" aria-expanded="false" aria-controls="statistics-{{ $event['sportsApiPro_match_id'] }}" title="{{ __('Statistics') }}"
                         @else
-                            disabled title="Statistics (requires subscription)"
+                            disabled title="{{ __('Statistics (requires subscription)') }}"
                         @endif
                         ><i class="fas fa-chart-bar"></i></button>
                     <button type="button"
-                        class="action-icon bg-transparent border-0 [color:#427292] [font-size:15px] [padding:4px_4px] cursor-pointer [border-radius:8px] [width:28px] text-center [transition:0.2s] disabled:cursor-not-allowed disabled:opacity-30 dark:[color:#6a8aa8] dark:[&:hover]:[background:#2a4050] dark:[&:hover]:[color:#e8edf2] [&:hover]:[background:#dce8f5] [&:hover]:[color:#0b2a40]"
+                        class="action-icon bg-transparent border-0 [color:var(--text-brand-45)] [font-size:15px] [padding:4px_4px] cursor-pointer [border-radius:8px] [width:28px] text-center [transition:0.2s] disabled:cursor-not-allowed disabled:opacity-30 dark:[color:rgb(var(--primary))] dark:[&:hover]:[background:rgb(var(--surface))] dark:[&:hover]:[color:var(--text-on-primary)] [&:hover]:[background:var(--surface-neutral-5-7)] [&:hover]:[color:rgb(var(--text-main))]"
                         @if ($checkAuthAndSubscription['display_odds'])
                             data-action="prediction" aria-expanded="false" aria-controls="prediction-{{ $event['sportsApiPro_match_id'] }}" data-requires-login="{{ $customerIsAuthenticated ? 'false' : 'true' }}" data-login-url="{{ route('login') }}" data-match-id="{{ $event['sportsApiPro_match_id'] }}"
                         @else
-                            disabled title="Prediction (requires subscription)"
+                            disabled title="{{ __('Prediction (requires subscription)') }}"
                         @endif
-                        title="Prediction" @disabled($event['status'] !== 'Prematch')><i class="fas fa-brain"></i></button>
+                        title="{{ __('Prediction') }}" @disabled($event['status'] !== 'Prematch')><i class="fas fa-brain"></i></button>
                 </div>
                 @if (($event['timeline'] ?? null) !== null)
                     <div class="w-[360px] min-w-0 max-[1024px]:w-full max-[480px]:col-span-1">
@@ -262,14 +262,14 @@
                                 data-timeline-period-limit="{{ $timeline['period_limit'] }}"
                                 data-timeline-label="{{ $timeline['minute_label'] }}"
                                 data-timeline-score="{{ $event['score'] }}"
-                                class="relative min-w-0 overflow-hidden rounded-lg border border-[#dce5ee] bg-[#f8fbfe] text-[#34566e] dark:border-[#365167] dark:bg-[#1b3447] dark:text-[#cbd5e1]">
+                                class="relative min-w-0 overflow-hidden rounded-lg border border-[var(--border-neutral-5-10)] bg-[var(--surface-muted)] text-[var(--text-brand-55)] dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--bg))] dark:text-[rgb(var(--text-main))]">
                                 <div id="timeline-panel-{{ $event['sportsApiPro_match_id'] }}" data-timeline-panel
-                                    class="hidden rounded-t-md bg-[#08aebf] text-center text-xs text-white" role="region"
+                                    class="hidden rounded-t-md bg-[var(--surface-brand-25)] text-center text-xs text-white" role="region"
                                     aria-label="{{ __('Match timeline details') }}">
-                                    <div class="relative grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1 bg-[#08b9ca] px-5 py-2">
+                                    <div class="relative grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1 bg-[var(--surface-brand-20)] px-5 py-2">
                                         <span class="min-w-0 break-words text-right">{{ $event['team1'] }}</span>
-                                        <span class="rounded bg-[#343434] px-1.5 py-1">
-                                            <strong data-timeline-detail-score data-score-status="{{ $event['status'] }}" class="match-score match-score-on-dark block whitespace-nowrap">{{ $event['score'] }}</strong>
+                                        <span class="rounded bg-[var(--surface-neutral-80)] px-1.5 py-1">
+                                            <strong data-timeline-detail-score data-score-status="{{ __($event['status']) }}" class="match-score match-score-on-dark block whitespace-nowrap">{{ $event['score'] }}</strong>
                                             <span data-timeline-detail-minute>{{ $timeline['minute_label'] }}</span>
                                         </span>
                                         <span class="min-w-0 break-words text-left">{{ $event['team2'] }}</span>
@@ -297,16 +297,16 @@
                                     <button type="button" data-timeline-toggle aria-expanded="false"
                                         aria-controls="timeline-panel-{{ $event['sportsApiPro_match_id'] }}"
                                         aria-label="{{ __('Show match timeline for :home vs :away', ['home' => $event['team1'], 'away' => $event['team2']]) }}"
-                                        class="absolute inset-0 h-full w-full cursor-pointer rounded bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"></button>
-                                    <span class="pointer-events-none absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-[#d3dde6] dark:bg-[#bacbd9]" aria-hidden="true"></span>
-                                    <span data-timeline-progress class="pointer-events-none absolute left-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-[#249b61] transition-[width] duration-300 dark:bg-[#45bc7b]"
+                                        class="absolute inset-0 h-full w-full cursor-pointer rounded bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-cyan-300)]"></button>
+                                    <span class="pointer-events-none absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-[var(--surface-neutral-10-2)] dark:bg-[rgb(var(--surface-soft))]" aria-hidden="true"></span>
+                                    <span data-timeline-progress class="pointer-events-none absolute left-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-[var(--surface-success-40)] transition-[width] duration-300 dark:bg-[var(--status-success-fill)]"
                                         style="width: {{ $timeline['progress'] }}%" aria-hidden="true"></span>
-                                    <span class="pointer-events-none absolute top-1/2 h-3 w-px -translate-x-1/2 -translate-y-1/2 bg-[#90a7b9]" style="left: {{ 45 / $timeline['duration'] * 100 }}%" aria-hidden="true"></span>
-                                    <div class="pointer-events-none absolute inset-x-0 bottom-0.5 flex justify-between text-[9px] leading-none text-[#7891a5] dark:text-[#b0c4d4]" aria-hidden="true">
+                                    <span class="pointer-events-none absolute top-1/2 h-3 w-px -translate-x-1/2 -translate-y-1/2 bg-[var(--surface-brand-25-2)]" style="left: {{ 45 / $timeline['duration'] * 100 }}%" aria-hidden="true"></span>
+                                    <div class="pointer-events-none absolute inset-x-0 bottom-0.5 flex justify-between text-[9px] leading-none text-[var(--text-brand-35-2)] dark:text-[rgb(var(--text-soft))]" aria-hidden="true">
                                         <span>0'</span><span class="absolute -translate-x-1/2" style="left: {{ 45 / $timeline['duration'] * 100 }}%">45'</span><span class="ml-auto">{{ $timeline['duration'] }}'</span>
                                     </div>
                                     @if ($timeline['finished'])
-                                        <span class="absolute left-0 top-0.5 text-[9px] font-semibold">FT</span>
+                                        <span class="absolute left-0 top-0.5 text-[9px] font-semibold">{{ __('FT') }}</span>
                                     @endif
                                     @foreach ($timeline['events'] as $incident)
                                         @if ($incident['time_known'])
@@ -315,7 +315,7 @@
                                     @endforeach
                                 </div>
                                 @if ($timeline['untimed_events']['home'] !== [] || $timeline['untimed_events']['away'] !== [])
-                                    <div data-timeline-untimed class="border-t border-[#dce5ee] px-2 py-1 text-[9px] text-[#7891a5] dark:border-[#365167] dark:text-[#b0c4d4]">
+                                    <div data-timeline-untimed class="border-t border-[var(--border-neutral-5-10)] px-2 py-1 text-[9px] text-[var(--text-brand-35-2)] dark:border-[rgb(var(--border))] dark:text-[rgb(var(--text-soft))]">
                                         @foreach ($timeline['untimed_events'] as $side => $incidents)
                                             @if ($incidents !== [])
                                                 <div class="flex min-w-0 items-start gap-1" data-timeline-untimed-side="{{ $side }}">
@@ -344,7 +344,7 @@
                             @endif
                             @forelse ($event['odds_markets'] ?? [] as $market)
                                 <div data-football-odds-source="{{ $market['source'] }}">
-                                    <div class="football-market-label mb-1 flex min-w-0 items-center gap-1 text-[10px] leading-tight text-[#48708d] dark:text-[#b0c8dd]">
+                                    <div class="football-market-label mb-1 flex min-w-0 items-center gap-1 text-[10px] leading-tight text-[var(--text-brand-45-3)] dark:text-[rgb(var(--text-soft))]">
                                         <span class="shrink-0 font-bold">{{ $market['source'] }}</span>
                                         <span aria-hidden="true">·</span>
                                         <span class="truncate" title="{{ $market['label'] }}">{{ $market['label'] }}</span>
@@ -371,22 +371,22 @@
                                                     ? (($odd['previousBackOdds'] - $odd['currentBackOdds']) / $odd['previousBackOdds']) * 100 : null;
                                             @endphp
                                             @endif
-                                            <div class="odd-box relative min-w-0 cursor-default rounded-[10px] border border-[#d7e3ef] bg-white px-2 py-1 text-center font-semibold text-[#0b2a40] shadow-[0_1px_2px_rgba(0,0,0,0.02)] dark:border-[#3a5568] dark:bg-[#1f3444] dark:text-[#e8edf2] dark:[&_.tooltip]:bg-[#2a4050] dark:[&_.tooltip]:text-[#e8edf2] [&_.tooltip]:invisible [&_.tooltip]:absolute [&_.tooltip]:bottom-[110%] [&_.tooltip]:left-1/2 [&_.tooltip]:z-10 [&_.tooltip]:-translate-x-1/2 [&_.tooltip]:whitespace-nowrap [&_.tooltip]:rounded-md [&_.tooltip]:bg-[#0b2a40] [&_.tooltip]:px-2 [&_.tooltip]:py-1 [&_.tooltip]:text-[11px] [&_.tooltip]:font-normal [&_.tooltip]:text-white [&_.tooltip]:opacity-0 [&:hover_.tooltip]:visible [&:hover_.tooltip]:opacity-100"
+                                            <div class="odd-box relative min-w-0 cursor-default rounded-[10px] border border-[var(--border-neutral-5-11)] bg-[rgb(var(--surface))] px-2 py-1 text-center font-semibold text-[rgb(var(--text-main))] shadow-[0_1px_2px_var(--shadow-neutral-100-3)] dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--surface-soft))] dark:text-[var(--text-on-primary)] dark:[&_.tooltip]:bg-[rgb(var(--surface))] dark:[&_.tooltip]:text-[var(--text-on-primary)] [&_.tooltip]:invisible [&_.tooltip]:absolute [&_.tooltip]:bottom-[110%] [&_.tooltip]:left-1/2 [&_.tooltip]:z-10 [&_.tooltip]:-translate-x-1/2 [&_.tooltip]:whitespace-nowrap [&_.tooltip]:rounded-md [&_.tooltip]:bg-[var(--surface-heading)] [&_.tooltip]:px-2 [&_.tooltip]:py-1 [&_.tooltip]:text-[11px] [&_.tooltip]:font-normal [&_.tooltip]:text-white [&_.tooltip]:opacity-0 [&:hover_.tooltip]:visible [&:hover_.tooltip]:opacity-100"
                                                 title="{{ $odd['runner'] }}" @if ($isMarketShock) data-shock-alert="{{ $event['sportsApiPro_match_id'].'|'.$market['source'].'|'.$odd['alert_id'].'|'.$odd['detected_at'] }}" data-shock-detected-at="{{ (int) $odd['detected_at'] }}" data-shock-expires-at="{{ (int) $odd['detected_at'] + 1200 }}" @endif>
                                                 @if ($isMarketShock)
                                                     <span data-shock-badge><i class="fas fa-bolt" aria-hidden="true"></i> {{ __('SHOCK DETECTED') }}</span>
-                                                    <a data-shock-match href="{{ route('football.matches.show', $event['sportsApiPro_match_id']) }}"><span aria-label="{{ __('Football') }}">⚽</span> {{ $event['team1'] }} vs {{ $event['team2'] }}</a>
+                                                    <a data-shock-match href="{{ route('football.matches.show', $event['sportsApiPro_match_id']) }}"><span aria-label="{{ __('Football') }}">⚽</span> {{ $event['team1'] }} {{ __('vs') }} {{ $event['team2'] }}</a>
                                                     <div data-shock-league>
                                                         @if ($matches['tournament_logo'] ?? null)<img src="{{ $matches['tournament_logo'] }}" alt="" width="14" height="14" loading="lazy">@else<i class="fas fa-flag" aria-hidden="true"></i>@endif
                                                         <span>{{ $matches['tournament_name'] }}</span>
                                                     </div>
-                                                    <div data-shock-times><time><i class="far fa-clock" aria-hidden="true"></i> {{ \Carbon\Carbon::createFromTimestamp($event['timestamp'])->isToday() ? __('Today') : \Carbon\Carbon::createFromTimestamp($event['timestamp'])->format('d M') }} {{ $event['minutes'] }}</time><span aria-hidden="true">|</span><time datetime="{{ \Carbon\Carbon::createFromTimestampUTC($odd['detected_at'])->toIso8601String() }}">{{ __('Detected:') }} {{ \Carbon\Carbon::createFromTimestampUTC($odd['detected_at'])->diffForHumans(short: true) }}</time></div>
+                                                    <div data-shock-times><time><i class="far fa-clock" aria-hidden="true"></i> {{ \Carbon\Carbon::createFromTimestamp($event['timestamp'])->isToday() ? __('Today') : \Carbon\Carbon::createFromTimestamp($event['timestamp'])->format('d M') }} {{ __($event['minutes']) }}</time><span aria-hidden="true">|</span><time datetime="{{ \Carbon\Carbon::createFromTimestampUTC($odd['detected_at'])->toIso8601String() }}">{{ __('Detected:') }} {{ \Carbon\Carbon::createFromTimestampUTC($odd['detected_at'])->diffForHumans(short: true) }}</time></div>
                                                     <div data-shock-market><span>{{ __('Market') }}</span><strong>{{ $market['label'] }}</strong><small>{{ $market['source'] }}</small></div>
                                                 @endif
                                                 @if (in_array(request()->input('type'), ['prematch_drops', 'market_shock'], true))
                                                     <span class="football-alert-field-label">{{ __('Selection') }}</span>
                                                 @endif
-                                                <span class="football-alert-selection block truncate text-[9px] font-medium leading-tight text-[#48708d] dark:text-[#b0c8dd]">{{ $odd['runner'] }}</span>
+                                                <span class="football-alert-selection block truncate text-[9px] font-medium leading-tight text-[var(--text-brand-45-3)] dark:text-[rgb(var(--text-soft))]">{{ $odd['runner'] }}</span>
                                                 @if (in_array(request()->input('type'), ['prematch_drops', 'market_shock'], true))
                                                     <span class="football-alert-field-label">{{ __('Odds Movement') }}</span>
                                                 @endif
@@ -395,10 +395,10 @@
                                                         <span class="football-alert-previous">{{ number_format($odd['previousBackOdds'], 2) }}</span>
                                                         @if ($isPrematchDrops)
                                                             @if ($intermediateOdds !== null)
-                                                                <i class="fas {{ $intermediateOdds < $odd['previousBackOdds'] ? 'fa-arrow-down text-red-600' : 'fa-arrow-up text-green-600' }}" aria-hidden="true"></i>
+                                                                <i class="fas {{ $intermediateOdds < $odd['previousBackOdds'] ? 'fa-arrow-down text-[var(--text-red-600)]' : 'fa-arrow-up text-[var(--text-green-600)]' }}" aria-hidden="true"></i>
                                                                 <span class="football-alert-previous">{{ number_format($intermediateOdds, 2) }}</span>
                                                             @endif
-                                                            <i class="fas {{ $movementDirection === 'down' ? 'fa-arrow-down text-red-600' : ($movementDirection === 'up' ? 'fa-arrow-up text-green-600' : 'fa-minus text-slate-400') }}" aria-hidden="true"></i>
+                                                            <i class="fas {{ $movementDirection === 'down' ? 'fa-arrow-down text-[var(--text-red-600)]' : ($movementDirection === 'up' ? 'fa-arrow-up text-[var(--text-green-600)]' : 'fa-minus text-[var(--text-slate-400)]') }}" aria-hidden="true"></i>
                                                         @else
                                                             <span class="football-alert-arrow" aria-hidden="true">→</span>
                                                         @endif
@@ -406,9 +406,9 @@
                                                     @if ($odd['currentBackOdds'] !== null)
                                                         @if ($isPrematchDrops)<span data-prematch-current="{{ $movementDirection }}">@elseif ($isMarketShock)<span data-shock-current="{{ $odd['odds_direction'] }}">@endif{{ number_format($odd['currentBackOdds'], 2) }}@if ($isPrematchDrops || $isMarketShock)</span>@endif
                                                         @if ($odd['odds_direction'] === 'down')
-                                                            <i class="fas fa-arrow-down text-xs text-[#c74e4e]" aria-label="{{ __('Odds decreased') }}"></i>
+                                                            <i class="fas fa-arrow-down text-xs text-[var(--text-danger)]" aria-label="{{ __('Odds decreased') }}"></i>
                                                         @elseif ($odd['odds_direction'] === 'up')
-                                                            <i class="fas fa-arrow-up text-xs text-[#1f9a6e]" aria-label="{{ __('Odds increased') }}"></i>
+                                                            <i class="fas fa-arrow-up text-xs text-[var(--text-success)]" aria-label="{{ __('Odds increased') }}"></i>
                                                         @endif
                                                         @if ($odd['previousBackOdds'] !== null)
                                                             <span class="tooltip">{{ number_format($odd['previousBackOdds'], 2) }} → {{ number_format($odd['currentBackOdds'], 2) }}</span>
@@ -432,7 +432,7 @@
                                     </div>
                                 </div>
                             @empty
-                                <span class="text-center text-xs text-[#7891a5] dark:text-[#b0c4d4]">{{ __('Odds unavailable') }}</span>
+                                <span class="text-center text-xs text-[var(--text-brand-35-2)] dark:text-[rgb(var(--text-soft))]">{{ __('Odds unavailable') }}</span>
                             @endforelse
                             @if ($isPrematchDrops)
                                     </div>
@@ -454,27 +454,27 @@
                     aria-label="Live statistics for {{ $event['team1'] }} vs {{ $event['team2'] }}"
                     class="fixed inset-0 z-[80] hidden overflow-hidden bg-slate-950/60 p-3 backdrop-blur-sm sm:p-6">
                     <div
-                        class="relative mx-auto my-4 w-full max-w-4xl max-h-[calc(100dvh-3.5rem)] overflow-x-hidden overflow-y-auto overscroll-contain rounded-2xl sm:max-h-[calc(100dvh-7rem)] border border-[#dbe7f2] bg-white shadow-2xl dark:border-[#2a3f50] dark:bg-[#162532] sm:my-8">
+                        class="relative mx-auto my-4 w-full max-w-4xl max-h-[calc(100dvh-3.5rem)] overflow-x-hidden overflow-y-auto overscroll-contain rounded-2xl sm:max-h-[calc(100dvh-7rem)] border border-[var(--border-neutral-5-6)] bg-[rgb(var(--surface))] shadow-2xl dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--bg))] sm:my-8">
                         <div
-                            class="relative bg-gradient-to-r from-[#153f5c] to-[#2478a8] px-4 py-5 text-white sm:px-7">
+                            class="relative bg-gradient-to-r from-[var(--surface-brand-65-2)] to-[var(--surface-brand-35)] px-4 py-5 text-white sm:px-7">
                             <button type="button" data-close-live-stats
-                                class="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full bg-white/15 text-lg text-white transition hover:bg-white/25 focus:outline-none focus:ring-2 focus:ring-white/70"
-                                aria-label="Close live statistics"><i class="fas fa-times"></i></button>
+                                class="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full bg-[rgb(var(--surface))]/15 text-lg text-white transition hover:bg-[rgb(var(--surface))]/25 focus:outline-none focus:ring-2 focus:ring-[var(--text-on-primary)]/70"
+                                aria-label="{{ __('Close live statistics') }}"><i class="fas fa-times"></i></button>
                             <div
-                                class="mb-3 text-center text-[11px] font-bold uppercase tracking-[0.14em] text-[#b9def3]">
-                                {{ $matches['tournament_name'] }} · Live Statistics</div>
+                                class="mb-3 text-center text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--text-brand-5)]">
+                                {{ $matches['tournament_name'] }} {{ __('· Live Statistics') }}</div>
                             <div class="flex flex-wrap items-center justify-center gap-3 text-center sm:gap-6">
                                 <span
                                     class="max-w-[36%] text-sm font-semibold sm:text-base">{{ $event['team1'] }}</span>
                                 <span
-                                    data-score-status="{{ $event['status'] }}" class="match-score match-score-on-dark text-2xl font-extrabold tracking-wider sm:text-4xl">{{ $event['score'] }}</span>
+                                    data-score-status="{{ __($event['status']) }}" class="match-score match-score-on-dark text-2xl font-extrabold tracking-wider sm:text-4xl">{{ $event['score'] }}</span>
                                 <span
                                     class="max-w-[36%] text-sm font-semibold sm:text-base">{{ $event['team2'] }}</span>
                             </div>
                             <div
                                 class="mt-2 flex items-center justify-center gap-2 text-xs font-semibold uppercase tracking-wider">
-                                <span class="h-2 w-2 animate-pulse rounded-full bg-red-500"></span>
-                                {{ $event['minutes'] }}@if (preg_match('/^\d+(?:\+\d*)?$/', (string) $event['minutes']) === 1)
+                                <span class="h-2 w-2 animate-pulse rounded-full bg-[var(--surface-red-500)]"></span>
+                                {{ __($event['minutes']) }}@if (preg_match('/^\d+(?:\+\d*)?$/', (string) $event['minutes']) === 1)
                                     <span class="minute-tick-blink">'</span>
                                 @endif
                             </div>
@@ -511,31 +511,29 @@
                     aria-label="Predictions for {{ $event['team1'] }} vs {{ $event['team2'] }}"
                     class="fixed inset-0 z-[80] hidden overflow-hidden bg-slate-950/60 p-3 backdrop-blur-sm sm:p-6">
                     <div
-                        class="relative mx-auto my-4 w-full max-w-[700px] max-h-[calc(100dvh-3.5rem)] overflow-x-hidden overflow-y-auto overscroll-contain rounded-2xl sm:max-h-[calc(100dvh-7rem)] bg-white shadow-2xl dark:bg-[#162532] sm:my-8">
+                        class="relative mx-auto my-4 w-full max-w-[700px] max-h-[calc(100dvh-3.5rem)] overflow-x-hidden overflow-y-auto overscroll-contain rounded-2xl sm:max-h-[calc(100dvh-7rem)] bg-[rgb(var(--surface))] shadow-2xl dark:bg-[rgb(var(--bg))] sm:my-8">
                         <div
-                            class="relative bg-gradient-to-br from-[#1a1a2e] to-[#16213e] px-5 py-6 text-center text-white sm:px-7">
+                            class="relative bg-gradient-to-br from-[var(--surface-brand-80-2)] to-[var(--surface-brand-75-2)] px-5 py-6 text-center text-white sm:px-7">
                             <button type="button" data-close-prediction
-                                class="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-lg text-white transition hover:bg-white/20 focus:outline-none focus:ring-2 focus:ring-white/70"
-                                aria-label="Close predictions"><i class="fas fa-times"></i></button>
-                            <div class="mb-4 text-xs font-semibold uppercase tracking-[0.15em] text-[#48bb78]">
+                                class="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full bg-[rgb(var(--surface))]/10 text-lg text-white transition hover:bg-[rgb(var(--surface))]/20 focus:outline-none focus:ring-2 focus:ring-[var(--text-on-primary)]/70"
+                                aria-label="{{ __('Close predictions') }}"><i class="fas fa-times"></i></button>
+                            <div class="mb-4 text-xs font-semibold uppercase tracking-[0.15em] text-[var(--text-success-25)]">
                                 {{ $matches['tournament_name'] }}</div>
                             <div class="flex items-center justify-center gap-3 text-base font-bold sm:text-xl">
                                 <span>{{ $event['team1'] }}</span>
-                                <span class="font-light text-slate-400">—</span>
+                                <span class="font-light text-[var(--text-slate-400)]">—</span>
                                 <span>{{ $event['team2'] }}</span>
                             </div>
-                            <div class="mt-2 text-sm text-slate-400">{{ date('H:i', $event['timestamp']) }}</div>
+                            <div class="mt-2 text-sm text-[var(--text-slate-400)]">{{ date('H:i', $event['timestamp']) }}</div>
                         </div>
 
                         <div class="p-5 sm:p-7">
                             <h2
-                                class="mb-2 flex items-center gap-2 text-sm font-bold text-[#1a1a2e] before:h-[18px] before:w-1 before:rounded-full before:bg-[#48bb78] before:content-[''] dark:text-white">
-                                Community Predictions</h2>
-                            <p class="mb-5 text-xs text-slate-500 dark:text-slate-400">Share your opinion before the
-                                match starts</p>
+                                class="mb-2 flex items-center gap-2 text-sm font-bold text-[var(--text-brand-80)] before:h-[18px] before:w-1 before:rounded-full before:bg-[var(--surface-success-25)] before:content-[''] dark:text-white">
+                                {{ __('Community Predictions') }}</h2>
+                            <p class="mb-5 text-xs text-[var(--text-slate-500)] dark:text-[var(--text-slate-400)]">{{ __('Share your opinion before the match starts') }}</p>
                             <span
-                                class="mb-5 inline-block rounded-full border border-[#48bb78] bg-[#f0fff4] px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-[#1a1a2e] dark:bg-[#183a2b] dark:text-[#8be0ac]">⚽
-                                Football</span>
+                                class="mb-5 inline-block rounded-full border border-[var(--border-success-25)] bg-[var(--surface-neutral-0-20)] px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--text-brand-80)] dark:bg-[var(--status-success-surface)] dark:text-[rgb(var(--success))]">{{ __('⚽ Football') }}</span>
 
                             <div class="space-y-7">
                                 @foreach ($predictionPolls as $pollKey => $poll)
@@ -546,7 +544,7 @@
                                         $highestCount = $counts === [] ? 0 : max($counts);
                                     @endphp
                                     <section data-prediction-poll="{{ $pollKey }}">
-                                        <div class="mb-3 text-[13px] font-semibold text-slate-600 dark:text-slate-300">
+                                        <div class="mb-3 text-[13px] font-semibold text-[var(--text-slate-600)] dark:text-[var(--text-slate-300)]">
                                             {{ $poll['label'] }}</div>
 
                                         @if ($userVote === null)
@@ -556,11 +554,11 @@
                                                         data-match-id="{{ $event['sportsApiPro_match_id'] }}"
                                                         data-poll="{{ $pollKey }}"
                                                         data-value="{{ $optionValue }}"
-                                                        class="flex-1 select-none rounded-xl border-2 border-slate-200 bg-slate-50 px-3 py-4 text-center transition hover:-translate-y-0.5 hover:border-[#48bb78] hover:bg-[#f0fff4] dark:border-slate-700 dark:bg-[#1d3040] dark:hover:border-[#48bb78] dark:hover:bg-[#183a2b] max-[480px]:px-2 max-[480px]:py-3">
+                                                        class="flex-1 select-none rounded-xl border-2 border-[var(--border-slate-200)] bg-[var(--surface-slate-50)] px-3 py-4 text-center transition hover:-translate-y-0.5 hover:border-[var(--border-success-25)] hover:bg-[var(--surface-neutral-0-20)] dark:border-[var(--border-slate-700)] dark:bg-[rgb(var(--bg))] dark:hover:border-[var(--status-success-border)] dark:hover:bg-[var(--status-success-surface)] max-[480px]:px-2 max-[480px]:py-3">
                                                         <span
-                                                            class="block text-[15px] font-semibold text-[#1a1a2e] dark:text-white max-[480px]:text-[13px]">{{ $option['label'] }}</span>
+                                                            class="block text-[15px] font-semibold text-[var(--text-brand-80)] dark:text-white max-[480px]:text-[13px]">{{ __($option['label']) }}</span>
                                                         <span
-                                                            class="mt-1 block text-[11px] uppercase tracking-wide text-slate-500 dark:text-slate-400">{{ $option['sublabel'] }}</span>
+                                                            class="mt-1 block text-[11px] uppercase tracking-wide text-[var(--text-slate-500)] dark:text-[var(--text-slate-400)]">{{ $option['sublabel'] }}</span>
                                                     </button>
                                                 @endforeach
                                             </div>
@@ -578,37 +576,36 @@
                                                     @endphp
                                                     <div class="flex items-center gap-3">
                                                         <span
-                                                            class="min-w-[80px] text-[13px] font-semibold text-[#1a1a2e] dark:text-white max-[480px]:min-w-[60px] max-[480px]:text-[11px]">{{ $option['label'] }}</span>
+                                                            class="min-w-[80px] text-[13px] font-semibold text-[var(--text-brand-80)] dark:text-white max-[480px]:min-w-[60px] max-[480px]:text-[11px]">{{ __($option['label']) }}</span>
                                                         <div
-                                                            class="h-[26px] flex-1 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
-                                                            <div class="flex h-full min-w-10 items-center justify-end rounded-full px-2.5 text-right transition-[width] duration-500 {{ $isUserVote ? 'bg-gradient-to-r from-[#1a1a2e] to-[#2d3748]' : ($isWinner ? 'bg-gradient-to-r from-[#2f855a] to-[#38a169]' : 'bg-gradient-to-r from-[#48bb78] to-[#68d391]') }}"
+                                                            class="h-[26px] flex-1 overflow-hidden rounded-full bg-[var(--surface-slate-200)] dark:bg-[var(--surface-slate-700)]">
+                                                            <div class="flex h-full min-w-10 items-center justify-end rounded-full px-2.5 text-right transition-[width] duration-500 {{ $isUserVote ? 'bg-gradient-to-r from-[var(--surface-brand-80-2)] to-[var(--surface-brand-70)]' : ($isWinner ? 'bg-gradient-to-r from-[var(--surface-success-50)] to-[var(--surface-success-35-2)]' : 'bg-gradient-to-r from-[var(--surface-success-25)] to-[var(--surface-success-15-2)]') }}"
                                                                 style="width: {{ max(10, $percent) }}%">
                                                                 <span
                                                                     class="text-xs font-bold text-white">{{ $percent }}%</span>
                                                             </div>
                                                         </div>
                                                         <span
-                                                            class="min-w-[45px] text-right text-xs text-slate-500 dark:text-slate-400">{{ $count }}</span>
+                                                            class="min-w-[45px] text-right text-xs text-[var(--text-slate-500)] dark:text-[var(--text-slate-400)]">{{ $count }}</span>
                                                     </div>
                                                 @endforeach
                                                 <div
-                                                    class="mt-4 border-t border-slate-200 pt-4 text-center text-xs text-slate-500 dark:border-slate-700 dark:text-slate-400">
-                                                    Total votes: {{ $totalVotes }}</div>
+                                                    class="mt-4 border-t border-[var(--border-slate-200)] pt-4 text-center text-xs text-[var(--text-slate-500)] dark:border-[var(--border-slate-700)] dark:text-[var(--text-slate-400)]">
+                                                    {{ __('Total votes:') }} {{ $totalVotes }}</div>
                                             </div>
                                         @endif
                                     </section>
                                 @endforeach
                             </div>
                         </div>
-                        <div class="px-7 pb-6 text-center text-[11px] text-slate-400">Community opinion · Not an
-                            official prediction</div>
+                        <div class="px-7 pb-6 text-center text-[11px] text-[var(--text-slate-400)]">{{ __('Community opinion · Not an official prediction') }}</div>
                     </div>
                 </div>
             @endif
         @endforeach
     @endforeach
     @if ($isPrematchDrops && ! ($append ?? false) && count($data) > 0)
-        <footer data-prematch-legend><span><i class="text-green-600">●</i> {{ __('NEW – Drop just detected') }}</span><span><i class="text-amber-500">●</i> {{ __('ACTIVE – Drop is continuing') }}</span><span><i class="text-red-600">●</i> {{ __('WEAK – Drop is weakening or reversing') }}</span></footer>
+        <footer data-prematch-legend><span><i class="text-[var(--text-green-600)]">●</i> {{ __('NEW – Drop just detected') }}</span><span><i class="text-[var(--text-amber-500)]">●</i> {{ __('ACTIVE – Drop is continuing') }}</span><span><i class="text-[var(--text-red-600)]">●</i> {{ __('WEAK – Drop is weakening or reversing') }}</span></footer>
     @endif
     @if ($isMarketShock && ! ($append ?? false) && count($data) > 0)
         <footer data-shock-footer><i class="fas fa-info-circle" aria-hidden="true"></i> {{ __('Alerts are automatically removed after 20 minutes.') }}</footer>

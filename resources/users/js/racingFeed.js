@@ -1,6 +1,6 @@
 export function watchRacingFeed(root, refresh, sport) {
     const notice = document.createElement('p');
-    notice.className = 'col-span-full mb-3 text-xs text-[#5a7d99] dark:text-[#b0c8dd]';
+    notice.className = 'col-span-full mb-3 text-xs text-[rgb(var(--text-muted))] dark:text-[rgb(var(--text-soft))]';
     notice.setAttribute('role', 'status');
     root.prepend(notice);
     let health = null;
@@ -9,11 +9,11 @@ export function watchRacingFeed(root, refresh, sport) {
     let boundaryTimer = null;
     function render() {
         const unavailable = !subscribed || health?.state !== 'live' || Date.now() - receivedAt > 45000;
-        notice.classList.toggle('text-amber-700', unavailable);
-        notice.textContent = !subscribed ? 'Live connection unavailable. Displaying the last received values.'
-            : !health || health.state === 'waiting' ? 'Waiting for the provider feed.'
-            : health.state !== 'live' || Date.now() - receivedAt > 45000 ? 'Provider updates unavailable or delayed. Displaying the last received values.'
-            : 'Feed connected. Prices and available sizes update when the provider sends a change.';
+        notice.classList.toggle('text-[var(--text-amber-700)]', unavailable);
+        notice.textContent = !subscribed ? (globalThis.bfTranslations?.["Live connection unavailable. Displaying the last received values."] ?? "Live connection unavailable. Displaying the last received values.")
+            : !health || health.state === 'waiting' ? (globalThis.bfTranslations?.["Waiting for the provider feed."] ?? "Waiting for the provider feed.")
+            : health.state !== 'live' || Date.now() - receivedAt > 45000 ? (globalThis.bfTranslations?.["Provider updates unavailable or delayed. Displaying the last received values."] ?? "Provider updates unavailable or delayed. Displaying the last received values.")
+            : (globalThis.bfTranslations?.["Feed connected. Prices and available sizes update when the provider sends a change."] ?? "Feed connected. Prices and available sizes update when the provider sends a change.");
     }
     function subscribe() {
         const channel = window.Echo?.channel(`sports.${sport}.live`);

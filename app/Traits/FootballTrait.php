@@ -594,7 +594,7 @@ trait FootballTrait
         return $priorities[$normalize($aliases[$name] ?? $name)] ?? PHP_INT_MAX;
     }
 
-    private function footballTimeline(array $match, array $timeline): array
+    public function footballTimeline(array $match, array $timeline): array
     {
         $clock = $timeline['clock'] ?? [];
         $finished = ($match['result_status'] ?? '') === 'Finished' || ($clock['finished'] ?? false);
@@ -715,7 +715,7 @@ trait FootballTrait
             $event['lane'] = $lane;
             $displayMinute = min(90, $event['minute']);
             $added = $event['added_time'] + max(0, $event['minute'] - 90);
-            $event['minute_label'] = $event['time_known'] ? $displayMinute.($added > 0 ? '+'.$added : '')."'" : '';
+            $event['minute_label'] = $event['time_known'] ? (! empty($event['time_estimated']) ? '~' : '').$displayMinute.($added > 0 ? '+'.$added : '')."'" : '';
             $event['label'] = match ($event['kind']) {
                 'goal' => __('Goal'),
                 'yellow' => __('Yellow card'),

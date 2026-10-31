@@ -3,13 +3,13 @@
     {{-- LEFT: Total records --}}
     <div class="flex flex-col gap-4 border-t px-5 py-4 sm:flex-row sm:items-center sm:justify-between theme-border">
         <p class="text-sm theme-text-muted">
-            Showing
+            {{ __('Showing') }}
             <span class="font-semibold">{{ $paginator->firstItem() ?? 0 }}</span>
-            to
+            {{ __('to') }}
             <span class="font-semibold">{{ $paginator->lastItem() ?? 0 }}</span>
-            of
+            {{ __('of') }}
             <span class="font-semibold">{{ $paginator->total() }}</span>
-            records
+            {{ __('records') }}
         </p>
 
     </div>
@@ -20,7 +20,7 @@
         {{-- Prev --}}
         <a href="{{ $paginator->previousPageUrl() }}"
             class="rounded-xl px-3 py-2 text-sm font-semibold theme-panel-subtle {{ $paginator->onFirstPage() ? 'pointer-events-none opacity-50' : '' }}">
-            Prev
+            {{ __('Prev') }}
         </a>
 
         {{-- Page dropdown --}}
@@ -36,7 +36,7 @@
         {{-- Next --}}
         <a href="{{ $paginator->nextPageUrl() }}"
             class="rounded-xl px-3 py-2 text-sm font-semibold theme-panel-subtle {{ $paginator->hasMorePages() ? '' : 'pointer-events-none opacity-50' }}">
-            Next
+            {{ __('Next') }}
         </a>
 
     </div>

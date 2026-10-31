@@ -540,6 +540,176 @@ class FixturesAuditTest extends TestCase
         $this->assertDatabaseCount('football_timeline', 1);
     }
 
+    public function test_count_only_halftime_cards_are_explicitly_untimed_and_not_positioned_at_zero(): void
+    {
+        $this->app['auth']->guard('customers')->setUser(new Customer(['trial_ends_at' => now()->addDay()]));
+        $match = ['timestamp' => 1793361600, 'result_status' => 'Live', 'minutes_status' => 'Half Time', 'home_score' => 1, 'away_score' => 0,
+            'timeline' => ['initialized' => true, 'reported_counts' => ['home_yellow_cards' => 1, 'away_yellow_cards' => 2],
+                'home_goals' => [['id' => '367764118', 'minute' => 36, 'added_time' => 0, 'seconds' => 2160, 'time_known' => true, 'home_score' => 1, 'away_score' => 0]]]];
+        $timeline = $this->timeline($match);
+        $this->assertSame(45, $timeline['minute']);
+        $this->assertCount(1, $timeline['untimed_events']['home']);
+        $this->assertCount(2, $timeline['untimed_events']['away']);
+        foreach (array_merge(...array_values($timeline['untimed_events'])) as $incident) {
+            $this->assertFalse($incident['time_known']);
+            $this->assertNull($incident['left']);
+            $html = view('users.sports.football.partials.timelineEvent', ['incident' => $incident, 'positioned' => false])->render();
+            $this->assertStringNotContainsString('left:', $html);
+            $this->assertStringNotContainsString('Event time unavailable', $html);
+        }
+        $event = ['unique_key' => 'test-match', 'sportsApiPro_match_id' => '16604830', 'betfair_match_id' => 'test', 'team1' => 'Mahasarakham SBT', 'team2' => 'Chanthaburi FC', 'status' => 'Live', 'timestamp' => $match['timestamp'], 'minutes' => 'HT', 'score' => '1 - 0', 'home_score' => 1, 'away_score' => 0, 'timeline' => $timeline, 'markets' => []];
+        $html = view('users.sports.football.footballDetails', ['data' => [['tournament_name' => 'Thai League 2', 'tournament_country' => 'Thailand', 'status' => 'Live', 'matches' => [$event]]], 'append' => true, 'checkAuthAndSubscription' => ['display_odds' => true]])->render();
+        $this->assertStringNotContainsString('Event time unavailable', strip_tags($html));
+        $this->assertStringNotContainsString('Home:', strip_tags($html));
+        $this->assertStringNotContainsString('Away:', strip_tags($html));
+        $this->assertStringContainsString('left: 40%', $html);
+        $this->assertSame(3, substr_count($html, 'data-timeline-event="stats-'));
+    }
+
+    public function test_card_times_preserve_provider_values_through_updates_database_cache_and_restore(): void
+    {
+        (require database_path('migrations/2026_10_26_110659_create_football_timeline_table.php'))->up();
+        (require database_path('migrations/2026_10_26_124628_add_timeline_to_football_timeline_table.php'))->up();
+        Bus::fake();
+        $cache = Cache::store('array');
+        Cache::shouldReceive('store')->with('redis')->andReturn($cache);
+        $sync = $this->sync();
+        app()->instance(FootballSyncController::class, $sync);
+        $match = ['sportsApiPro_match_id' => '123', 'timestamp' => 1793361600, 'result_status' => 'Live', 'minutes_status' => 'Half Time', 'home_score' => 0, 'away_score' => 0];
+        $sync->storeTimeline($match, 'match:123:incidents', ['incidents' => []], 'snapshot');
+        $card = ['incidentType' => 'card', 'incidentClass' => 'yellow', 'isHome' => true];
+        foreach (['missing' => [], 'null' => ['time' => null], 'empty' => ['time' => ''], 'invalid' => ['time' => 'unknown']] as $id => $fields) {
+            $sync->storeTimeline($match, 'match:123:incidents', ['incidents' => [array_replace($card, ['id' => $id], $fields)]], 'snapshot');
+            $event = array_find($match['timeline']['home_yellow_cards'], static fn (array $event): bool => $event['id'] === $id);
+            $this->assertNotNull($event);
+            $this->assertNull($event['timestamp'], $id);
+            $this->assertFalse($event['time_known'], $id);
+        }
+        $firstHalf = array_replace($card, ['id' => 'first', 'time' => 23, 'timestamp' => '2026-10-30T18:00:00+05:30']);
+        $secondHalf = array_replace($card, ['id' => 'second', 'isHome' => false, 'time' => 64, 'timestamp' => 1793364000000]);
+        $sync->storeTimeline($match, 'match:123:incidents', ['incidents' => [$firstHalf, $secondHalf, array_replace($card, ['id' => 'stoppage', 'time' => '45+2']), array_replace($card, ['id' => 'zero', 'time' => 0])], 'changes' => ['changeTimestamp' => 20]]);
+        Bus::assertDispatched(CallQueuedClosure::class, 1);
+        $first = array_find($match['timeline']['home_yellow_cards'], static fn (array $event): bool => $event['id'] === 'first');
+        $second = $match['timeline']['away_yellow_cards'][0];
+        $this->assertSame('2026-10-30T12:30:00Z', $first['timestamp']);
+        $this->assertSame('2026-10-30T12:40:00Z', $second['timestamp']);
+        $this->assertSame(23, $first['minute']);
+        $this->assertSame(64, $second['minute']);
+        foreach (['Half Time', '2nd half'] as $status) {
+            $display = $this->timeline(array_replace($match, ['minutes_status' => $status]));
+            $rendered = array_column($display['events'], null, 'id');
+            $this->assertEqualsWithDelta(23 / 90 * 100, $rendered['first']['left'], 0.001);
+            $this->assertEqualsWithDelta(64 / 90 * 100, $rendered['second']['left'], 0.001);
+            $this->assertSame("45+2'", $rendered['stoppage']['minute_label']);
+            $this->assertTrue($rendered['zero']['time_known']);
+            $this->assertNull($rendered['missing']['left']);
+        }
+        $sync->storeTimeline($match, 'match:123:incidents', ['incidents' => [array_replace($card, ['id' => 'first', 'time' => null, 'timestamp' => null])], 'changes' => ['changeTimestamp' => 21]]);
+        $this->assertSame($first, array_find($match['timeline']['home_yellow_cards'], static fn (array $event): bool => $event['id'] === 'first'));
+        $this->assertFalse($sync->storeTimeline($match, 'match:123:incidents', ['incidents' => [array_replace($firstHalf, ['time' => 1])], 'changes' => ['changeTimestamp' => 19]]));
+        $sync->storeTimeline($match, 'match:123:incidents', ['incidents' => [array_replace($card, ['id' => 'missing', 'time' => 17])], 'changes' => ['changeTimestamp' => 22]]);
+        $known = array_find($match['timeline']['home_yellow_cards'], static fn (array $event): bool => $event['id'] === 'missing');
+        $this->assertSame(17, $known['minute']);
+        $this->assertNull($known['timestamp']);
+        $before = $match['timeline'];
+        $sync->storeTimeline($match, 'match:123:incidents', ['incidents' => [$firstHalf, $secondHalf], 'changes' => ['changeTimestamp' => 22]]);
+        $this->assertSame($before, $match['timeline']);
+        $this->assertEquals($before, json_decode(DB::table('football_timeline')->where('match_id', '123')->value('timeline'), true));
+        $cached = json_encode(['match-1' => $match]);
+        Redis::shouldReceive('get')->with('Football:matches')->andReturnUsing(function () use (&$cached): string {
+            return $cached;
+        });
+        Redis::shouldReceive('set')->andReturnUsing(function (string $key, string $value) use (&$cached): void {
+            $cached = $value;
+        });
+        Redis::shouldReceive('expire')->andReturn(true);
+        Redis::shouldReceive('eval')->andReturnUsing(function (string $script, int $keys, string $key, string $before, string $after) use (&$cached): int {
+            $cached = $after;
+
+            return 1;
+        });
+        $incomplete = $match;
+        $incomplete['timeline'] = [];
+        storeInRedis('Football:matches', ['match-1' => $incomplete], 10, false);
+        $restored = getInRedis('Football:matches')['match-1'];
+        $this->assertSame($before, $restored['timeline']);
+        $this->assertSame($this->timeline($match), $this->timeline($restored));
+    }
+
+    public function test_new_live_cards_estimate_the_match_minute_once_and_actual_events_replace_estimates(): void
+    {
+        (require database_path('migrations/2026_10_26_110659_create_football_timeline_table.php'))->up();
+        (require database_path('migrations/2026_10_26_124628_add_timeline_to_football_timeline_table.php'))->up();
+        Bus::fake();
+        $cache = Cache::store('array');
+        Cache::shouldReceive('store')->with('redis')->andReturn($cache);
+        $sync = $this->sync();
+        $match = ['sportsApiPro_match_id' => '123', 'timestamp' => time() - 2000, 'current_period_start_timestamp' => time() - 1930, 'result_status' => 'Live', 'minutes_status' => '1st half', 'home_score' => 0, 'away_score' => 0];
+        $card = ['id' => 'historical', 'incidentType' => 'card', 'incidentClass' => 'yellow', 'isHome' => false];
+        $sync->storeTimeline($match, 'match:123:incidents', ['incidents' => [$card]], 'snapshot');
+        $counts = ['home_yellow_cards' => 0, 'home_red_cards' => 0, 'away_yellow_cards' => 2, 'away_red_cards' => 0];
+        $sync->storeTimeline($match, payload: ['timeline_counts' => $counts], frameType: 'snapshot');
+        $this->assertFalse($match['timeline']['away_yellow_cards'][0]['time_known']);
+        $this->assertSame([], $match['timeline']['home_yellow_cards']);
+        $counts = array_replace($counts, ['home_yellow_cards' => 1, 'home_red_cards' => 1, 'away_yellow_cards' => 3]);
+        $sync->storeTimeline($match, payload: ['timeline_counts' => $counts]);
+        foreach (['home_yellow_cards', 'home_red_cards'] as $group) {
+            $event = $match['timeline'][$group][0];
+            $this->assertSame(32, $event['minute']);
+            $this->assertTrue($event['time_estimated']);
+            $this->assertNull($event['timestamp']);
+        }
+        $this->assertCount(2, $match['timeline']['away_yellow_cards']);
+        $newCard = array_replace($card, ['id' => 'live-red', 'incidentClass' => 'yellowRed']);
+        $sync->storeTimeline($match, 'match:123:incidents', ['incidents' => [$newCard]]);
+        $this->assertSame(32, $match['timeline']['away_red_cards'][0]['minute']);
+        $this->assertTrue($match['timeline']['away_red_cards'][0]['time_estimated']);
+        $display = array_column($this->timeline($match)['events'], null, 'id');
+        $this->assertSame("~32'", $display['live-red']['minute_label']);
+        $this->assertEqualsWithDelta(35.555, $display['live-red']['left'], 0.01);
+        $estimated = $match['timeline'];
+        $match['current_period_start_timestamp'] -= 600;
+        $sync->storeTimeline($match, payload: ['timeline_counts' => $counts]);
+        $sync->storeTimeline($match, 'match:123:incidents', ['incidents' => [$newCard]]);
+        $this->assertSame($estimated['home_yellow_cards'], $match['timeline']['home_yellow_cards']);
+        $this->assertSame($estimated['away_red_cards'], $match['timeline']['away_red_cards']);
+        $sync->storeTimeline($match, 'match:123:incidents', ['incidents' => [array_replace($card, ['id' => 'actual-home', 'isHome' => true])]]);
+        $this->assertSame(['actual-home'], array_column($match['timeline']['home_yellow_cards'], 'id'));
+        $this->assertSame(32, $match['timeline']['home_yellow_cards'][0]['minute']);
+        $actual = array_replace($newCard, ['time' => 18]);
+        $sync->storeTimeline($match, 'match:123:incidents', ['incidents' => [$actual, array_replace($card, ['id' => 'actual-home', 'time' => 23, 'isHome' => true])]], 'snapshot');
+        $this->assertSame(['actual-home'], array_column($match['timeline']['home_yellow_cards'], 'id'));
+        $this->assertSame(18, $match['timeline']['away_red_cards'][0]['minute']);
+        $this->assertFalse($match['timeline']['away_red_cards'][0]['time_estimated']);
+        $display = array_column($this->timeline($match)['events'], null, 'id');
+        $this->assertSame("18'", $display['live-red']['minute_label']);
+        $stale = $match;
+        $stale['timeline'] = $estimated;
+        $sync->storeTimeline($stale);
+        $this->assertSame($match['timeline']['away_red_cards'], $stale['timeline']['away_red_cards']);
+        unset($match['timeline']);
+        $sync->storeTimeline($match, frameType: 'restore');
+        $this->assertSame(18, $match['timeline']['away_red_cards'][0]['minute']);
+        $this->assertSame(32, $match['timeline']['home_red_cards'][0]['minute']);
+        $this->assertTrue($match['timeline']['home_red_cards'][0]['time_estimated']);
+        Bus::assertDispatched(CallQueuedClosure::class, 1);
+        foreach ([
+            ['2nd half', time() - 1150, [], 'update', true, "~64'"],
+            ['1st half', time() - 2830, ['first_half' => 2], 'update', true, "~45+2'"],
+            ['1st half', null, [], 'update', true, ''],
+            ['1st half', time() - 1930, [], 'snapshot', true, ''],
+            ['1st half', time() - 1930, [], 'update', false, ''],
+        ] as $index => [$status, $start, $added, $frameType, $isLive, $label]) {
+            $sample = ['sportsApiPro_match_id' => (string) (200 + $index), 'timestamp' => time() - 5000, 'current_period_start_timestamp' => $start, 'minutes_status' => $status, 'result_status' => 'Live', 'added_time' => $added];
+            $channel = 'match:'.$sample['sportsApiPro_match_id'].':incidents';
+            $sync->storeTimeline($sample, $channel, ['incidents' => []], 'snapshot');
+            $sync->storeTimeline($sample, $channel, ['incidents' => [array_replace($card, ['id' => 'sample', 'isLive' => $isLive])]], $frameType);
+            $display = array_column($this->timeline($sample)['events'], null, 'id');
+            $this->assertSame($label, $display['sample']['minute_label']);
+            $this->assertSame($label !== '', $sample['timeline']['away_yellow_cards'][0]['time_estimated']);
+        }
+    }
+
     public function test_all_team_sports_preserve_tournament_country_from_rest_and_websocket_fields(): void
     {
         foreach (['Cricket', 'IceHockey', 'AmericanFootball', 'Baseball', 'Basketball', 'Tennis'] as $sport) {
@@ -557,8 +727,8 @@ class FixturesAuditTest extends TestCase
 
     public function test_sport_league_headers_display_country_without_an_empty_separator(): void
     {
-        foreach (['cricket', 'icehockey', 'americanfootball', 'baseball', 'basketball', 'tennis', 'horsecacing'] as $sport) {
-            $name = $sport === 'horsecacing' ? 'horseracing' : $sport;
+        foreach (['cricket', 'icehockey', 'americanfootball', 'baseball', 'basketball', 'tennis', 'horseracing'] as $sport) {
+            $name = $sport;
             $group = ['tournament_name' => 'Test League', 'tournament_country' => 'Japan', 'status' => 'Prematch', 'matches' => []];
             $html = view("users.sports.{$sport}.{$name}Details", ['data' => [$group], 'append' => true])->render();
             $this->assertStringContainsString('Japan : Test League', preg_replace('/\s+/', ' ', strip_tags($html)), $sport);
@@ -588,9 +758,9 @@ class FixturesAuditTest extends TestCase
         foreach (['Win', 'Draw', 'Loss'] as $result) {
             $this->assertStringContainsString('aria-label="'.$result.'"', $html);
         }
-        $this->assertStringContainsString('bg-emerald-600', $html);
-        $this->assertStringContainsString('bg-amber-400', $html);
-        $this->assertStringContainsString('bg-red-500', $html);
+        $this->assertStringContainsString('bg-[var(--surface-emerald-600)]', $html);
+        $this->assertStringContainsString('bg-[var(--surface-amber-400)]', $html);
+        $this->assertStringContainsString('bg-[var(--surface-red-500)]', $html);
         $this->assertMatchesRegularExpression('~<dt[^>]*>Draws</dt><dd[^>]*>0</dd>~', $html);
         $this->assertStringNotContainsString('W · D · L', $html);
     }

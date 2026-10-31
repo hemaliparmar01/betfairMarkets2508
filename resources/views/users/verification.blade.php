@@ -1,6 +1,6 @@
 @extends('users.layout.main')
 
-@section('title', 'Verify Your Account | BF Markets')
+@section('title', __('Verify Your Account | BF Markets'))
 @section('meta_description', 'Create your BF Markets account to access live Betfair odds, liquidity tracking, and real-time market monitoring across multiple sports.')
 
 @push('head')
@@ -14,7 +14,7 @@
 @endpush
 
 @push('head')
-    @vite(['resources/users/css/auth.css', 'resources/users/js/auth/app.js'])
+    @vite('resources/users/js/auth/app.js')
 @endpush
 
 @section('content')
@@ -90,9 +90,9 @@
                             @endif
                             @php $verification_via = $isLoginOtp ? 'login' : 'register'; @endphp
                             @if ($verification_via == 'register')
-                                <p class="mb-5 rounded-2xl px-4 py-3 text-sm font-semibold theme-alert-success">OTP sent via {{ $isLoginOtp ? $customer->login_channel_via : $customer->verification_via }}</p>
+                                <p class="mb-5 rounded-2xl px-4 py-3 text-sm font-semibold theme-alert-success">{{ __('OTP sent via') }} {{ $isLoginOtp ? $customer->login_channel_via : $customer->verification_via }}</p>
                             @else
-                                <p class="mb-5 rounded-2xl px-4 py-3 text-sm font-semibold theme-alert-success">OTP has been sent into {{ $customer->login_channel_via }}</p>
+                                <p class="mb-5 rounded-2xl px-4 py-3 text-sm font-semibold theme-alert-success">{{ __('OTP has been sent into') }} {{ $customer->login_channel_via }}</p>
                             @endif
 
                             <form method="POST" action="{{ route($isLoginOtp ? 'login.mobile.verify-code' : 'customers.verification.verify') }}" class="space-y-5">

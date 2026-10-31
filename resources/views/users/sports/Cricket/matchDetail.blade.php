@@ -6,14 +6,14 @@
     @include('users.layout.sports')
 
     <div class="my-5">
-        <a href="{{ route('cricket.home') }}" class="inline-flex items-center gap-2 text-sm font-semibold text-[#1a6b9c] hover:text-[#0b2a40] dark:text-[#6aafdf]">
-            <i class="fas fa-arrow-left"></i> Back to matches
+        <a href="{{ route('cricket.home') }}" class="inline-flex items-center gap-2 text-sm font-semibold text-[rgb(var(--primary))] hover:text-[rgb(var(--text-main))] dark:text-[rgb(var(--primary))]">
+            <i class="fas fa-arrow-left"></i> {{ __('Back to matches') }}
         </a>
     </div>
 
-    <section class="overflow-hidden rounded-2xl border border-[#dbe7f2] bg-white shadow-sm dark:border-[#2a3f50] dark:bg-[#162532]">
-        <div class="bg-gradient-to-r from-[#0b2a40] to-[#1a6b9c] px-4 py-6 text-white sm:px-8">
-            <div class="mb-3 text-center text-xs font-bold uppercase tracking-[0.14em] text-[#b9def3]">{{ $match['tournament'] }}</div>
+    <section class="overflow-hidden rounded-2xl border border-[var(--border-neutral-5-6)] bg-[rgb(var(--surface))] shadow-sm dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--bg))]">
+        <div class="bg-gradient-to-r from-[var(--surface-heading)] to-[var(--surface-primary)] px-4 py-6 text-white sm:px-8">
+            <div class="mb-3 text-center text-xs font-bold uppercase tracking-[0.14em] text-[var(--text-brand-5)]">{{ $match['tournament'] }}</div>
             <div class="grid grid-cols-[minmax(0,1fr)_minmax(130px,200px)_minmax(0,1fr)] items-center gap-2 text-center sm:grid-cols-[minmax(0,1fr)_260px_minmax(0,1fr)] sm:gap-4">
                 <div class="min-w-0">
                     <h1 class="flex items-center justify-center gap-2 text-base font-bold sm:text-2xl">
@@ -21,7 +21,7 @@
                         <span class="min-w-0 break-words">{{ $match['team1'] }}</span>
                     </h1>
                 </div>
-                <div class="rounded-xl bg-white px-2 py-3 dark:bg-[#162532]">
+                <div class="rounded-xl bg-[rgb(var(--surface))] px-2 py-3 dark:bg-[rgb(var(--bg))]">
                     @include('users.sports.cricket.partials.score', ['scoreDisplay' => $match['score_display'], 'status' => $match['status'], 'scoreOnDark' => true])
                 </div>
                 <div class="min-w-0">
@@ -31,49 +31,49 @@
                     </h1>
                 </div>
             </div>
-            <div class="mt-4 text-center text-xs font-bold uppercase tracking-wide text-[#b9def3]">{{ $match['status'] }} · {{ $match['minutes'] }}</div>
-            @if ($match['match_status_description'] ?? null)<p class="mt-3 text-center text-sm text-[#b9def3]">{{ $match['match_status_description'] }}</p>@endif
-            @if ($match['score_display']['toss'])<p class="mt-3 text-center text-xs text-[#b9def3]" data-cricket-toss>{{ $match['score_display']['toss'] }}</p>@endif
+            <div class="mt-4 text-center text-xs font-bold uppercase tracking-wide text-[var(--text-brand-5)]">{{ $match['status'] }} · {{ $match['minutes'] }}</div>
+            @if ($match['match_status_description'] ?? null)<p class="mt-3 text-center text-sm text-[var(--text-brand-5)]">{{ $match['match_status_description'] }}</p>@endif
+            @if ($match['score_display']['toss'])<p class="mt-3 text-center text-xs text-[var(--text-brand-5)]" data-cricket-toss>{{ $match['score_display']['toss'] }}</p>@endif
         </div>
 
         <div class="p-4 sm:p-7">
             <div class="mb-5 flex flex-wrap items-end justify-between gap-2">
                 <div>
-                    <h2 class="text-xl font-extrabold text-[#0b2a40] dark:text-white">Cricket Markets</h2>
-                    <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">Back odds only · Initial price compared with current price</p>
+                    <h2 class="text-xl font-extrabold text-[rgb(var(--text-main))] dark:text-white">{{ __('Cricket Markets') }}</h2>
+                    <p class="mt-1 text-sm text-[var(--text-slate-500)] dark:text-[var(--text-slate-400)]">{{ __('Back odds only · Initial price compared with current price') }}</p>
                 </div>
-                <span class="rounded-full bg-[#e8f2fc] px-3 py-1 text-xs font-bold text-[#1a6b9c] dark:bg-[#1a2e44] dark:text-[#6aafdf]">{{ count($match['markets']) }} markets</span>
+                <span class="rounded-full bg-[var(--surface-hover)] px-3 py-1 text-xs font-bold text-[rgb(var(--primary))] dark:bg-[rgb(var(--surface-elevated))] dark:text-[rgb(var(--primary))]">{{ count($match['markets']) }} {{ __('markets') }}</span>
             </div>
 
             @forelse ($match['markets'] as $market)
-                <section class="mb-5 overflow-hidden rounded-2xl border border-[#dbe7f2] bg-white last:mb-0 dark:border-[#2a3f50] dark:bg-[#1a2a38]">
-                    <div class="flex flex-wrap items-center justify-between gap-2 border-b border-[#dbe7f2] bg-[#f3f8fd] px-4 py-3 dark:border-[#2a3f50] dark:bg-[#203746] sm:px-5">
-                        <h3 class="text-sm font-extrabold uppercase tracking-wide text-[#1e4763] dark:text-[#b0c8dd]">{{ $market['label'] }}</h3>
-                        <span class="text-xs font-semibold text-slate-400">{{ count($market['runners']) }} selections</span>
+                <section class="mb-5 overflow-hidden rounded-2xl border border-[var(--border-neutral-5-6)] bg-[rgb(var(--surface))] last:mb-0 dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--surface))]">
+                    <div class="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border-neutral-5-6)] bg-[var(--surface-neutral-0-14)] px-4 py-3 dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--bg))] sm:px-5">
+                        <h3 class="text-sm font-extrabold uppercase tracking-wide text-[var(--text-brand-60)] dark:text-[rgb(var(--text-soft))]">{{ $market['label'] }}</h3>
+                        <span class="text-xs font-semibold text-[var(--text-slate-400)]">{{ count($market['runners']) }} {{ __('selections') }}</span>
                     </div>
 
-                    <div class="hidden grid-cols-[minmax(150px,1.25fr)_90px_100px_115px_minmax(220px,1fr)] items-center gap-4 border-b border-[#e8eef5] px-5 py-2 text-[10px] font-extrabold uppercase tracking-wider text-slate-400 dark:border-[#2a3f50] md:grid">
-                        <span>Selection</span>
-                        <span>Initial</span>
-                        <span>Current</span>
-                        <span>Movement</span>
-                        <span>Back odds trend</span>
+                    <div class="hidden grid-cols-[minmax(150px,1.25fr)_90px_100px_115px_minmax(220px,1fr)] items-center gap-4 border-b border-[var(--border-neutral-5-7)] px-5 py-2 text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-slate-400)] dark:border-[rgb(var(--border))] md:grid">
+                        <span>{{ __('Selection') }}</span>
+                        <span>{{ __('Initial') }}</span>
+                        <span>{{ __('Current') }}</span>
+                        <span>{{ __('Movement') }}</span>
+                        <span>{{ __('Back odds trend') }}</span>
                     </div>
 
-                    <div class="divide-y divide-[#e8eef5] dark:divide-[#2a3f50]">
+                    <div class="divide-y divide-[var(--border-neutral-5-7)] dark:divide-[rgb(var(--border))]">
                         @foreach ($market['runners'] as $runner)
                             <article class="grid grid-cols-2 items-center gap-x-4 gap-y-3 px-4 py-4 md:grid-cols-[minmax(150px,1.25fr)_90px_100px_115px_minmax(220px,1fr)] md:px-5">
                                 <div class="col-span-2 min-w-0 md:col-span-1">
-                                    <span class="mb-1 block text-[10px] font-extrabold uppercase tracking-wider text-slate-400 md:hidden">Selection</span>
-                                    <div class="truncate text-sm font-extrabold text-[#0b2a40] dark:text-white" title="{{ $runner['name'] }}">{{ $runner['name'] }}</div>
+                                    <span class="mb-1 block text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-slate-400)] md:hidden">{{ __('Selection') }}</span>
+                                    <div class="truncate text-sm font-extrabold text-[rgb(var(--text-main))] dark:text-white" title="{{ $runner['name'] }}">{{ $runner['name'] }}</div>
                                     @if ($checkAuthAndSubscription['display_odds'])
                                         @include('users.sports.oddsHistory', ['history' => $runner['history'] ?? [], 'incomplete' => $runner['history_incomplete'] ?? false])
                                     @endif
                                 </div>
 
                                 <div>
-                                    <span class="mb-1 block text-[10px] font-extrabold uppercase tracking-wider text-slate-400 md:hidden">Initial</span>
-                                    <span class="font-mono text-base font-bold tabular-nums text-slate-500 dark:text-slate-300">
+                                    <span class="mb-1 block text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-slate-400)] md:hidden">{{ __('Initial') }}</span>
+                                    <span class="font-mono text-base font-bold tabular-nums text-[var(--text-slate-500)] dark:text-[var(--text-slate-300)]">
                                         @if ($checkAuthAndSubscription['display_odds'])
                                             {{ $runner['initial_back_odds'] > 1 ? number_format($runner['initial_back_odds'], 2) : '—' }}
                                         @else
@@ -83,8 +83,8 @@
                                 </div>
 
                                 <div class="text-right md:text-left">
-                                    <span class="mb-1 block text-[10px] font-extrabold uppercase tracking-wider text-slate-400 md:hidden">Current</span>
-                                    <span class="inline-flex min-w-[72px] items-center justify-center gap-1 rounded-lg border border-[#b9d8ee] bg-[#e8f5ff] px-2.5 py-1.5 font-mono text-base font-extrabold tabular-nums text-[#0b2a40] dark:border-[#3d6d8d] dark:bg-[#17364b] dark:text-white">
+                                    <span class="mb-1 block text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-slate-400)] md:hidden">{{ __('Current') }}</span>
+                                    <span class="inline-flex min-w-[72px] items-center justify-center gap-1 rounded-lg border border-[var(--border-brand-5-4)] bg-[var(--surface-neutral-0-15)] px-2.5 py-1.5 font-mono text-base font-extrabold tabular-nums text-[rgb(var(--text-main))] dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--bg))] dark:text-white">
                                         @if ($checkAuthAndSubscription['display_odds'])
                                             {{ number_format($runner['current_back_odds'], 2) }}
                                         @else
@@ -94,10 +94,10 @@
                                 </div>
 
                                 <div class="col-span-2 md:col-span-1">
-                                    <span class="mb-1 block text-[10px] font-extrabold uppercase tracking-wider text-slate-400 md:hidden">Movement</span>
+                                    <span class="mb-1 block text-[10px] font-extrabold uppercase tracking-wider text-[var(--text-slate-400)] md:hidden">{{ __('Movement') }}</span>
                                     @if ($checkAuthAndSubscription['display_odds'])
                                         @if ($runner['initial_back_odds'] > 1)
-                                        <span class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-extrabold {{ $runner['direction'] < 0 ? 'bg-red-50 text-[#c74e4e] dark:bg-red-950/30' : ($runner['direction'] > 0 ? 'bg-emerald-50 text-[#1f9a6e] dark:bg-emerald-950/30' : 'bg-slate-100 text-slate-500 dark:bg-slate-700') }}">
+                                        <span class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-extrabold {{ $runner['direction'] < 0 ? 'bg-[var(--surface-red-50)] text-[var(--text-danger)] dark:bg-red-950/30' : ($runner['direction'] > 0 ? 'bg-[var(--surface-emerald-50)] text-[var(--text-success)] dark:bg-emerald-950/30' : 'bg-[var(--surface-slate-100)] text-[var(--text-slate-500)] dark:bg-[var(--surface-slate-700)]') }}">
                                             @if ($runner['direction'] < 0)
                                                 <i class="fas fa-arrow-down"></i>
                                             @elseif ($runner['direction'] > 0)
@@ -108,7 +108,7 @@
                                             {{ $runner['change_percent'] > 0 ? '+' : '' }}{{ number_format($runner['change_percent'], 1) }}%
                                         </span>
                                         @else
-                                            <span class="text-xs text-slate-400">{{ __('Waiting for opening odds') }}</span>
+                                            <span class="text-xs text-[var(--text-slate-400)]">{{ __('Waiting for opening odds') }}</span>
                                         @endif
                                     @else
                                         <span class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-extrabold">
@@ -119,7 +119,7 @@
 
                                 <div class="col-span-2 md:col-span-1">
                                     @if ($checkAuthAndSubscription['display_odds'])
-                                        <img src="{{ env('BETFAIR_API_KEY') . '?marketId=' . $runner['match_id'] . '&selectionId=' . $runner['runner_id'] }}" alt="Market Chart">
+                                        <img src="{{ env('BETFAIR_API_KEY') . '?marketId=' . $runner['match_id'] . '&selectionId=' . $runner['runner_id'] }}" alt="{{ __('Market Chart') }}">
                                     @else
                                         @include('lock_icon')
                                     @endif
@@ -129,8 +129,8 @@
                     </div>
                 </section>
             @empty
-                <div class="rounded-xl border border-dashed border-slate-300 px-4 py-12 text-center text-sm text-slate-500 dark:border-slate-600 dark:text-slate-400">
-                    Market data is not available for this match yet.
+                <div class="rounded-xl border border-dashed border-[var(--border-slate-300)] px-4 py-12 text-center text-sm text-[var(--text-slate-500)] dark:border-[var(--border-slate-600)] dark:text-[var(--text-slate-400)]">
+                    {{ __('Market data is not available for this match yet.') }}
                 </div>
             @endforelse
         </div>
@@ -168,7 +168,7 @@
                             currentMain.innerHTML = nextMain.innerHTML;
                         }
                     } catch (error) {
-                        console.error('Match detail refresh failed:', error);
+                        console.error((globalThis.bfTranslations?.["Match detail refresh failed:"] ?? "Match detail refresh failed:"), error);
                     } finally {
                         matchRefreshInProgress = false;
 

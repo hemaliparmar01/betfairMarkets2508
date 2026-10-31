@@ -1,3 +1,4 @@
+import './auth/dom.js';
 import { watchRacingFeed } from './racingFeed.js';
 import Echo from 'laravel-echo';
 import Pusher from 'pusher-js';
@@ -35,17 +36,13 @@ window.addEventListener('pageshow', (event) => {
     }
 });
 
-const themeToggle = document.getElementById('themeToggle');
-const themeIcon = themeToggle?.querySelector('i');
-if (localStorage.getItem('bf-markets-theme') === 'dark') {
-    document.body.classList.add('dark-mode');
-    if (themeIcon) themeIcon.className = 'fas fa-sun';
-}
-themeToggle?.addEventListener('click', function() {
-    document.body.classList.toggle('dark-mode');
-    const isDark = document.body.classList.contains('dark-mode');
-    themeIcon.className = isDark ? 'fas fa-sun' : 'fas fa-moon';
-    localStorage.setItem('bf-markets-theme', isDark ? 'dark' : 'light');
+document.querySelector('[data-locale-switch]')?.addEventListener('submit', (event) => {
+    const target = new URL(window.location.href);
+    const filter = document.querySelector('.filter-pill.active');
+    const market = document.querySelector('.market-dropdown');
+    if (filter) target.searchParams.set('type', filter.dataset.filter);
+    if (market) target.searchParams.set('market_name', market.value);
+    event.currentTarget.elements.return_to.value = target.pathname + target.search + target.hash;
 });
 
 // ===== SCROLL TOP =====
@@ -79,7 +76,7 @@ const notificationRequest = async (url, method, body, signal) => {
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     const data = await response.json();
-    if (!response.ok) throw Object.assign(new Error(data.message || 'Notification request failed.'), { status: response.status });
+    if (!response.ok) throw Object.assign(new Error(data.message || (globalThis.bfTranslations?.["Notification request failed."] ?? "Notification request failed.")), { status: response.status });
     return data;
 };
 
@@ -90,12 +87,12 @@ const updateNotificationStatus = (state, preferences = false) => {
     }
     if (!notificationPage) return;
     if (telegramAction === 'connect' && connectionExpiresAt && Date.now() >= connectionExpiresAt && !state.connected) {
-        state = { ...state, error: 'Telegram connection token expired. Please connect again.' };
+        state = { ...state, error: (globalThis.bfTranslations?.["Telegram connection token expired. Please connect again."] ?? "Telegram connection token expired. Please connect again.") };
     }
     latestNotificationState = state;
     if (state.connected || state.error) {
         if (telegramAction === 'connect') {
-            notificationFeedback.textContent = state.connected ? 'Telegram connected successfully.' : state.error;
+            notificationFeedback.textContent = state.connected ? (globalThis.bfTranslations?.["Telegram connected successfully."] ?? "Telegram connected successfully.") : state.error;
             telegramAction = null;
         }
         connectionExpiresAt = 0;
@@ -129,7 +126,7 @@ const updateNotificationStatus = (state, preferences = false) => {
             }
         }, 3000);
         connectionExpiry = setTimeout(() => {
-            updateNotificationStatus({ ...latestNotificationState, error: 'Telegram connection token expired. Please connect again.' });
+            updateNotificationStatus({ ...latestNotificationState, error: (globalThis.bfTranslations?.["Telegram connection token expired. Please connect again."] ?? "Telegram connection token expired. Please connect again.") });
         }, Math.max(0, connectionExpiresAt - Date.now()));
     }
     if (!notificationPage.isConnected) return;
@@ -144,8 +141,8 @@ const updateNotificationStatus = (state, preferences = false) => {
     if (button.parentElement !== actions) actions.append(button);
     button.className = state.connected ? button.dataset.disconnectClass : button.dataset.connectClass;
     button.disabled = telegramAction !== null;
-    button.querySelector('i').className = state.connected ? 'fas fa-unlink' : 'fas fa-link';
-    button.querySelector('[data-telegram-action-label]').textContent = telegramAction === 'connect' ? 'Connecting...' : telegramAction === 'disconnect' ? 'Disconnecting...' : state.connected ? 'Disconnect Telegram' : 'Connect Telegram';
+    button.querySelector('i').className = state.connected ? "fas fa-unlink" : "fas fa-link";
+    button.querySelector('[data-telegram-action-label]').textContent = telegramAction === 'connect' ? (globalThis.bfTranslations?.["Connecting..."] ?? "Connecting...") : telegramAction === 'disconnect' ? (globalThis.bfTranslations?.["Disconnecting..."] ?? "Disconnecting...") : state.connected ? (globalThis.bfTranslations?.["Disconnect Telegram"] ?? "Disconnect Telegram") : (globalThis.bfTranslations?.["Connect Telegram"] ?? "Connect Telegram");
     if (preferences) {
         notificationPage.querySelectorAll('[data-notification-filter]').forEach(input => { input.checked = Boolean(state.preferences[input.dataset.notificationFilter]); });
         document.getElementById('popup-enabled').checked = state.popup_enabled;
@@ -179,7 +176,7 @@ if (notificationPage && notificationState) {
                 const destination = data.url;
                 if (telegramWindow) telegramWindow.location.replace(destination);
                 else window.location.assign(destination);
-                notificationFeedback.textContent = 'Open @BFMarketsAlertsBot and press Start to finish connecting.';
+                notificationFeedback.textContent = (globalThis.bfTranslations?.["Open @BFMarketsAlertsBot and press Start to finish connecting."] ?? "Open @BFMarketsAlertsBot and press Start to finish connecting.");
                 if (!latestNotificationState.connected && telegramAction === 'connect') {
                     connectionExpiresAt = Date.now() + data.expires_in * 1000;
                     updateNotificationStatus(latestNotificationState);
@@ -188,12 +185,12 @@ if (notificationPage && notificationState) {
                 telegramAction = 'disconnect';
                 updateNotificationStatus(latestNotificationState);
                 updateNotificationStatus(await notificationRequest(notificationPage.dataset.disconnectUrl, 'DELETE'));
-                notificationFeedback.textContent = 'Telegram disconnected. Your preferences are saved.';
+                notificationFeedback.textContent = (globalThis.bfTranslations?.["Telegram disconnected. Your preferences are saved."] ?? "Telegram disconnected. Your preferences are saved.");
             } else if (button.id === 'btnSavePreferences') {
-                button.textContent = 'Saving...';
+                button.textContent = (globalThis.bfTranslations?.["Saving..."] ?? "Saving...");
                 const preferences = Object.fromEntries(Array.from(notificationPage.querySelectorAll('[data-notification-filter]'), input => [input.dataset.notificationFilter, input.checked]));
                 updateNotificationStatus(await notificationRequest(alertContainer.dataset.preferencesUrl, 'PATCH', { preferences, popup_enabled: document.getElementById('popup-enabled').checked }));
-                notificationFeedback.textContent = 'Notification preferences saved successfully.';
+                notificationFeedback.textContent = (globalThis.bfTranslations?.["Notification preferences saved successfully."] ?? "Notification preferences saved successfully.");
             } else if (button.id === 'btnTestNotification') {
                 const data = await notificationRequest(notificationPage.dataset.testUrl, 'POST', { request_id: crypto.randomUUID() });
                 notificationFeedback.textContent = data.message;
@@ -224,9 +221,9 @@ if (alertContainer) {
             const language = document.documentElement.lang.toLowerCase().split('-')[0];
             const t = alert.templates[language] || alert.templates.en;
             const popup = document.createElement('article');
-            popup.className = 'pointer-events-auto translate-x-0 rounded-2xl border border-[#c9e5f5] bg-white p-5 text-sm text-[#0b2a40] shadow-xl transition-transform duration-300 dark:border-[#365165] dark:bg-[#1f3444] dark:text-white';
+            popup.className = 'pointer-events-auto translate-x-0 rounded-2xl border border-[var(--border-brand-5)] bg-[rgb(var(--surface))] p-5 text-sm text-[rgb(var(--text-main))] shadow-xl transition-transform duration-300 dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--surface-soft))] dark:text-white';
             popup.setAttribute('role', 'status');
-            popup.innerHTML = '<header class="flex items-start justify-between gap-3 border-b border-[#c9e5f5] pb-3"><strong data-title></strong><button type="button" data-close class="text-xl" aria-label="Close">×</button></header><p data-live class="mt-3 font-bold text-red-600"></p><p data-match class="mt-2 font-bold"></p><p data-league class="mt-1 text-[#5a7d99] dark:text-[#8aaccc]"></p><p data-time class="mt-3"></p><p data-odds class="mt-2 font-bold"></p><p data-strategy class="mt-2 font-semibold"></p><footer class="mt-4 flex flex-wrap gap-3 border-t border-[#c9e5f5] pt-3"><a data-view class="rounded-full bg-[#1a6b9c] px-4 py-2 font-bold text-white"></a><button type="button" data-mute class="rounded-full border border-[#c9e5f5] px-4 py-2"></button></footer>';
+            popup.innerHTML = `<header class="flex items-start justify-between gap-3 border-b border-[var(--border-brand-5)] pb-3"><strong data-title></strong><button type="button" data-close class="text-xl" aria-label="${(globalThis.bfTranslations?.["Close"] ?? "Close")}">×</button></header><p data-live class="mt-3 font-bold text-[var(--text-red-600)]"></p><p data-match class="mt-2 font-bold"></p><p data-league class="mt-1 text-[rgb(var(--text-muted))] dark:text-[rgb(var(--text-soft))]"></p><p data-time class="mt-3"></p><p data-odds class="mt-2 font-bold"></p><p data-strategy class="mt-2 font-semibold"></p><footer class="mt-4 flex flex-wrap gap-3 border-t border-[var(--border-brand-5)] pt-3"><a data-view class="rounded-full bg-[var(--surface-primary)] px-4 py-2 font-bold text-white"></a><button type="button" data-mute class="rounded-full border border-[var(--border-brand-5)] px-4 py-2"></button></footer>`;
             popup.querySelector('[data-title]').textContent = `${alert.alert_type === 'goal' ? '⚽' : '🔔'} ${t.title}`;
             popup.querySelector('[data-live]').textContent = alert.alert_type === 'goal' ? '' : t.status_label;
             popup.querySelector('[data-match]').textContent = `⚽ ${alert.match}`;
@@ -239,9 +236,9 @@ if (alertContainer) {
             const target = new URL(alert.url, window.location.origin);
             view.href = target.origin === window.location.origin ? target.href : '/';
             const mute = popup.querySelector('[data-mute]');
-            mute.textContent = `🔕 ${t.mute_btn || (language === 'ka' ? 'აღარ ჩამაჩვენო' : "Don't show again")}`;
+            mute.textContent = `🔕 ${t.mute_btn || ((globalThis.bfTranslations?.["Don't show again"] ?? "Don't show again"))}`;
             mute.addEventListener('click', async () => {
-                if (!window.confirm(language === 'ka' ? 'გამორთოთ პლატფორმის შეტყობინებები? Telegram უცვლელი დარჩება.' : 'Disable platform pop-up alerts? Telegram preferences will stay unchanged.')) return;
+                if (!window.confirm((globalThis.bfTranslations?.["Disable platform pop-up alerts? Telegram preferences will stay unchanged."] ?? "Disable platform pop-up alerts? Telegram preferences will stay unchanged."))) return;
                 mute.disabled = true;
                 try {
                     updateNotificationStatus(await notificationRequest(alertContainer.dataset.preferencesUrl, 'PATCH', { popup_enabled: false }), true);
