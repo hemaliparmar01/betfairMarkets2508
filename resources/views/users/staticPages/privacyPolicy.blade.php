@@ -1,6 +1,6 @@
 @extends('users.layout.main')
 
-@section('title', __('Fixtures · BF Markets'))
+@section('title', __('Privacy Policy').' · BF Markets')
 
 @section('content')
 

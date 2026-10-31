@@ -307,6 +307,24 @@ body.dark-mode {
 .dark-mode .event-row.fixture-goal-active { background-color: var(--status-accent-surface) !important; }
 .event-row .fixture-goal-team { color: var(--text-goal) !important; }
 .match-score[data-score-status="Prematch" i] { color: inherit; }
+@media (max-width: 480px) {
+    .event-row .event-left { flex-wrap: wrap; }
+    .event-row .team-score-group {
+        flex-basis: 100%;
+        grid-template-columns: repeat(3, minmax(0, 1fr)) 44px repeat(3, minmax(0, 1fr));
+        row-gap: 4px;
+    }
+    .event-row .team-score-group > :nth-child(4) { grid-area: 1 / 1 / 2 / 4; }
+    .event-row .team-score-group > :nth-child(5) { grid-area: 1 / 4 / 2 / 5; }
+    .event-row .team-score-group > :nth-child(6) { grid-area: 1 / 5 / 2 / 8; }
+    .event-row .team-score-group > :nth-child(1) { grid-area: 2 / 1; }
+    .event-row .team-score-group > :nth-child(2) { grid-area: 2 / 2; }
+    .event-row .team-score-group > :nth-child(3) { grid-area: 2 / 3; }
+    .event-row .team-score-group > :nth-child(7) { grid-area: 2 / 5; }
+    .event-row .team-score-group > :nth-child(8) { grid-area: 2 / 6; }
+    .event-row .team-score-group > :nth-child(9) { grid-area: 2 / 7; }
+    .event-row .team-name > span { white-space: normal; overflow-wrap: anywhere; }
+}
 @media (prefers-reduced-motion: reduce) {
     .event-row[data-match-url] { transition: none; }
 }

@@ -1,6 +1,6 @@
 @extends('users.layout.main')
 
-@section('title', __('Fixtures · BF Markets'))
+@section('title', __('Frequently Asked Questions (FAQ)').' · BF Markets')
 
 @section('content')
     <!-- ===== PAGE HEADER ===== -->
@@ -457,17 +457,34 @@
         (function() {
             // FAQ accordion
             const faqItems = document.querySelectorAll('.faq-item');
-            faqItems.forEach(function(item) {
+            faqItems.forEach(function(item, index) {
                 const question = item.querySelector('.faq-question');
+                const answer = item.querySelector('.faq-answer');
+                answer.id = 'faq-answer-' + index;
+                answer.inert = !item.classList.contains('active');
+                answer.setAttribute('aria-hidden', String(answer.inert));
+                question.setAttribute('role', 'button');
+                question.setAttribute('tabindex', '0');
+                question.setAttribute('aria-controls', answer.id);
+                question.setAttribute('aria-expanded', String(!answer.inert));
+                question.addEventListener('keydown', function(event) {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        question.click();
+                    }
+                });
                 question.addEventListener('click', function() {
-                    // Close others (optional — remove this block to allow multiple open)
+                    item.classList.toggle('active');
                     faqItems.forEach(function(other) {
                         if (other !== item) {
                             other.classList.remove('active');
                         }
+                        const expanded = other.classList.contains('active');
+                        other.querySelector('.faq-question').setAttribute('aria-expanded', String(expanded));
+                        const otherAnswer = other.querySelector('.faq-answer');
+                        otherAnswer.inert = !expanded;
+                        otherAnswer.setAttribute('aria-hidden', String(!expanded));
                     });
-                    // Toggle current
-                    item.classList.toggle('active');
 
                     // Yandex Metrika goal
                     if (typeof ym !== 'undefined' && item.classList.contains('active')) {
