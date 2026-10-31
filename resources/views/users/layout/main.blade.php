@@ -36,6 +36,43 @@
     <script>
         document.getElementById('scroll-to-top')?.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
     </script>
+        <script>
+        (() => {
+            const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+            const savedTimezone = @json(session('local_timezone'));
+
+            if (!timezone || timezone === savedTimezone) {
+                return;
+            }
+
+            fetch(@json(route('set-timezone', [], false)), {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': @json(csrf_token()),
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: JSON.stringify({ timezone })
+            })
+                .then((response) => {
+                    if (!response.ok) {
+                        throw new Error(`Timezone request failed with status ${response.status}`);
+                    }
+
+                    return response.json();
+                })
+                .then((data) => {
+                    if (data.timezone === timezone) {
+                        window.location.reload();
+                    }
+                })
+                .catch((error) => {
+                    console.error('Unable to store timezone in session:', error);
+                });
+        })();
+    </script>
     @stack('js')
     @auth('customers')
         <div id="alert-popup-container" data-customer-id="{{ auth('customers')->id() }}" data-popup-enabled="{{ auth('customers')->user()->popup_enabled ?? true ? '1' : '0' }}" data-preferences-url="{{ route('notifications.update') }}" class="pointer-events-none fixed right-4 top-4 z-[11000] flex w-[min(420px,calc(100%-2rem))] flex-col gap-3" aria-live="polite"></div>

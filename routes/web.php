@@ -145,6 +145,17 @@ Route::prefix('baseball')->name('baseball.')->group(function () {
     Route::post('websocket-baseball', [BaseballController::class, 'websocketBaseball'])->name('websocket-baseball');
 });
 
+Route::post('/set-timezone', function (Request $request) {
+    $data = $request->timezone;
+    abort_unless(in_array($data, timezone_identifiers_list(\DateTimeZone::ALL_WITH_BC), true), 422);
+    $request->session()->put([
+        'local_timezone' => $data,
+    ]);
+    return response()->json([
+        'timezone' => $request->session()->get('local_timezone'),
+    ]);
+})->name('set-timezone');
+
 Route::get('contact-us', [ContactController::class, 'contact'])->name('contact-us');
 Route::post('contact-us', [ContactController::class, 'store'])->name('contact-us.store');
 Route::middleware('auth:customers')->group(function (): void {

@@ -730,9 +730,19 @@ if (! function_exists('withRedisLock')) {
 }
 
 if (! function_exists('getCurrentUserTimezone')) {
-    function getCurrentUserTimezone()
-    {
+    function getCurrentUserTimezone() {
+        return auth('customer')->user()?->timezone ?? fetch_local_timezone();
         return 'Asia/Kolkata';
+    }
+}
+
+if (! function_exists('fetch_local_timezone')) {
+    function fetch_local_timezone() {
+        try {
+            return session('local_timezone', config('app.timezone', 'UTC'));
+        } catch (\Throwable $th) {
+            return 'UTC';
+        }
     }
 }
 
