@@ -11,6 +11,7 @@ use Database\Factories\CustomerFactory;
 use Database\Factories\SubscriptionsFactory;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
@@ -147,6 +148,83 @@ class ManagementTest extends TestCase
             ->assertViewHas('stats', fn (array $stats): bool => $stats['totalUsers'] === 1
                 && $stats['onlineUsers'] === 1 && $stats['activeSubscriptions'] === 1
                 && $stats['expiringSoonUsers'] === 1 && $stats['activePlans'] === 1);
+    }
+
+    public function test_branding_uploads_save_all_eight_images_and_replacing_one_preserves_the_other_seven(): void
+    {
+        Storage::fake('public');
+        $images = [];
+        foreach (array_keys(config('app.branding_assets')) as $key) {
+            $images[$key] = UploadedFile::fake()->image($key.'.png', 32, 32);
+        }
+
+        $this->post('/admin/dashboard/branding', $images)->assertSessionHasNoErrors()
+            ->assertRedirect(route('admin.dashboard').'#branding-settings')->assertSessionHas('success');
+        $paths = DB::table('site_settings')->pluck('value', 'key')->all();
+        $this->assertCount(8, $paths);
+        foreach ($paths as $key => $path) {
+            Storage::disk('public')->assertExists($path);
+        }
+        $dashboard = $this->get('/admin/dashboard')->assertOk();
+        foreach ($paths as $key => $path) {
+            $dashboard->assertSee('name="'.$key.'"', false)->assertSee(Storage::disk('public')->url($path));
+        }
+
+        $this->post('/admin/dashboard/branding', ['logo_en_dark' => UploadedFile::fake()->image('replacement.png')])
+            ->assertSessionHasNoErrors();
+        $updated = DB::table('site_settings')->pluck('value', 'key')->all();
+        $this->assertNotSame($paths['logo_en_dark'], $updated['logo_en_dark']);
+        unset($paths['logo_en_dark'], $updated['logo_en_dark']);
+        $this->assertSame($paths, $updated);
+        $this->post('/admin/dashboard/branding', [])->assertSessionHasNoErrors();
+        $this->assertDatabaseCount('site_settings', 8);
+    }
+
+    public function test_branding_rejects_invalid_oversized_and_excessively_large_images_without_changing_saved_assets(): void
+    {
+        Storage::fake('public');
+        DB::table('site_settings')->insert(['key' => 'logo_en_light', 'value' => 'branding/existing.png']);
+        foreach ([
+            UploadedFile::fake()->createWithContent('bad.svg', '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'),
+            UploadedFile::fake()->image('large.png')->size(2049),
+            UploadedFile::fake()->image('wide.png', 4097, 1),
+        ] as $file) {
+            $this->post('/admin/dashboard/branding', [
+                'logo_en_light' => $file, 'logo_ka_light' => UploadedFile::fake()->image('valid.png'),
+            ])->assertSessionHasErrors('logo_en_light');
+            $this->assertDatabaseHas('site_settings', ['key' => 'logo_en_light', 'value' => 'branding/existing.png']);
+            $this->assertDatabaseCount('site_settings', 1);
+            $this->assertSame([], Storage::disk('public')->allFiles());
+        }
+    }
+
+    public function test_branding_is_admin_only_and_ignores_unrecognized_settings(): void
+    {
+        $this->post('/admin/dashboard/branding', ['not_a_branding_setting' => 'changed'])->assertSessionHasNoErrors();
+        $this->assertDatabaseCount('site_settings', 0);
+        auth('web')->logout();
+        $this->post('/admin/dashboard/branding', [])->assertRedirect(route('admin.logins.index'));
+        $this->actingAs(CustomerFactory::new()->create(), 'customers')
+            ->postJson('/admin/dashboard/branding', [])->assertUnauthorized();
+        $this->assertDatabaseCount('site_settings', 0);
+    }
+
+    public function test_frontend_branding_uses_saved_variants_and_missing_files_fall_back_to_existing_defaults(): void
+    {
+        Storage::fake('public');
+        Storage::disk('public')->put('branding/georgian.png', 'test');
+        DB::table('site_settings')->insert([
+            ['key' => 'logo_ka_light', 'value' => 'branding/georgian.png'],
+            ['key' => 'favicon_ka_dark', 'value' => 'branding/missing.png'],
+        ]);
+
+        $response = $this->withSession(['locale' => 'ka'])->get('/contact-us')->assertOk();
+        $response->assertSee('lang="ka"', false)
+            ->assertSee('data-branding="logo" src="'.Storage::disk('public')->url('branding/georgian.png').'"', false)
+            ->assertSee('data-branding="favicon" href="'.asset('favicon.png').'"', false)
+            ->assertDontSee('branding/missing.png', false);
+        $branding = $this->app['view']->make('users.layout.main')->render();
+        $this->assertStringContainsString(Storage::disk('public')->url('branding/georgian.png'), $branding);
     }
 
     public function test_all_management_routes_require_admin_authentication(): void

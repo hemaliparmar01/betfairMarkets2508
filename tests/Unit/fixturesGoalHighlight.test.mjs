@@ -6,6 +6,57 @@ import vm from 'node:vm';
 const source = readFileSync(new URL('../../resources/users/js/sports/football.js', import.meta.url), 'utf8');
 const highlightCode = source.slice(source.indexOf('const footballGoalState ='), source.indexOf('let openLiveStatsMatchId'));
 
+test('shared branding selects all eight variants immediately, retains theme handlers and falls back safely', () => {
+    const layout = readFileSync(new URL('../../resources/views/users/layout/main.blade.php', import.meta.url), 'utf8');
+    const dom = readFileSync(new URL('../../resources/users/js/auth/dom.js', import.meta.url), 'utf8');
+    const app = readFileSync(new URL('../../resources/users/js/app.js', import.meta.url), 'utf8');
+    const values = new Set();
+    const elements = Object.fromEntries(['logo', 'favicon'].map(kind => [kind, {
+        attributes: {}, getAttribute(name) { return this.attributes[name]; },
+        setAttribute(name, value) { this.attributes[name] = value; },
+    }]));
+    const assets = {};
+    for (const language of ['en', 'ka']) for (const theme of ['light', 'dark']) for (const kind of ['logo', 'favicon']) {
+        assets[`${kind}_${language}_${theme}`] = `/${kind}-${language}-${theme}.png`;
+    }
+    let toggle;
+    let submit;
+    const document = {
+        body: { classList: { contains: name => values.has(name), toggle: name => { if (values.has(name)) { values.delete(name); return false; } values.add(name); return true; } } },
+        documentElement: { lang: 'en', style: {} },
+        querySelectorAll: selector => [elements[selector.includes('favicon') ? 'favicon' : 'logo']],
+        getElementById: () => ({ querySelector: () => null, setAttribute() {}, addEventListener: (name, handler) => { toggle = handler; } }),
+        querySelector: selector => selector === '[data-locale-switch]' ? { addEventListener: (name, handler) => { submit = handler; } } : null,
+    };
+    const context = vm.createContext({ document, URL, localStorage: { setItem() {} }, window: {
+        bfBranding: { assets, defaults: { logo: '/logo.png', favicon: '/favicon.png' } },
+        location: { href: 'https://example.test/football?type=live' },
+    } });
+    vm.runInContext(layout.slice(layout.indexOf('window.updateBrandingAssets ='), layout.indexOf('</script>', layout.indexOf('window.updateBrandingAssets ='))), context);
+    for (const language of ['en', 'ka']) for (const theme of ['light', 'dark']) {
+        document.documentElement.lang = language;
+        if (theme === 'dark') values.add('dark-mode'); else values.delete('dark-mode');
+        context.window.updateBrandingAssets();
+        assert.equal(elements.logo.attributes.src, `/logo-${language}-${theme}.png`);
+        assert.equal(elements.favicon.attributes.href, `/favicon-${language}-${theme}.png`);
+    }
+    elements.logo.onerror();
+    elements.favicon.onerror();
+    assert.equal(elements.logo.attributes.src, '/logo.png');
+    assert.equal(elements.favicon.attributes.href, '/favicon.png');
+    vm.runInContext(dom.slice(dom.indexOf('const themeToggle ='), dom.indexOf('export const fixtureVersions')), context);
+    toggle();
+    assert.equal(elements.logo.attributes.src, '/logo-ka-light.png');
+    assert.equal(elements.favicon.attributes.href, '/favicon-ka-light.png');
+    vm.runInContext(app.slice(app.indexOf("document.querySelector('[data-locale-switch]')"), app.indexOf('// ===== SCROLL TOP')), context);
+    submit({ submitter: { value: 'en' }, currentTarget: { elements: { return_to: {} } } });
+    assert.equal(elements.logo.attributes.src, '/logo-en-light.png');
+    assert.equal(elements.favicon.attributes.href, '/favicon-en-light.png');
+    context.window.updateBrandingAssets('unknown');
+    assert.equal(elements.logo.attributes.src, '/logo.png');
+    assert.equal(elements.favicon.attributes.href, '/favicon.png');
+});
+
 test('all four football smart filter buttons send the selected filter and toggle back to All', async () => {
     const updates = [];
     const pills = ['fav_losing', 'prematch_drops', 'market_shock', 'fav_not_winning'].map(filter => {
@@ -231,6 +282,7 @@ test('the shared theme toggle restores saved preference before markup and switch
     let click;
     let stored = 'dark';
     const context = vm.createContext({
+        window: { updateBrandingAssets() {} },
         document: {
             body: { classList: { add: name => classes.add(name), contains: name => classes.has(name), toggle: name => { if (classes.has(name)) { classes.delete(name); return false; } classes.add(name); return true; } } },
             documentElement: { style: {} },
@@ -254,7 +306,7 @@ test('the shared theme toggle restores saved preference before markup and switch
     assert.equal(context.document.documentElement.style.colorScheme, 'dark');
     for (const path of ['../../resources/views/admin/layouts/main.blade.php', '../../resources/views/admin/auth/login.blade.php']) {
         const layout = readFileSync(new URL(path, import.meta.url), 'utf8');
-        assert.equal(layout.slice(layout.indexOf('<body')).match(/<script>([\s\S]*?)<\/script>/)[1], bootstrap);
+        assert.equal(layout.slice(layout.indexOf('<body')).match(/<script>([\s\S]*?)<\/script>/)[1], bootstrap.replace('\n        window.updateBrandingAssets();', ''));
     }
 });
 
@@ -265,6 +317,7 @@ test('theme switching remains usable with blocked storage, missing buttons and a
         let click;
         const icon = { tagName: 'SPAN', textContent: '' };
         const context = vm.createContext({
+            window: {},
             document: {
                 body: { classList: { contains: () => dark, toggle: () => { dark = !dark; return dark; } } },
                 documentElement: { style: {} },

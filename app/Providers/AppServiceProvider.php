@@ -4,7 +4,10 @@ namespace App\Providers;
 
 use App\Events\FootballSportsScoreUpdated;
 use App\Jobs\ProcessAlert;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\View;
 use Illuminate\Support\ServiceProvider;
 
@@ -24,6 +27,25 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->shareCheckAuthSubscription();
+        View::composer(['users.layout.main', 'admin.dashboard.index'], static function ($view): void {
+            $branding = request()->attributes->get('branding');
+            if ($branding === null) {
+                $paths = Schema::hasTable('site_settings')
+                    ? DB::table('site_settings')->whereIn('key', array_keys(config('app.branding_assets')))->pluck('value', 'key')->all()
+                    : [];
+                $defaults = ['logo' => asset('logo.png'), 'favicon' => asset('favicon.png')];
+                $assets = [];
+                foreach (config('app.branding_assets') as $key => $label) {
+                    $fallback = $defaults[explode('_', $key)[0]];
+                    $path = $paths[$key] ?? null;
+                    $assets[$key] = $path && Storage::disk('public')->exists($path)
+                        ? Storage::disk('public')->url($path) : $fallback;
+                }
+                $branding = ['assets' => $assets, 'defaults' => $defaults];
+                request()->attributes->set('branding', $branding);
+            }
+            $view->with('branding', $branding);
+        });
         View::composer([
             'users.sports.football.footballDetails', 'users.sports.cricket.cricketDetails',
             'users.sports.icehockey.icehockeyDetails', 'users.sports.americanfootball.americanfootballDetails',

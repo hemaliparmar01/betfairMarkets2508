@@ -5,6 +5,7 @@
                 <a href="{{ route($routeName) }}" class="block rounded-xl px-3 py-3 text-sm font-semibold {{ request()->routeIs($routeName, $routeName.'.*') ? 'bg-[var(--surface-slate-900)] text-white' : 'text-[var(--text-slate-700)] hover:bg-[var(--surface-slate-100)]' }}">{{ __($label) }}</a>
             @endif
         @endforeach
+        <a href="{{ route('admin.dashboard') }}#branding-settings" class="block rounded-xl px-3 py-3 text-sm font-semibold text-[var(--text-slate-700)] hover:bg-[var(--surface-slate-100)]">{{ __('Logo and Favicon Settings') }}</a>
         <form method="POST" action="{{ route('admin.logout') }}">
             @csrf
             <button type="submit" class="w-full rounded-xl px-3 py-3 text-left text-sm font-semibold text-[var(--text-red-700)] hover:bg-[var(--surface-red-50)]">{{ __('Logout') }}</button>

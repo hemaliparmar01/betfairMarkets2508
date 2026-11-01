@@ -38,6 +38,7 @@ else if (themeIcon) themeIcon.textContent = themeIsDark ? '☀' : '☾';
 themeToggle?.addEventListener('click', function () {
     const isDark = document.body.classList.toggle('dark-mode');
     document.documentElement.style.colorScheme = isDark ? 'dark' : 'light';
+    window.updateBrandingAssets?.();
     themeToggle.setAttribute('aria-pressed', String(isDark));
     if (themeIcon?.tagName === 'I') themeIcon.className = isDark ? 'fas fa-sun' : 'fas fa-moon';
     else if (themeIcon) themeIcon.textContent = isDark ? '☀' : '☾';

@@ -38,6 +38,7 @@ window.addEventListener('pageshow', (event) => {
 });
 
 document.querySelector('[data-locale-switch]')?.addEventListener('submit', (event) => {
+    if (event.submitter?.value) window.updateBrandingAssets?.(event.submitter.value);
     const target = new URL(window.location.href);
     const filter = document.querySelector('.filter-pill.active');
     const market = document.querySelector('.market-dropdown');

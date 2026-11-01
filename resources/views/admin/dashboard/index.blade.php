@@ -29,4 +29,29 @@
             </tbody>
         </table>
     </section>
+    <section id="branding-settings" class="mt-8 rounded-2xl border border-[var(--border-slate-200)] bg-[rgb(var(--surface))] p-5">
+        <h2 class="mb-4 text-xl font-semibold">{{ __('Logo and Favicon Settings') }}</h2>
+        @if (session('success'))
+            <p role="status" class="mb-4 text-[var(--text-green-700)]">{{ session('success') }}</p>
+        @endif
+        @if ($errors->any())
+            <ul role="alert" class="mb-4 text-[var(--text-red-700)]">
+                @foreach ($errors->all() as $error)<li>{{ $error }}</li>@endforeach
+            </ul>
+        @endif
+        <form method="POST" action="{{ route('admin.branding.update') }}" enctype="multipart/form-data">
+            @csrf
+            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                @foreach (config('app.branding_assets') as $key => $label)
+                    <div class="rounded-xl border border-[var(--border-slate-200)] p-4">
+                        <label for="{{ $key }}" class="mb-3 block text-sm font-semibold">{{ __($label) }}</label>
+                        <img src="{{ $branding['assets'][$key] }}" alt="{{ __($label) }}" class="mb-3 h-16 max-w-full object-contain" onerror="this.onerror=null;this.src=@js($branding['defaults'][explode('_', $key)[0]])">
+                        <input type="file" id="{{ $key }}" name="{{ $key }}" accept="image/png,image/jpeg,image/gif,image/webp" class="block w-full text-sm">
+                    </div>
+                @endforeach
+            </div>
+            <p class="mt-4 text-sm text-[var(--text-slate-500)]">{{ __('PNG, JPEG, GIF or WebP. Maximum 2 MB and 4096 × 4096 pixels per image. Leave a field empty to keep its current image.') }}</p>
+            <button type="submit" class="mt-4 rounded-xl bg-[var(--surface-slate-900)] px-5 py-3 text-sm font-semibold text-white">{{ __('Save Changes') }}</button>
+        </form>
+    </section>
 @endsection

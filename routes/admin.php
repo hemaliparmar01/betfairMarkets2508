@@ -15,6 +15,7 @@ Route::prefix('admin')->name('admin.')->group(function (): void {
     Route::middleware(AuthMiddleware::class)->group(function (): void {
         Route::redirect('/', '/admin/dashboard');
         Route::get('dashboard', [DashboardController::class, 'index'])->name('dashboard');
+        Route::post('dashboard/branding', [DashboardController::class, 'update'])->name('branding.update');
         Route::get('users', [UsersController::class, 'index'])->name('users');
         Route::get('users/create', [UsersController::class, 'create'])->name('users.create');
         Route::post('users', [UsersController::class, 'store'])->name('users.store');

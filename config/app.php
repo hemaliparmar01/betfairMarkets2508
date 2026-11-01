@@ -15,6 +15,17 @@ return [
 
     'name' => env('APP_NAME', 'Laravel'),
 
+    'branding_assets' => [
+        'logo_en_light' => 'Logo — English — Light Mode',
+        'logo_en_dark' => 'Logo — English — Dark Mode',
+        'logo_ka_light' => 'Logo — Georgian — Light Mode',
+        'logo_ka_dark' => 'Logo — Georgian — Dark Mode',
+        'favicon_en_light' => 'Favicon — English — Light Mode',
+        'favicon_en_dark' => 'Favicon — English — Dark Mode',
+        'favicon_ka_light' => 'Favicon — Georgian — Light Mode',
+        'favicon_ka_dark' => 'Favicon — Georgian — Dark Mode',
+    ],
+
     /*
     |--------------------------------------------------------------------------
     | Application Environment
