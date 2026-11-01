@@ -371,8 +371,17 @@ class MatchBackupTest extends TestCase
 
             public function __construct(public array $responses) {}
 
-            protected function requestFootballStatistics(string $url, ?array &$diagnostics = null, int $timeout = 6): mixed
+            protected function requestFootballStatistics(string|array $url, ?array &$diagnostics = null, int $timeout = 6): mixed
             {
+                if (is_array($url)) {
+                    $results = [];
+                    foreach ($url as $section => $endpoint) {
+                        $context = null;
+                        $results[$section] = ['response' => $this->requestFootballStatistics($endpoint, $context), 'diagnostics' => $context];
+                    }
+
+                    return $results;
+                }
                 $this->urls[] = $url;
                 $diagnostics = ['http_status' => 200];
 
@@ -552,5 +561,25 @@ class MatchBackupTest extends TestCase
         }
         $this->getJson('/horse-racing/sportsApiPro/live-feed')->assertNotFound();
         $this->getJson('/horse-racing/sportsApiPro/prematch-feed')->assertNotFound();
+    }
+
+    public function test_queued_statistics_are_not_lost_when_the_pending_lock_expires_before_execution(): void
+    {
+        Bus::fake();
+        $controller = $this->statisticsController(['https://api.sportsapipro.com/v2/football/match/123/h2h' => ['data' => ['teamDuel' => ['homeWins' => 4, 'draws' => 0, 'awayWins' => 3]]]]);
+        $this->app->instance(FootballSyncController::class, $controller);
+        $repository = new Repository(new ArrayStore);
+        $cache = Mockery::mock();
+        $cache->shouldReceive('store')->with('redis')->andReturn($repository);
+        Cache::swap($cache);
+        $this->redis['Football:matches'] = json_encode(['match-1' => $this->match(['timestamp' => time() + 3600, 'result_status' => 'Prematch'])]);
+        $controller->queueMatchStatistics();
+        $repository->forget('Football:statistics:123:pending');
+
+        $job = Bus::dispatched(CallQueuedClosure::class)->first();
+        $job->handle($this->app);
+
+        $this->assertSame(4, json_decode($this->redis['Football:matches'], true)['match-1']['prematch_statistics']['h2h']['teamDuel']['homeWins']);
+        Event::assertDispatched(FootballSportsScoreUpdated::class);
     }
 }

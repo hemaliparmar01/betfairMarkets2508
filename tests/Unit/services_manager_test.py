@@ -31,16 +31,25 @@ class ServiceManagerTest(unittest.TestCase):
 
     def test_launchd_definition_and_restart_policy(self):
         job = plistlib.loads(self.manager.definition('betfair', self.manager.instances['betfair']))
-        self.assertEqual(['/bin/sh', str(self.root / 'artisan'), 'betfair:listen'], job['ProgramArguments'])
+        self.assertEqual(['/bin/sh', '-d', 'memory_limit=1G', str(self.root / 'artisan'), 'betfair:listen'], job['ProgramArguments'])
         self.assertTrue(job['KeepAlive'])
         self.assertEqual(120, job['ExitTimeOut'])
         self.assertEqual(10, job['ThrottleInterval'])
         self.assertTrue(job['RunAtLoad'])
 
-    def test_managed_processes_inherit_php_and_queue_memory_defaults(self):
+    def test_local_managed_processes_use_finite_php_memory_and_keep_queue_memory_defaults(self):
         for name, spec in self.manager.instances.items():
             job = plistlib.loads(self.manager.definition(name, spec))
-            self.assertEqual(['/bin/sh', str(self.root / 'artisan')] + spec['command'], job['ProgramArguments'])
+            self.assertEqual(['/bin/sh', '-d', 'memory_limit=' + ('1G' if name in ['betfair', 'queue-sports-sync-prematch'] else '512M'), str(self.root / 'artisan')] + spec['command'], job['ProgramArguments'])
+
+    def test_unlimited_or_invalid_service_memory_settings_are_rejected(self):
+        for limit in ['-1', '0', '512M --bad', '']:
+            with self.subTest(limit=limit), self.assertRaisesRegex(ValueError, 'finite positive size'):
+                self.manager.definition('betfair', dict(self.manager.instances['betfair'], php_memory_limit=limit))
+        self.manager.config.pop('php_memory_limit')
+        self.manager.instances['betfair'].pop('php_memory_limit')
+        job = plistlib.loads(self.manager.definition('betfair', self.manager.instances['betfair']))
+        self.assertEqual(['/bin/sh', str(self.root / 'artisan'), 'betfair:listen'], job['ProgramArguments'])
 
     def test_production_scheduler_enabled_and_realtime_workers_configured(self):
         with patch.object(module.platform, 'system', return_value='Linux'), patch.dict(os.environ, {'SERVICES_ENV': 'production'}):
@@ -48,6 +57,7 @@ class ServiceManagerTest(unittest.TestCase):
             self.assertTrue(manager.instances['scheduler']['enabled'])
             self.assertEqual(9, len([name for name in manager.instances if name.startswith('queue-realtime-')]))
             unit = manager.definition('betfair', manager.instances['betfair']).decode()
+            self.assertNotIn('memory_limit=', unit)
             self.assertIn('Restart=always', unit)
             self.assertIn('KillSignal=SIGTERM', unit)
             self.assertIn('WantedBy=multi-user.target', unit)
@@ -78,11 +88,46 @@ class ServiceManagerTest(unittest.TestCase):
     def test_queue_arguments_match_each_dispatched_sport_queue(self):
         for sport in ['football', 'cricket', 'icehockey', 'americanfootball', 'baseball', 'basketball', 'tennis', 'greyhounds', 'horseracing']:
             command = self.manager.instances['queue-realtime-' + sport]['command']
-            self.assertEqual(['queue:work', 'sports-realtime', '--queue=realtime-' + sport, '--sleep=0', '--timeout=15', '--tries=6'], command)
+            self.assertEqual(['queue:work', 'sports-realtime', '--queue=realtime-' + sport, '--sleep=0', '--timeout=15', '--tries=6', '--max-time=3600'], command)
         self.assertIn('--timeout=60', self.manager.instances['queue-default']['command'])
         self.assertIn('--tries=3', self.manager.instances['queue-default']['command'])
         self.assertIn('--timeout=30', self.manager.instances['queue-sports-images']['command'])
         self.assertNotIn('queue-realtime-1', self.manager.instances)
+
+    def test_live_prematch_recovery_alerts_and_legacy_consumers_are_separate(self):
+        self.assertIn('--queue=sports-statistics', self.manager.instances['queue-sports-statistics']['command'])
+        self.assertNotIn('--queue=sports-statistics,sports-prematch-statistics', self.manager.instances['queue-sports-statistics']['command'])
+        for service, queue in [('queue-sports-recovery', 'sports-recovery'), ('queue-sports-timeline', 'sports-timeline'), ('queue-alerts', 'alerts'), ('queue-alerts-platform', 'alerts-platform'), ('queue-alerts-telegram', 'alerts-telegram')]:
+            self.assertIn('--queue=' + queue, self.manager.instances[service]['command'])
+        self.assertIn('database', self.manager.instances['queue-legacy-sports-statistics']['command'])
+        self.assertIn('--queue=sports-statistics', self.manager.instances['queue-legacy-sports-statistics']['command'])
+        self.assertIn('queue-sports-prematch-statistics-1', self.manager.instances)
+        self.assertIn('queue-sports-prematch-statistics-2', self.manager.instances)
+        for spec in self.manager.instances.values():
+            if spec['command'][0] == 'queue:work':
+                self.assertIn('--max-time=3600', spec['command'])
+
+    def test_multiple_workers_with_an_explicit_unit_get_distinct_linux_units(self):
+        config = json.loads((SOURCE.parent / 'config/services-manager.json').read_text())
+        config['services']['queue-realtime-football']['workers'] = 2
+        path = self.root / 'multiple-workers.json'
+        path.write_text(json.dumps(config))
+        with patch.dict(os.environ, {'SERVICES_CONFIG': str(path)}), patch.object(module.platform, 'system', return_value='Linux'):
+            manager = module.Manager()
+        names = [manager.instances['queue-realtime-football-' + str(index)]['unit'] for index in (1, 2)]
+        self.assertEqual(['bfmarkets-realtime@football-1.service', 'bfmarkets-realtime@football-2.service'], names)
+
+    def test_queue_process_matching_distinguishes_connections_and_exact_queue_names(self):
+        legacy = self.manager.instances['queue-legacy-sports-statistics']
+        redis = '123 php ' + str(self.root / 'artisan') + ' queue:work sports-realtime --queue=sports-statistics,sports-prematch-statistics'
+        with patch.object(module, 'run', return_value=subprocess.CompletedProcess([], 0, redis, '')):
+            self.manager.reject_unmanaged(legacy)
+        different = redis.replace('--queue=sports-statistics,sports-prematch-statistics', '--queue=sports-statistics-history')
+        with patch.object(module, 'run', return_value=subprocess.CompletedProcess([], 0, different, '')):
+            self.manager.reject_unmanaged(self.manager.instances['queue-sports-statistics'])
+        with patch.object(module, 'run', return_value=subprocess.CompletedProcess([], 0, redis, '')):
+            with self.assertRaisesRegex(ValueError, 'Unmanaged'):
+                self.manager.reject_unmanaged(self.manager.instances['queue-sports-statistics'])
 
     def test_loaded_service_start_is_idempotent(self):
         with patch.object(self.manager, 'inspect', return_value=(True, 'running pid=123')), patch.object(self.manager, 'verify_existing'), patch.object(module, 'run') as run:
@@ -164,7 +209,7 @@ class ServiceManagerTest(unittest.TestCase):
         with patch.object(self.manager, 'inspect', return_value=(True, 'running')), patch.object(self.manager, 'verify_existing') as verify, patch.object(self.manager, 'destination', return_value=destination), patch.object(self.manager, 'reject_unmanaged'), patch.object(module, 'run'):
             self.manager.execute('reload', 'betfair')
             verify.assert_called()
-        self.assertEqual(['/bin/sh', str(self.root / 'artisan'), 'betfair:listen'], plistlib.loads(destination.read_bytes())['ProgramArguments'])
+        self.assertEqual(['/bin/sh', '-d', 'memory_limit=1G', str(self.root / 'artisan'), 'betfair:listen'], plistlib.loads(destination.read_bytes())['ProgramArguments'])
         registry = json.loads((self.manager.state / 'managed-local.json').read_text())
         self.assertIn('definition_hash', registry['betfair'])
         with patch.object(self.manager, 'inspect', return_value=(True, 'running')), patch.object(self.manager, 'verify_existing'), patch.object(self.manager, 'destination', return_value=destination), patch.object(module, 'run'):

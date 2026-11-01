@@ -337,7 +337,7 @@ class ListenSportsApiPro extends Command
                 } finally {
                     $lock->release();
                 }
-            })->onQueue('default')->catch(static function (Throwable $e) use ($lockName, $owner): void {
+            })->onConnection('sports-realtime')->onQueue('sports-recovery')->catch(static function (Throwable $e) use ($lockName, $owner): void {
                 Cache::store('redis')->restoreLock($lockName, $owner)->release();
             });
         } catch (Throwable $e) {

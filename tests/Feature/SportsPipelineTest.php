@@ -8,6 +8,7 @@ use Amp\Websocket\Client\WebsocketConnection;
 use App\Console\Commands\ListenBetfairOdds;
 use App\Console\Commands\ListenSportsApiPro;
 use App\Events\FootballSportsScoreUpdated;
+use App\Http\Controllers\Users\Cricket\CricketSyncController;
 use App\Models\BasketballMatch;
 use App\Services\MatchBackup;
 use GuzzleHttp\Handler\MockHandler;
@@ -16,6 +17,7 @@ use GuzzleHttp\Middleware;
 use GuzzleHttp\Psr7\Response;
 use Illuminate\Bus\Dispatcher;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Request;
 use Illuminate\Queue\CallQueuedClosure;
 use Illuminate\Redis\RedisManager;
 use Illuminate\Support\Facades\Artisan;
@@ -215,6 +217,17 @@ class SportsPipelineTest extends TestCase
         $sync->mergeBetfairWebSocketData(['456' => $fixture]);
         $match = array_values(getInRedis($sport.':matches'))[0];
         $this->assertSame(1.8, array_values(array_values($match['markets'])[0])[0]['currentBackOdds']);
+        $path = $sport === 'HorseRacing' ? 'horseracing' : 'greyhounds';
+        $controllerClass = 'App\\Http\\Controllers\\Users\\'.$sport.'\\'.$sport.'Controller';
+        $request = Request::create('/', 'GET', ['type' => 'all']);
+        $this->app->instance('request', $request);
+        $groups = app($controllerClass)->{'get'.$sport.'Matches'}();
+        $html = view('users.sports.'.$path.'.'.$path.'Details', ['data' => $groups])->render();
+        preg_match_all('/<!--bf-fixture:([a-f0-9]{16}):([a-f0-9]{16})-->/', $html, $markers, PREG_SET_ORDER);
+        $this->assertCount(1, $markers);
+        $request->merge(['_fixture_versions' => array_column($markers, 2, 1)]);
+        $this->assertStringContainsString('<!--bf-fixture-reuse-->', view('users.sports.'.$path.'.'.$path.'Details', ['data' => $groups])->render());
+
         $sync->mergeBetfairWebSocketData(['456' => ['win_market_status' => 'CLOSED']]);
         $sync->mergeBetfairWebSocketData(['456' => $fixture]);
         $this->assertSame('Finished', array_values(getInRedis($sport.':matches'))[0]['result_status']);
@@ -310,7 +323,8 @@ class SportsPipelineTest extends TestCase
         $method->invoke($listener, strtolower($sport), $config, 'disconnect');
         Bus::assertDispatchedTimes(CallQueuedClosure::class, 1);
         $job = Bus::dispatched(CallQueuedClosure::class)->first();
-        $this->assertSame('default', $job->queue);
+        $this->assertSame('sports-recovery', $job->queue);
+        $this->assertSame('sports-realtime', $job->connection);
         $this->assertNotNull(Cache::store('redis')->get($sport.':sports-api-pro-live-recovery'));
         $job->handle($this->app);
         Event::assertDispatched($config['event']);
@@ -634,6 +648,25 @@ class SportsPipelineTest extends TestCase
         $this->assertSame(17, $updated['away_yellow_cards'][0]['minute']);
         $this->assertFalse($updated['away_yellow_cards'][0]['time_estimated']);
         $this->assertEquals($updated, json_decode(DB::table('football_timeline')->where('match_id', '123')->value('timeline'), true));
+        $scoreFrame = ['type' => 'update', 'channel' => 'match:123', 'data' => ['id' => 123, 'homeScore.current' => 2, 'awayScore.current' => 0]];
+        (new ReflectionMethod($listener, 'processSportsFrame'))->invokeArgs($listener, ['football', $config, $scoreFrame, $socket, &$subscriptions]);
+        $scored = getInRedis('Football:matches')['known'];
+        $this->assertCount(2, $scored['timeline']['home_goals']);
+        $estimated = $scored['timeline']['home_goals'][1];
+        $this->assertSame(20, $estimated['minute']);
+        $this->assertTrue($estimated['time_estimated']);
+        $this->assertSame($scored['timeline'], json_decode(DB::table('football_timeline')->where('match_id', '123')->value('timeline'), true));
+        $withoutTimeline = $scored;
+        unset($withoutTimeline['timeline']);
+        Redis::setex('Football:matches', 120, json_encode(['known' => $withoutTimeline], JSON_THROW_ON_ERROR));
+        $this->assertSame($scored['timeline'], getInRedis('Football:matches')['known']['timeline']);
+        $goalFrame = ['type' => 'update', 'channel' => 'match:123:incidents', 'data' => ['incidents' => [['id' => 'goal-2', 'incidentType' => 'goal', 'time' => 19, 'isHome' => true, 'homeScore' => 2, 'awayScore' => 0]]]];
+        (new ReflectionMethod($listener, 'processSportsFrame'))->invokeArgs($listener, ['football', $config, $goalFrame, $socket, &$subscriptions]);
+        $confirmed = getInRedis('Football:matches')['known'];
+        $this->assertSame(['goal-1', 'goal-2'], array_column($confirmed['timeline']['home_goals'], 'id'));
+        $this->assertSame(19, $confirmed['timeline']['home_goals'][1]['minute']);
+        $this->assertFalse($confirmed['timeline']['home_goals'][1]['time_estimated']);
+        $this->assertSame($confirmed['timeline'], json_decode(DB::table('football_timeline')->where('match_id', '123')->value('timeline'), true));
     }
 
     public function test_tennis_interruption_and_cricket_innings_break_do_not_invent_elapsed_time_expiry(): void
@@ -706,5 +739,94 @@ class SportsPipelineTest extends TestCase
         } finally {
             $server?->stop(1);
         }
+    }
+
+    public function test_concurrent_api_pool_preserves_results_errors_and_bounds_in_flight_requests(): void
+    {
+        $script = <<<'PYTHON'
+import json,time,threading
+from http.server import ThreadingHTTPServer,BaseHTTPRequestHandler
+active=0
+peak=0
+lock=threading.Lock()
+class Handler(BaseHTTPRequestHandler):
+ def log_message(self,*args):pass
+ def do_GET(self):
+  global active,peak
+  if self.path=='/metrics':
+   body=json.dumps({'peak':peak}).encode();code=200
+  else:
+   with lock:active+=1;peak=max(peak,active)
+   time.sleep(1.2 if self.path=='/slow' else .12)
+   body=(b'not-json' if self.path=='/invalid' else json.dumps({'path':self.path,'ok':self.path!='/error'}).encode())
+   code=503 if self.path=='/error' else 200
+   with lock:active-=1
+  self.send_response(code);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)
+server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+print(server.server_port,flush=True)
+server.serve_forever()
+PYTHON;
+        $server = new Process(['python3', '-u', '-c', $script]);
+        $server->start();
+        try {
+            $ready = $server->waitUntil(static fn (string $type, string $output): bool => preg_match('/^\d+$/m', $output) === 1);
+            $this->assertTrue($ready);
+            $base = 'http://127.0.0.1:'.trim($server->getOutput());
+            $requests = [];
+            foreach (['first' => '/first', 'second' => '/second', 'error' => '/error', 'invalid' => '/invalid'] as $name => $path) {
+                $requests[$name] = ['url' => $base.$path, 'key' => ['x-test' => 'isolated'], 'options' => ['timeout' => 2]];
+            }
+            $results = ApiCallPool($requests, 2);
+
+            $this->assertSame(array_keys($requests), array_keys($results));
+            $this->assertSame(['path' => '/first', 'ok' => true], $results['first']['response']);
+            $this->assertSame(503, $results['error']['diagnostics']['http_status']);
+            $this->assertNull($results['invalid']['response']);
+            $this->assertNotNull($results['invalid']['diagnostics']['json_error']);
+            $this->assertSame(2, ApiCall($base.'/metrics', [])['peak']);
+            $failures = ApiCallPool([
+                'slow' => ['url' => $base.'/slow', 'key' => [], 'options' => ['timeout' => 1]],
+                'refused' => ['url' => 'http://127.0.0.1:1/unavailable', 'key' => [], 'options' => ['timeout' => 1]],
+                'healthy' => ['url' => $base.'/healthy', 'key' => [], 'options' => ['timeout' => 2]],
+            ], 2);
+            $this->assertNull($failures['slow']['response']);
+            $this->assertSame(CURLE_OPERATION_TIMEDOUT, $failures['slow']['diagnostics']['curl_errno']);
+            $this->assertNull($failures['refused']['response']);
+            $this->assertSame(CURLE_COULDNT_CONNECT, $failures['refused']['diagnostics']['curl_errno']);
+            $this->assertSame('/healthy', $failures['healthy']['response']['path']);
+
+        } finally {
+            $server->stop(1);
+        }
+    }
+
+    public function test_scheduled_synchronization_is_deduplicated_and_released_after_worker_execution(): void
+    {
+        $controller = Mockery::mock(CricketSyncController::class);
+        $controller->shouldReceive('syncSportsApiProLiveData')->once()->andReturn([]);
+        $this->app->instance($controller::class, $controller);
+        queueSportsSynchronization($controller::class, 'syncSportsApiProLiveData');
+        queueSportsSynchronization($controller::class, 'syncSportsApiProLiveData');
+
+        Bus::assertDispatchedTimes(CallQueuedClosure::class, 1);
+        $job = Bus::dispatched(CallQueuedClosure::class)->first();
+        $this->assertSame('sports-realtime', $job->connection);
+        $this->assertSame('sports-sync-live', $job->queue);
+        $job->handle($this->app);
+        queueSportsSynchronization($controller::class, 'syncSportsApiProLiveData');
+        Bus::assertDispatchedTimes(CallQueuedClosure::class, 2);
+    }
+
+    public function test_pending_timeline_history_is_not_duplicated_while_waiting_for_a_worker(): void
+    {
+        $controller = $this->sync('Football');
+        $match = ['unique_key' => 'timeline-test', 'sportsApiPro_match_id' => '123', 'result_status' => 'Live', 'minutes_status' => '1st half', 'timestamp' => time() - 1200, 'home_score' => 0, 'away_score' => 0];
+        $controller->storeTimeline($match, payload: ['timeline_counts' => ['home_yellow_cards' => 1]]);
+        Cache::store('redis')->forget('Football:timeline-backfill:123');
+        $controller->storeTimeline($match, payload: ['timeline_counts' => ['home_yellow_cards' => 2]]);
+
+        $jobs = Bus::dispatched(CallQueuedClosure::class)->filter(static fn (CallQueuedClosure $job): bool => $job->queue === 'sports-timeline');
+        $this->assertCount(1, $jobs);
+        $this->assertSame('sports-realtime', $jobs->first()->connection);
     }
 }

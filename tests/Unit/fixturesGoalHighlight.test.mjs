@@ -6,6 +6,32 @@ import vm from 'node:vm';
 const source = readFileSync(new URL('../../resources/users/js/sports/football.js', import.meta.url), 'utf8');
 const highlightCode = source.slice(source.indexOf('const footballGoalState ='), source.indexOf('let openLiveStatsMatchId'));
 
+test('all four football smart filter buttons send the selected filter and toggle back to All', async () => {
+    const updates = [];
+    const pills = ['fav_losing', 'prematch_drops', 'market_shock', 'fav_not_winning'].map(filter => {
+        const values = new Set();
+        return { dataset: { filter }, classList: { contains: value => values.has(value), add: value => values.add(value), remove: value => values.delete(value) } };
+    });
+    const context = vm.createContext({
+        document: {
+            querySelectorAll: () => pills,
+            querySelector: selector => selector.includes('.filter-pill') ? pills.find(pill => pill.classList.contains('active')) : { value: 'MATCH_ODDS' },
+        },
+        callFixtureData: (filters, options) => updates.push({ filters, options }),
+    });
+    vm.runInContext(source.slice(source.indexOf('const getSelectedFilters ='), source.indexOf('const getSelectedFilters =') + source.slice(source.indexOf('const getSelectedFilters =')).indexOf('\n};') + 4), context);
+    vm.runInContext(source.slice(source.indexOf('const pills ='), source.indexOf("document.querySelectorAll('.market-dropdown')")), context);
+
+    for (const pill of pills) {
+        await pill.onclick();
+        assert.equal(updates.at(-1).filters.type, pill.dataset.filter);
+        assert.equal(updates.at(-1).options.reset, true);
+        assert.equal(pills.filter(item => item.classList.contains('active')).length, 1);
+    }
+    await pills.at(-1).onclick();
+    assert.equal(updates.at(-1).filters.type, null);
+});
+
 test('football realtime handler registers once and coalesces a burst while preserving selected filters', () => {
     const subscriptions = [];
     const timers = new Map();
@@ -214,7 +240,7 @@ test('the shared theme toggle restores saved preference before markup and switch
     });
     vm.runInContext(bootstrap, context);
     assert.equal(classes.has('dark-mode'), true);
-    vm.runInContext(module.slice(module.indexOf('const themeToggle =')), context);
+    vm.runInContext(module.slice(module.indexOf('const themeToggle ='), module.indexOf('export const fixtureVersions')), context);
     assert.equal(attributes['aria-pressed'], 'true');
     assert.equal(icon.className, 'fas fa-sun');
     click();
@@ -246,7 +272,7 @@ test('theme switching remains usable with blocked storage, missing buttons and a
             },
             localStorage: { setItem: () => { throw new Error('Storage blocked'); } },
         });
-        vm.runInContext(module.slice(module.indexOf('const themeToggle =')), context);
+        vm.runInContext(module.slice(module.indexOf('const themeToggle ='), module.indexOf('export const fixtureVersions')), context);
         if (hasButton) {
             assert.equal(icon.textContent, '☾');
             assert.doesNotThrow(() => click());
@@ -282,5 +308,27 @@ test('shared theme aliases are acyclic and preserve readable semantic text, stat
         const luminances = [foreground, background].map(key => (dark[key].startsWith('#') ? [...(dark[key].length === 4 ? dark[key].slice(1).split('').map(channel => channel + channel).join('') : dark[key].slice(1)).matchAll(/../g)].map(match => parseInt(match[0], 16)) : dark[key].split(' ').map(Number)).map(channel => channel / 255).map(channel => channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4).reduce((sum, channel, index) => sum + channel * [.2126, .7152, .0722][index], 0));
         const ratio = (Math.max(...luminances) + .05) / (Math.min(...luminances) + .05);
         assert.ok(ratio >= 4.5, `${foreground} on ${background}: ${ratio}`);
+    }
+});
+
+test('all sports refresh immediately on the first event while retaining their existing burst rate limits', () => {
+    for (const sport of ['cricket', 'icehockey', 'americanfootball', 'baseball', 'basketball', 'tennis', 'greyhounds', 'horseracing']) {
+        const file = readFileSync(new URL(`../../resources/users/js/sports/${sport}.js`, import.meta.url), 'utf8');
+        const code = file.slice(file.indexOf('    function scheduleRefresh() {'), file.indexOf('    async function load('));
+        const timers = [];
+        let now = 1000;
+        const context = vm.createContext({ Date: { now: () => now }, window: { setTimeout: (callback, delay) => { timers.push({ callback, delay }); return timers.length; } } });
+        vm.runInContext('let refreshTimer=null, loading=false, refreshPending=false, lastRefreshStartedAt=null; const refreshInterval=2000; function load(){lastRefreshStartedAt=Date.now();}', context);
+        vm.runInContext(code, context);
+        vm.runInContext('scheduleRefresh()', context);
+        assert.equal(timers[0].delay, 0, sport);
+        timers.shift().callback();
+        now += 200;
+        for (let index = 0; index < 10; index++) vm.runInContext('scheduleRefresh()', context);
+        assert.equal(timers.length, 1, sport);
+        assert.equal(timers[0].delay, ['greyhounds', 'horseracing'].includes(sport) ? 1800 : 500, sport);
+        vm.runInContext('loading=true; scheduleRefresh()', context);
+        assert.equal(vm.runInContext('refreshPending', context), true, sport);
+        assert.equal(timers.length, 1, sport);
     }
 });

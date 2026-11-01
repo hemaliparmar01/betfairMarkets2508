@@ -41,6 +41,10 @@
             </span>
         </div>
         @foreach ($matches['matches'] as $event)
+        <!--bf-fixture:{{ $event['_fixture_key'] }}:{{ $event['_fixture_version'] }}-->
+        @if ($event['_fixture_reuse'])
+            <!--bf-fixture-reuse-->
+        @else
             @php
                 $liveStats = $event['live_stats'] ?? [];
                 $preferIncidents = ($event['card_counts_from_timeline'] ?? false) || ($event['card_counts_updated_at'] ?? 0) > ($event['card_stats_updated_at'] ?? 0);
@@ -602,6 +606,8 @@
                     </div>
                 </div>
             @endif
+                @endif
+        <!--bf-fixture-end-->
         @endforeach
     @endforeach
     @if ($isPrematchDrops && ! ($append ?? false) && count($data) > 0)

@@ -25,7 +25,7 @@ Schedule::call(static function (): void {
     }
 })->name('customer-alerts')->everyMinute()->withoutOverlapping(2);
 
-Schedule::command('sports:process-match-backups --scheduled')->everyMinute()->withoutOverlapping(5);
+Schedule::command('sports:process-match-backups --scheduled')->runInBackground()->everyMinute()->withoutOverlapping(5);
 
 Schedule::call(function () {
     app(FootballSyncController::class)->queueMatchStatistics();
@@ -36,131 +36,131 @@ Schedule::call(function () {
 })->name('football-v6-live-statistics')->everyMinute()->withoutOverlapping(2);
 
 Schedule::call(function () {
-    app(FootballSyncController::class)->syncBetFairLiveData();
+    queueSportsSynchronization(FootballSyncController::class, 'syncBetFairLiveData');
 })->name('football-betfair-live')->everyFiveMinutes()->withoutOverlapping(2);
 
 Schedule::call(function () {
-    app(FootballSyncController::class)->syncSportsApiProLiveData();
+    queueSportsSynchronization(FootballSyncController::class, 'syncSportsApiProLiveData');
 })->name('football-sportApiPro-live')->everyFiveMinutes()->withoutOverlapping(2);
 
 Schedule::call(function () {
-    app(FootballSyncController::class)->syncBetFairPrematchData();
+    queueSportsSynchronization(FootballSyncController::class, 'syncBetFairPrematchData');
 })->name('football-betfair-prematch')->everyFifteenMinutes()->withoutOverlapping(10);
 
 Schedule::call(function () {
-    app(FootballSyncController::class)->syncSportsApiProPrematchData();
+    queueSportsSynchronization(FootballSyncController::class, 'syncSportsApiProPrematchData');
 })->name('football-sportApiPro-prematch')->everyFifteenMinutes()->withoutOverlapping(10);
 
 Schedule::call(function () {
-    app(CricketSyncController::class)->syncBetFairLiveData();
+    queueSportsSynchronization(CricketSyncController::class, 'syncBetFairLiveData');
 })->name('cricket-betfair-live')->everyFiveMinutes()->withoutOverlapping(2);
 
 Schedule::call(function () {
-    app(CricketSyncController::class)->syncSportsApiProLiveData();
+    queueSportsSynchronization(CricketSyncController::class, 'syncSportsApiProLiveData');
 })->name('cricket-sportApiPro-live')->everyFiveMinutes()->withoutOverlapping(2);
 
 Schedule::call(function () {
-    app(CricketSyncController::class)->syncBetFairPrematchData();
+    queueSportsSynchronization(CricketSyncController::class, 'syncBetFairPrematchData');
 })->name('cricket-betfair-prematch')->everyFifteenMinutes()->withoutOverlapping(10);
 
 Schedule::call(function () {
-    app(CricketSyncController::class)->syncSportsApiProPrematchData();
+    queueSportsSynchronization(CricketSyncController::class, 'syncSportsApiProPrematchData');
 })->name('cricket-sportApiPro-prematch')->everyFifteenMinutes()->withoutOverlapping(10);
 
 Schedule::call(function () {
-    app(IceHockeySyncController::class)->syncBetFairLiveData();
+    queueSportsSynchronization(IceHockeySyncController::class, 'syncBetFairLiveData');
 })->name('icehockey-betfair-live')->everyFiveMinutes()->withoutOverlapping(2);
 
 Schedule::call(function () {
-    app(IceHockeySyncController::class)->syncSportsApiProLiveData();
+    queueSportsSynchronization(IceHockeySyncController::class, 'syncSportsApiProLiveData');
 })->name('icehockey-sportApiPro-live')->everyFiveMinutes()->withoutOverlapping(2);
 
 Schedule::call(function () {
-    app(IceHockeySyncController::class)->syncBetFairPrematchData();
+    queueSportsSynchronization(IceHockeySyncController::class, 'syncBetFairPrematchData');
 })->name('icehockey-betfair-prematch')->everyFifteenMinutes()->withoutOverlapping(10);
 
 Schedule::call(function () {
-    app(IceHockeySyncController::class)->syncSportsApiProPrematchData();
+    queueSportsSynchronization(IceHockeySyncController::class, 'syncSportsApiProPrematchData');
 })->name('icehockey-sportApiPro-prematch')->everyFifteenMinutes()->withoutOverlapping(10);
 
 Schedule::call(function () {
-    app(AmericanFootballSyncController::class)->syncBetFairLiveData();
+    queueSportsSynchronization(AmericanFootballSyncController::class, 'syncBetFairLiveData');
 })->name('americanfootball-betfair-live')->everyFiveMinutes()->withoutOverlapping(2);
 
 Schedule::call(function () {
-    app(AmericanFootballSyncController::class)->syncSportsApiProLiveData();
+    queueSportsSynchronization(AmericanFootballSyncController::class, 'syncSportsApiProLiveData');
 })->name('americanfootball-sportApiPro-live')->everyFiveMinutes()->withoutOverlapping(2);
 
 Schedule::call(function () {
-    app(AmericanFootballSyncController::class)->syncBetFairPrematchData();
+    queueSportsSynchronization(AmericanFootballSyncController::class, 'syncBetFairPrematchData');
 })->name('americanfootball-betfair-prematch')->everyFifteenMinutes()->withoutOverlapping(10);
 
 Schedule::call(function () {
-    app(AmericanFootballSyncController::class)->syncSportsApiProPrematchData();
+    queueSportsSynchronization(AmericanFootballSyncController::class, 'syncSportsApiProPrematchData');
 })->name('americanfootball-sportApiPro-prematch')->everyFifteenMinutes()->withoutOverlapping(10);
 
 Schedule::call(function () {
-    app(BaseballSyncController::class)->syncBetFairLiveData();
+    queueSportsSynchronization(BaseballSyncController::class, 'syncBetFairLiveData');
 })->name('baseball-betfair-live')->everyFiveMinutes()->withoutOverlapping(2);
 
 Schedule::call(function () {
-    app(BaseballSyncController::class)->syncSportsApiProLiveData();
+    queueSportsSynchronization(BaseballSyncController::class, 'syncSportsApiProLiveData');
 })->name('baseball-sportApiPro-live')->everyFiveMinutes()->withoutOverlapping(2);
 
 Schedule::call(function () {
-    app(BaseballSyncController::class)->syncBetFairPrematchData();
+    queueSportsSynchronization(BaseballSyncController::class, 'syncBetFairPrematchData');
 })->name('baseball-betfair-prematch')->everyFifteenMinutes()->withoutOverlapping(10);
 
 Schedule::call(function () {
-    app(BaseballSyncController::class)->syncSportsApiProPrematchData();
+    queueSportsSynchronization(BaseballSyncController::class, 'syncSportsApiProPrematchData');
 })->name('baseball-sportApiPro-prematch')->everyFifteenMinutes()->withoutOverlapping(10);
 
 Schedule::call(function () {
-    app(BasketballSyncController::class)->syncBetFairLiveData();
+    queueSportsSynchronization(BasketballSyncController::class, 'syncBetFairLiveData');
 })->name('basketball-betfair-live')->everyFiveMinutes()->withoutOverlapping(2);
 
 Schedule::call(function () {
-    app(BasketballSyncController::class)->syncSportsApiProLiveData();
+    queueSportsSynchronization(BasketballSyncController::class, 'syncSportsApiProLiveData');
 })->name('basketball-sportApiPro-live')->everyFiveMinutes()->withoutOverlapping(2);
 
 Schedule::call(function () {
-    app(BasketballSyncController::class)->syncBetFairPrematchData();
+    queueSportsSynchronization(BasketballSyncController::class, 'syncBetFairPrematchData');
 })->name('basketball-betfair-prematch')->everyFifteenMinutes()->withoutOverlapping(10);
 
 Schedule::call(function () {
-    app(BasketballSyncController::class)->syncSportsApiProPrematchData();
+    queueSportsSynchronization(BasketballSyncController::class, 'syncSportsApiProPrematchData');
 })->name('basketball-sportApiPro-prematch')->everyFifteenMinutes()->withoutOverlapping(10);
 
 Schedule::call(function () {
-    app(TennisSyncController::class)->syncBetFairLiveData();
+    queueSportsSynchronization(TennisSyncController::class, 'syncBetFairLiveData');
 })->name('tennis-betfair-live')->everyFiveMinutes()->withoutOverlapping(2);
 
 Schedule::call(function () {
-    app(TennisSyncController::class)->syncSportsApiProLiveData();
+    queueSportsSynchronization(TennisSyncController::class, 'syncSportsApiProLiveData');
 })->name('tennis-sportApiPro-live')->everyFiveMinutes()->withoutOverlapping(2);
 
 Schedule::call(function () {
-    app(TennisSyncController::class)->syncBetFairPrematchData();
+    queueSportsSynchronization(TennisSyncController::class, 'syncBetFairPrematchData');
 })->name('tennis-betfair-prematch')->everyFifteenMinutes()->withoutOverlapping(10);
 
 Schedule::call(function () {
-    app(TennisSyncController::class)->syncSportsApiProPrematchData();
+    queueSportsSynchronization(TennisSyncController::class, 'syncSportsApiProPrematchData');
 })->name('tennis-sportApiPro-prematch')->everyFifteenMinutes()->withoutOverlapping(10);
 
 Schedule::call(function () {
-    app(GreyhoundsSyncController::class)->syncBetFairPrematchData();
+    queueSportsSynchronization(GreyhoundsSyncController::class, 'syncBetFairPrematchData');
 })->name('greyhounds-betfair-feed')->everyFiveMinutes()->withoutOverlapping(2);
 
 Schedule::call(function () {
-    app(HorseRacingSyncController::class)->syncBetFairPrematchData();
+    queueSportsSynchronization(HorseRacingSyncController::class, 'syncBetFairPrematchData');
 })->name('horseracing-betfair-feed')->everyFiveMinutes()->withoutOverlapping(2);
 
 Schedule::call(function () {
-    app(HorseRacingSyncController::class)->syncSportsApiProLiveData();
+    queueSportsSynchronization(HorseRacingSyncController::class, 'syncSportsApiProLiveData');
 })->name('horseracing-sports-live')->everyFiveMinutes()->withoutOverlapping(2);
 
 Schedule::call(function () {
-    app(HorseRacingSyncController::class)->syncSportsApiProPrematchData();
+    queueSportsSynchronization(HorseRacingSyncController::class, 'syncSportsApiProPrematchData');
 })->name('horseracing-sports-prematch')->everyFifteenMinutes()->withoutOverlapping(2);
 
 Schedule::command('subscriptions:process')->everyFiveMinutes()->withoutOverlapping(10);

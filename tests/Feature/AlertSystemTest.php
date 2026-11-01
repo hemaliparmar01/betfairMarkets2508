@@ -216,6 +216,8 @@ class AlertSystemTest extends TestCase
         $this->assertDatabaseMissing('alert_deliveries', ['alert_id' => $id, 'customer_id' => $platform->id, 'channel' => 'telegram']);
         $this->assertDatabaseMissing('alert_deliveries', ['alert_id' => $id, 'customer_id' => $neither->id]);
         $this->assertDatabaseMissing('alert_deliveries', ['alert_id' => $id, 'customer_id' => $expired->id]);
+        Bus::assertDispatched(ProcessAlert::class, static fn (ProcessAlert $job): bool => $job->task === 'deliver' && $job->queue === 'alerts-platform');
+        Bus::assertDispatched(ProcessAlert::class, static fn (ProcessAlert $job): bool => $job->task === 'deliver' && $job->queue === 'alerts-telegram');
     }
 
     public function test_delivery_rechecks_expiry_disconnect_and_preferences_before_sending(): void

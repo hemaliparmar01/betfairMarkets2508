@@ -1,3 +1,4 @@
+import { fixtureVersions, updateFixtureRows } from '../auth/dom.js';
 import { renderOddsHistory } from '../oddsHistory';
 let oddsTooltip = null;
 const hideOddsTooltip = () => { oddsTooltip?.remove(); oddsTooltip = null; };
@@ -40,6 +41,7 @@ if (dashboard) {
     let refreshPending = false;
     let pendingAction = null;
     let refreshTimer = null;
+    let lastRefreshStartedAt = null;
     let activeModal = null;
     let highlightTimer = null;
     const escape = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
@@ -53,8 +55,10 @@ if (dashboard) {
         notice.textContent = message;
     };
     function scheduleRefresh() {
+        if (loading) { refreshPending = true; return; }
         if (refreshTimer !== null) return;
-        refreshTimer = window.setTimeout(() => { refreshTimer = null; load(); }, 700);
+        const delay = lastRefreshStartedAt === null ? 0 : Math.max(0, 700 - (Date.now() - lastRefreshStartedAt));
+        refreshTimer = window.setTimeout(() => { refreshTimer = null; load(); }, delay);
     }
     async function load({ append = false, reset = false, prediction = null } = {}) {
         if (reset && !markets) {
@@ -65,17 +69,20 @@ if (dashboard) {
         if (document.visibilityState !== 'visible' && !reset && !prediction) { refreshPending = true; return; }
         if (append && loader()?.dataset.hasMore !== 'true') return;
         loading = true;
+        lastRefreshStartedAt = Date.now();
         const page = append ? Number(loader().dataset.nextPage) : 1;
         const perPage = append || reset ? 20 : loadedPages * 20;
         const params = { type: selectedFilter, market_name: dropdown?.value ?? '', page, per_page: perPage, append };
         if (prediction) params.prediction = prediction;
+        if (!append && !reset && !prediction && !markets) params._fixture_versions = fixtureVersions(content());
+        if (params._fixture_versions && dashboard.dataset.sourceMethod !== 'POST' && JSON.stringify(params._fixture_versions).length > 2500) delete params._fixture_versions;
         const text = loader()?.querySelector('[data-lazy-loader-text]');
         if (text) text.textContent = (globalThis.bfTranslations?.["Loading matches…"] ?? "Loading matches…");
         try {
             const url = new URL(dashboard.dataset.sourceUrl, window.location.origin);
             const options = { headers: { Accept: 'application/json', 'X-CSRF-TOKEN': csrf, 'X-Requested-With': 'XMLHttpRequest' }, cache: 'no-store' };
             if (dashboard.dataset.sourceMethod === 'POST') { options.method = 'POST'; options.headers['Content-Type'] = 'application/json'; options.body = JSON.stringify(params); }
-            else Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value === true ? '1' : value === false ? '0' : String(value)));
+            else Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value === true ? '1' : value === false ? '0' : typeof value === 'object' ? JSON.stringify(value) : String(value)));
             const response = await fetch(url, options);
             if (response.status === 401) { window.location.assign(dashboard.dataset.loginUrl); return; }
             if (!response.ok) throw new Error((globalThis.bfTranslations?.["Unable to load matches. Please try again."] ?? "Unable to load matches. Please try again."));
@@ -88,14 +95,19 @@ if (dashboard) {
                 const fragment = document.createElement('template');
                 fragment.innerHTML = markets ? `<table><tbody>${result.html}</tbody></table>` : result.html;
                 const nodes = markets ? [...fragment.content.querySelector('tbody').children] : [...fragment.content.children];
-                if (!markets && nodes[0]?.dataset.leagueHeader === [...target.querySelectorAll('[data-league-header]')].at(-1)?.dataset.leagueHeader) nodes.shift();
-                nodes.forEach((node) => target.append(node));
+                if (!markets && nodes[0]?.dataset.leagueHeader === [...target.querySelectorAll('[data-league-header]')].at(-1)?.dataset.leagueHeader) nodes.shift()?.remove();
+                if (!markets) target.append(...(fragment.content.querySelector('.fixtures-container') ?? fragment.content).childNodes);
+                else nodes.forEach((node) => target.append(node));
                 loadedPages++;
             } else {
-                if (markets) target.innerHTML = result.html;
+                if (markets) {
+                    const fragment = document.createElement('template');
+                    fragment.innerHTML = `<table><tbody>${result.html}</tbody></table>`;
+                    updateFixtureRows(target, fragment.content.querySelector('tbody'));
+                }
                 else {
                     const fragment = document.createElement('template'); fragment.innerHTML = result.html;
-                    target.replaceChildren(...fragment.content.querySelector('.fixtures-container').childNodes);
+                    updateFixtureRows(target, fragment.content.querySelector('.fixtures-container'));
                 }
                 if (reset) loadedPages = 1;
             }
@@ -221,7 +233,9 @@ if (dashboard) {
         }
         hideOddsTooltip();
         panel.dataset.statistics = String(activeModal.action === 'stats');
-        panel.innerHTML = activeModal.action === 'stats' ? body : `<div class="mb-5 flex items-center justify-between gap-3"><h2 id="basketballModalTitle" class="text-lg font-extrabold">${escape(title)}</h2><button type="button" data-action="close-modal" aria-label="${(globalThis.bfTranslations?.["Close"] ?? "Close")}" class="px-2 text-2xl">×</button></div>${body}`;
+        const modalFragment = document.createElement('template');
+        modalFragment.innerHTML = activeModal.action === 'stats' ? body : `<div class="mb-5 flex items-center justify-between gap-3"><h2 id="basketballModalTitle" class="text-lg font-extrabold">${escape(title)}</h2><button type="button" data-action="close-modal" aria-label="${(globalThis.bfTranslations?.["Close"] ?? "Close")}" class="px-2 text-2xl">×</button></div>${body}`;
+        updateFixtureRows(panel, modalFragment.content);
         (panel.querySelector('[data-basketball-statistics-scroll]') ?? panel).scrollTop = scrollTop;
         modal.classList.remove('hidden');
         modal.classList.add('flex');

@@ -94,6 +94,100 @@ class FixturesAuditTest extends TestCase
                     }
                 }
                 $this->assertSame($expectedId === null ? [] : [$expectedId], $ids, $sport.' '.$filter);
+                if ($expectedId !== null) {
+                    $viewName = 'users.sports.'.strtolower($sport).'.'.strtolower($sport).'Details';
+                    $html = view($viewName, ['data' => $groups])->render();
+                    preg_match_all('/<!--bf-fixture:([a-f0-9]{16}):([a-f0-9]{16})-->/', $html, $markers, PREG_SET_ORDER);
+                    $this->assertCount(1, $markers, $sport.' fixture marker');
+                    $versions = array_column($markers, 2, 1);
+                    $request->merge(['_fixture_versions' => $versions]);
+                    $patch = view($viewName, ['data' => $groups])->render();
+                    $this->assertStringContainsString('<!--bf-fixture-reuse-->', $patch, $sport);
+                    $this->assertStringNotContainsString('class="event-row', $patch, $sport);
+                    $changed = $groups;
+                    $groupKey = array_key_first($changed);
+                    $changed[$groupKey]['matches'][0]['home_score'] = 9;
+                    $changed[$groupKey]['matches'][0]['score'] = '9 - 0';
+                    $updated = view($viewName, ['data' => $changed])->render();
+                    $this->assertStringNotContainsString('<!--bf-fixture-reuse-->', $updated, $sport.' changed row');
+                    if ($sport === 'Football' && $filter === 'live') {
+                        $locale = app()->getLocale();
+                        app()->setLocale('ka');
+                        $this->assertStringNotContainsString('<!--bf-fixture-reuse-->', view($viewName, ['data' => $groups])->render());
+                        app()->setLocale($locale);
+                        $this->assertStringNotContainsString('<!--bf-fixture-reuse-->', view($viewName, ['data' => $groups, 'checkAuthAndSubscription' => ['is_authenticated' => true, 'has_active_subscription' => true, 'display_odds' => true]])->render());
+                    }
+                    $directory = getenv('BFMARKETS_TEST_BROWSER_DIR');
+                    if ($sport === 'Basketball' && $filter === 'live' && $directory && str_starts_with($directory, '/private/tmp/bfmarkets-sports-tests-')) {
+                        $request->merge(['_fixture_versions' => []]);
+                        $two = $groups;
+                        $second = $two[$groupKey]['matches'][0];
+                        $second['unique_key'] = 'second';
+                        $second['sportsApiPro_match_id'] = '103';
+                        $second['team1'] = 'Second Home';
+                        $two[$groupKey]['matches'][] = $second;
+                        $initial = view($viewName, ['data' => $two])->render();
+                        preg_match_all('/<!--bf-fixture:([a-f0-9]{16}):([a-f0-9]{16})-->/', $initial, $twoMarkers, PREG_SET_ORDER);
+                        $request->merge(['_fixture_versions' => array_column($twoMarkers, 2, 1)]);
+                        $same = view($viewName, ['data' => $two])->render();
+                        $two[$groupKey]['matches'][0]['score'] = '9 - 0';
+                        $two[$groupKey]['matches'][0]['home_score'] = 9;
+                        $different = view($viewName, ['data' => $two])->render();
+                        file_put_contents($directory.'/fixture-responses.json', json_encode(['initial' => $initial, 'same' => $same, 'different' => $different], JSON_THROW_ON_ERROR));
+                    }
+
+                    $request->merge(['_fixture_versions' => []]);
+                }
+            }
+        }
+    }
+
+    public function test_football_filters_keep_same_named_competitions_in_their_own_country_groups(): void
+    {
+        Schema::create('prediction_votes', function (Blueprint $table): void {
+            $table->id();
+            $table->string('sport');
+            $table->string('match_id');
+            $table->string('poll');
+            $table->string('value');
+        });
+        $start = time() - 600;
+        $base = ['unique_key' => 'england-1', 'timestamp' => $start, 'result_status' => 'Live', 'minutes_status' => 'Live', 'sportsApiPro_match_id' => '101', 'betfair_match_id' => '201', 'tournament' => 'Premier League', 'tournament_country' => 'England', 'tournament_id' => 17, 'team1' => 'Chelsea', 'team2' => 'Manchester United', 'home_score' => 0, 'away_score' => 0, 'markets' => []];
+        $matches = [
+            $base,
+            array_replace($base, ['unique_key' => 'singapore-1', 'sportsApiPro_match_id' => '102', 'tournament_country' => 'Singapore', 'tournament_id' => 679, 'team1' => 'Hougang United', 'team2' => 'Young Lions']),
+            array_replace($base, ['unique_key' => 'england-2', 'sportsApiPro_match_id' => '103', 'timestamp' => $start + 60, 'team1' => 'Arsenal']),
+        ];
+        $cache = [];
+        Redis::shouldReceive('get')->andReturnUsing(static function (string $key) use (&$cache): ?string {
+            return $key === 'Football:matches' ? json_encode($cache) : null;
+        });
+
+        foreach ([true, false] as $withCompetitionIds) {
+            $cache = $matches;
+            if (! $withCompetitionIds) {
+                foreach ($cache as &$match) {
+                    unset($match['tournament_id']);
+                }
+                unset($match);
+            }
+            foreach ([null, 'all', 'live', 'by_time'] as $filter) {
+                $this->app->instance('request', Request::create('/', 'GET', $filter === null ? [] : ['type' => $filter]));
+
+                $groups = $this->football()->getFootballMatches();
+
+                $this->assertCount($filter === 'by_time' ? 3 : 2, $groups, (string) $filter);
+                $countries = [];
+                foreach ($groups as $group) {
+                    foreach ($group['matches'] as $match) {
+                        $countries[$match['unique_key']] = $group['tournament_country'];
+                    }
+                }
+                ksort($countries);
+                $this->assertSame(['england-1' => 'England', 'england-2' => 'England', 'singapore-1' => 'Singapore'], $countries);
+                if ($filter === 'by_time') {
+                    $this->assertSame([$start, $start, $start + 60], array_column(array_merge(...array_column($groups, 'matches')), 'timestamp'));
+                }
             }
         }
     }
@@ -145,6 +239,15 @@ class FixturesAuditTest extends TestCase
             }
             sort($ids);
             $this->assertSame($expected, $ids, $filter);
+            if (in_array($filter, ['fav_losing', 'fav_not_winning', 'prematch_drops', 'market_shock'], true)) {
+                foreach (['filterFootball', 'websocketFootball'] as $method) {
+                    $response = app(FootballController::class)->{$method}()->getData(true);
+                    preg_match_all('/data-sportApi-match-id="([^"]+)"/', $response['html'], $rendered);
+                    $renderedIds = array_values(array_unique($rendered[1]));
+                    sort($renderedIds);
+                    $this->assertSame($expected, $renderedIds, $filter.' '.$method);
+                }
+            }
             if ($filter === 'market_shock') {
                 $html = view('users.sports.football.footballDetails', ['data' => $groups, 'append' => false])->render();
                 $this->assertSame(2, substr_count($html, 'data-shock-alert='));
@@ -159,6 +262,42 @@ class FixturesAuditTest extends TestCase
                 }
                 $this->assertTrue(str_contains($html, 'data-quick-stats-panel="1"'));
             }
+        }
+    }
+
+    public function test_football_smart_filter_boundaries_do_not_invent_missing_odds_or_retain_expired_shocks(): void
+    {
+        $controller = $this->football();
+        $base = ['result_status' => 'Live', 'minutes_status' => '1st half', 'timestamp' => time() - 29 * 60, 'home_score' => 0, 'away_score' => 1, 'bet365_prematch' => ['favorite_odds' => 1.8, 'favorite_side' => 'home']];
+        $runner = ['initialBackOdds' => 2.0, 'monitoring_baseline_version' => 1, 'opening_odds_source' => 'first_observed', 'initialBackOddsTimestamp' => time() - 1500, 'prematch_drop_triggered' => true, 'market_shock_detected_at' => time()];
+        $prematch = array_replace($base, ['result_status' => 'Prematch', 'markets' => ['m' => [$runner]]]);
+        $cases = [
+            ['fav_losing', $base, true],
+            ['fav_losing', array_replace($base, ['home_score' => 1]), false],
+            ['fav_losing', array_replace($base, ['home_score' => null]), false],
+            ['fav_losing', array_replace($base, ['bet365_prematch' => []]), false],
+            ['fav_losing', array_replace($base, ['bet365_prematch' => ['favorite_odds' => 2.10, 'favorite_side' => 'home']]), true],
+            ['fav_losing', array_replace($base, ['bet365_prematch' => ['favorite_odds' => 2.11, 'favorite_side' => 'home']]), false],
+            ['fav_losing', array_replace($base, ['home_score' => 2, 'bet365_prematch' => ['favorite_odds' => 1.8, 'favorite_side' => 'away']]), true],
+            ['fav_not_winning', array_replace($base, ['home_score' => 1]), true],
+            ['fav_not_winning', array_replace($base, ['timestamp' => time() - 28 * 60]), false],
+            ['fav_not_winning', array_replace($base, ['minutes_status' => 'Half Time']), true],
+            ['fav_not_winning', array_replace($base, ['bet365_prematch' => ['favorite_odds' => 1.87, 'favorite_side' => 'home']]), true],
+            ['fav_not_winning', array_replace($base, ['bet365_prematch' => ['favorite_odds' => 1.88, 'favorite_side' => 'home']]), false],
+            ['fav_not_winning', array_replace($base, ['home_score' => 2]), false],
+            ['prematch_drops', $prematch, true],
+            ['prematch_drops', array_replace($prematch, ['result_status' => 'Live']), false],
+            ['prematch_drops', array_replace($prematch, ['markets' => []]), false],
+            ['prematch_drops', array_replace($prematch, ['markets' => ['m' => [array_replace($runner, ['initialBackOdds' => null])]]]), false],
+            ['prematch_drops', array_replace($prematch, ['markets' => [], 'pinnacle_drop_triggered' => true]), true],
+            ['market_shock', $prematch, true],
+            ['market_shock', array_replace($prematch, ['markets' => ['m' => [array_replace($runner, ['market_shock_detected_at' => time() - 1201])]]]), false],
+            ['market_shock', array_replace($prematch, ['result_status' => 'Live']), false],
+            ['market_shock', array_replace($prematch, ['markets' => [], 'pinnacle_market_shock_detected_at' => time()]), true],
+        ];
+
+        foreach ($cases as $index => [$filter, $match, $expected]) {
+            $this->assertSame($expected, ($controller->footballFilterPredicate($filter))($match), $filter.' case '.$index);
         }
     }
 
@@ -345,6 +484,76 @@ class FixturesAuditTest extends TestCase
         $sync->storeTimeline($match, 'match:123:incidents', ['incidents' => [$goal, $second], 'changes' => ['changeTimestamp' => 13]], 'snapshot');
         $this->assertNotContains('g1', array_column($match['timeline']['home_goals'], 'id'));
         $this->assertContains('g2', array_column($match['timeline']['home_goals'], 'id'));
+    }
+
+    public function test_missing_goal_incidents_use_a_stable_observed_minute_and_restore_exactly_from_database(): void
+    {
+        (require database_path('migrations/2026_10_26_110659_create_football_timeline_table.php'))->up();
+        (require database_path('migrations/2026_10_26_124628_add_timeline_to_football_timeline_table.php'))->up();
+        Bus::fake();
+        Cache::shouldReceive('store')->with('redis')->andReturnSelf();
+        Cache::shouldReceive('lock')->andReturn(new class
+        {
+            public function get(): bool
+            {
+                return false;
+            }
+        });
+        $sync = $this->sync();
+        $match = ['sportsApiPro_match_id' => '123', 'timestamp' => time() - 4000, 'current_period_start_timestamp' => time() - 1200, 'result_status' => 'Live', 'minutes_status' => '2nd half', 'home_score' => 2, 'away_score' => 1];
+
+        $sync->storeTimeline($match);
+
+        $this->assertCount(2, $match['timeline']['home_goals']);
+        $this->assertCount(1, $match['timeline']['away_goals']);
+        $this->assertSame(65, $match['timeline']['home_goals'][0]['minute']);
+        $this->assertTrue($match['timeline']['home_goals'][0]['time_estimated']);
+        $original = $match['timeline'];
+        $match['current_period_start_timestamp'] -= 600;
+        $sync->storeTimeline($match);
+        $this->assertSame($original['home_goals'], $match['timeline']['home_goals']);
+        $saved = json_decode(DB::table('football_timeline')->value('timeline'), true);
+        $this->assertSame($match['timeline'], $saved);
+        unset($match['timeline']);
+        $sync->storeTimeline($match, frameType: 'restore');
+        $this->assertSame($saved, $match['timeline']);
+        $this->assertSame("~65'", $this->timeline($match)['events'][0]['minute_label']);
+
+        $goal = ['id' => 'actual-1', 'incidentType' => 'goal', 'isHome' => true, 'time' => 14, 'homeScore' => 1, 'awayScore' => 0];
+        $sync->storeTimeline($match, 'match:123:incidents', ['incidents' => [$goal]], 'snapshot');
+        $this->assertCount(2, $match['timeline']['home_goals']);
+        $this->assertSame('actual-1', $match['timeline']['home_goals'][0]['id']);
+        $this->assertSame(14, $match['timeline']['home_goals'][0]['minute']);
+        $this->assertSame(2, $match['timeline']['home_goals'][1]['home_score']);
+        $match['home_score'] = 1;
+        $sync->storeTimeline($match);
+        $this->assertSame(['actual-1'], array_column($match['timeline']['home_goals'], 'id'));
+        $this->assertSame(['14'], json_decode(DB::table('football_timeline')->value('home_goals'), true));
+        $this->assertSame($match['timeline'], json_decode(DB::table('football_timeline')->value('timeline'), true));
+        $sync->storeTimeline($match, 'match:123:incidents', ['incidents' => [['id' => 'actual-1', 'isDeleted' => true]]]);
+        $sync->storeTimeline($match);
+        $this->assertSame([], $match['timeline']['home_goals']);
+
+        $laterGoalFirst = array_replace($match, ['sportsApiPro_match_id' => '124', 'home_score' => 2, 'timeline' => []]);
+        $sync->storeTimeline($laterGoalFirst, 'match:124:incidents', ['incidents' => [array_replace($goal, ['id' => 'actual-2', 'time' => 50, 'homeScore' => 2])]], 'snapshot');
+        $this->assertCount(2, $laterGoalFirst['timeline']['home_goals']);
+        $this->assertSame([2, 1], array_column($laterGoalFirst['timeline']['home_goals'], 'home_score'));
+        $untimed = array_replace($match, ['sportsApiPro_match_id' => '125', 'home_score' => 1, 'away_score' => 0, 'timeline' => []]);
+        $sync->storeTimeline($untimed, 'match:125:incidents', ['incidents' => [array_replace($goal, ['time' => null])]], 'snapshot');
+        $this->assertTrue($untimed['timeline']['home_goals'][0]['time_estimated']);
+        $sync->storeTimeline($untimed, 'match:125:incidents', ['incidents' => [$goal]]);
+        $this->assertSame(14, $untimed['timeline']['home_goals'][0]['minute']);
+        $this->assertFalse($untimed['timeline']['home_goals'][0]['time_estimated']);
+        $lateClock = array_replace($match, ['sportsApiPro_match_id' => '126', 'home_score' => 1, 'away_score' => 0, 'timeline' => []]);
+        unset($lateClock['current_period_start_timestamp']);
+        $sync->storeTimeline($lateClock);
+        $this->assertSame([], $lateClock['timeline']['home_goals']);
+        $lateClock['current_period_start_timestamp'] = time() - 1200;
+        $sync->storeTimeline($lateClock);
+        $this->assertSame(65, $lateClock['timeline']['home_goals'][0]['minute']);
+        $countsOnly = array_replace($lateClock, ['sportsApiPro_match_id' => '127', 'home_score' => 2, 'timeline' => ['reported_counts' => ['home_goals' => 2]]]);
+        $sync->storeTimeline($countsOnly);
+        $this->assertCount(2, $countsOnly['timeline']['home_goals']);
     }
 
     public function test_goal_markers_preserve_provider_team_and_render_before_score_updates(): void

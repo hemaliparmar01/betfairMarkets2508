@@ -3,6 +3,10 @@
 @forelse ($data as $group)
     <h2 data-league-header="{{ $group['country'].'|'.($group['tournament_name'] ?? '') }}" class="mb-2 mt-5 border-b border-[var(--border-neutral-5-2)] pb-2 text-xs font-bold uppercase tracking-wide text-[var(--text-brand-60)] dark:border-[rgb(var(--border))] dark:text-[rgb(var(--text-soft))]">{{ $group['country'] }}@if (filled($group['tournament_name'] ?? null)) : {{ $group['tournament_name'] }}@endif</h2>
     @foreach ($group['matches'] as $race)
+        <!--bf-fixture:{{ $race['_fixture_key'] }}:{{ $race['_fixture_version'] }}-->
+        @if ($race['_fixture_reuse'])
+            <!--bf-fixture-reuse-->
+        @else
         @php
             $displayOdds = $race['details_available'] && $checkAuthAndSubscription['display_odds'];
             $choices = array_column($race['win_runners'], 'runner', 'runnerId');
@@ -39,7 +43,9 @@
                 @endif
             </div>
         </div>
-    @endforeach
+            @endif
+        <!--bf-fixture-end-->
+        @endforeach
 @empty
     @if (! $append)<p data-greyhounds-empty class="py-10 text-center text-sm text-[rgb(var(--text-muted))]">{{ __('No data available.') }}</p>@endif
 @endforelse

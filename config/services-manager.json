@@ -13,7 +13,12 @@
       "command": [
         "betfair:listen"
       ],
-      "enabled": true
+      "enabled": true,
+      "overrides": {
+        "local": {
+          "php_memory_limit": "1G"
+        }
+      }
     },
     "sports-api-pro": {
       "command": [
@@ -27,7 +32,8 @@
         "--queue=default",
         "--sleep=1",
         "--timeout=60",
-        "--tries=3"
+        "--tries=3",
+        "--max-time=3600"
       ],
       "enabled": true
     },
@@ -35,10 +41,11 @@
       "command": [
         "queue:work",
         "sports-realtime",
-        "--queue=sports-statistics,sports-prematch-statistics",
+        "--queue=sports-statistics",
         "--sleep=1",
         "--timeout=45",
-        "--tries=3"
+        "--tries=3",
+        "--max-time=3600"
       ],
       "enabled": true
     },
@@ -48,7 +55,8 @@
         "--queue=sports-images",
         "--sleep=1",
         "--timeout=30",
-        "--tries=3"
+        "--tries=3",
+        "--max-time=3600"
       ],
       "enabled": true,
       "unit": "bfmarkets-queue-images.service"
@@ -60,7 +68,8 @@
         "--queue=realtime-football",
         "--sleep=0",
         "--timeout=15",
-        "--tries=6"
+        "--tries=6",
+        "--max-time=3600"
       ],
       "enabled": true,
       "unit": "bfmarkets-realtime@football.service"
@@ -72,7 +81,8 @@
         "--queue=realtime-cricket",
         "--sleep=0",
         "--timeout=15",
-        "--tries=6"
+        "--tries=6",
+        "--max-time=3600"
       ],
       "enabled": true,
       "unit": "bfmarkets-realtime@cricket.service"
@@ -84,7 +94,8 @@
         "--queue=realtime-icehockey",
         "--sleep=0",
         "--timeout=15",
-        "--tries=6"
+        "--tries=6",
+        "--max-time=3600"
       ],
       "enabled": true,
       "unit": "bfmarkets-realtime@icehockey.service"
@@ -96,7 +107,8 @@
         "--queue=realtime-americanfootball",
         "--sleep=0",
         "--timeout=15",
-        "--tries=6"
+        "--tries=6",
+        "--max-time=3600"
       ],
       "enabled": true,
       "unit": "bfmarkets-realtime@americanfootball.service"
@@ -108,7 +120,8 @@
         "--queue=realtime-baseball",
         "--sleep=0",
         "--timeout=15",
-        "--tries=6"
+        "--tries=6",
+        "--max-time=3600"
       ],
       "enabled": true,
       "unit": "bfmarkets-realtime@baseball.service"
@@ -120,7 +133,8 @@
         "--queue=realtime-basketball",
         "--sleep=0",
         "--timeout=15",
-        "--tries=6"
+        "--tries=6",
+        "--max-time=3600"
       ],
       "enabled": true,
       "unit": "bfmarkets-realtime@basketball.service"
@@ -132,7 +146,8 @@
         "--queue=realtime-tennis",
         "--sleep=0",
         "--timeout=15",
-        "--tries=6"
+        "--tries=6",
+        "--max-time=3600"
       ],
       "enabled": true,
       "unit": "bfmarkets-realtime@tennis.service"
@@ -144,7 +159,8 @@
         "--queue=realtime-greyhounds",
         "--sleep=0",
         "--timeout=15",
-        "--tries=6"
+        "--tries=6",
+        "--max-time=3600"
       ],
       "enabled": true,
       "unit": "bfmarkets-realtime@greyhounds.service"
@@ -156,7 +172,8 @@
         "--queue=realtime-horseracing",
         "--sleep=0",
         "--timeout=15",
-        "--tries=6"
+        "--tries=6",
+        "--max-time=3600"
       ],
       "enabled": true,
       "unit": "bfmarkets-realtime@horseracing.service"
@@ -195,11 +212,123 @@
         "--source"
       ],
       "enabled": false
+    },
+    "queue-sports-prematch-statistics": {
+      "command": [
+        "queue:work",
+        "sports-realtime",
+        "--queue=sports-prematch-statistics",
+        "--sleep=1",
+        "--timeout=45",
+        "--tries=3",
+        "--max-time=3600"
+      ],
+      "workers": 2,
+      "enabled": true
+    },
+    "queue-sports-recovery": {
+      "command": [
+        "queue:work",
+        "sports-realtime",
+        "--queue=sports-recovery",
+        "--sleep=1",
+        "--timeout=60",
+        "--tries=3",
+        "--max-time=3600"
+      ],
+      "enabled": true
+    },
+    "queue-sports-timeline": {
+      "command": [
+        "queue:work",
+        "sports-realtime",
+        "--queue=sports-timeline",
+        "--sleep=1",
+        "--timeout=60",
+        "--tries=3",
+        "--max-time=3600"
+      ],
+      "enabled": true
+    },
+    "queue-alerts": {
+      "command": [
+        "queue:work",
+        "--queue=alerts",
+        "--sleep=1",
+        "--timeout=60",
+        "--tries=3",
+        "--max-time=3600"
+      ],
+      "enabled": true
+    },
+    "queue-sports-sync-live": {
+      "command": [
+        "queue:work",
+        "sports-realtime",
+        "--queue=sports-sync-live",
+        "--sleep=1",
+        "--timeout=60",
+        "--tries=3",
+        "--max-time=3600"
+      ],
+      "enabled": true
+    },
+    "queue-sports-sync-prematch": {
+      "command": [
+        "queue:work",
+        "sports-realtime",
+        "--queue=sports-sync-prematch",
+        "--sleep=1",
+        "--timeout=60",
+        "--tries=3",
+        "--max-time=3600"
+      ],
+      "enabled": true,
+      "overrides": {
+        "local": {
+          "php_memory_limit": "1G"
+        }
+      }
+    },
+    "queue-legacy-sports-statistics": {
+      "command": [
+        "queue:work",
+        "database",
+        "--queue=sports-statistics",
+        "--sleep=3",
+        "--timeout=45",
+        "--tries=3",
+        "--max-time=3600"
+      ],
+      "enabled": true
+    },
+    "queue-alerts-platform": {
+      "command": [
+        "queue:work",
+        "--queue=alerts-platform",
+        "--sleep=1",
+        "--timeout=60",
+        "--tries=3",
+        "--max-time=3600"
+      ],
+      "enabled": true
+    },
+    "queue-alerts-telegram": {
+      "command": [
+        "queue:work",
+        "--queue=alerts-telegram",
+        "--sleep=1",
+        "--timeout=60",
+        "--tries=3",
+        "--max-time=3600"
+      ],
+      "enabled": true
     }
   },
   "overrides": {
     "local": {
-      "prefix": "bfmarkets2508"
+      "prefix": "bfmarkets2508",
+      "php_memory_limit": "512M"
     }
   }
 }

@@ -350,9 +350,9 @@ trait FootballTrait
                 $data = prepareMatchOddsMonitoring($data);
             }
             $tournamentName = $data['tournament'];
-            $leagueKey = $type === 'by_time' ? $tournamentName.'|'.$data['timestamp'] : $tournamentName;
-            if ($groupByCompetition) {
-                $leagueKey = 'competition:'.($data['tournament_id'] ?? ($data['tournament_country'] ?? '').'|'.$tournamentName);
+            $leagueKey = 'competition:'.($data['tournament_id'] ?? ($data['tournament_country'] ?? '').'|'.$tournamentName);
+            if ($type === 'by_time') {
+                $leagueKey .= '|'.$data['timestamp'];
             }
             $matchId = (string) $data['sportsApiPro_match_id'];
             $timeline = $data['timeline'] ?? [];

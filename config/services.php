@@ -36,6 +36,7 @@ return [
     ],
 
     'sports_api_pro' => [
+        'http_concurrency' => (int) env('SPORTS_HTTP_CONCURRENCY', 2),
         'daily_rest_limit' => (int) env('SPORTS_API_PRO_DAILY_REST_LIMIT', 75000),
         'rest_reserve' => (int) env('SPORTS_API_PRO_REST_RESERVE', 7500),
         'football_v6_daily_budget' => (int) env('SPORTS_API_PRO_FOOTBALL_V6_DAILY_BUDGET', 30000),

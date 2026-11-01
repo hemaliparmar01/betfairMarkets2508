@@ -1,3 +1,4 @@
+import { fixtureVersions, updateFixtureRows } from '../auth/dom.js';
 const getSelectedFilters = () => {
     const activePill = document.querySelector('.filter-pill.active');
     const marketDropdown = document.querySelector('.market-dropdown');
@@ -612,6 +613,7 @@ const callFixtureData = async (value, options = {}) => {
         page: append ? footballPage + 1 : 1,
         per_page: preserveLoaded ? footballPage * FOOTBALL_PAGE_SIZE : FOOTBALL_PAGE_SIZE,
         append,
+        ...(!append && !value.prediction && options.reset !== true ? { _fixture_versions: fixtureVersions(fixtures) } : {}),
     });
 
     if (options.reset === true && !append) {
@@ -690,16 +692,7 @@ const callFixtureData = async (value, options = {}) => {
                 if (state?.expanded) state.scrollTop = panel.scrollTop;
             });
             preserveQuickStatsPanel(incoming);
-            const existingNodes = new Map(Array.from(fixtures.children, node => [node.id || node.dataset.leagueHeader || node.getAttribute('data-sportApi-match-id'), node]));
-            const nodes = Array.from(incoming.children, node => {
-                const current = existingNodes.get(node.id || node.dataset.leagueHeader || node.getAttribute('data-sportApi-match-id'));
-                return current?.isEqualNode(node) ? current : node;
-            });
-            nodes.forEach((node, index) => {
-                if (fixtures.children[index] !== node) fixtures.insertBefore(node, fixtures.children[index] ?? null);
-            });
-            Array.from(fixtures.children).slice(nodes.length).forEach(node => node.remove());
-            Array.from(fixtures.childNodes).forEach(node => { if (node.nodeType !== 1) node.remove(); });
+            updateFixtureRows(fixtures, incoming);
             footballPage = preserveLoaded ? Math.max(1, footballPage) : 1;
         }
         updateFootballLazyLoader(data.has_more, append ? data.next_page : (preserveLoaded ? footballPage + 1 : data.next_page));

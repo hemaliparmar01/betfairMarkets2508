@@ -1,4 +1,5 @@
-import './auth/dom.js';
+import { updateFixtureRows } from './auth/dom.js';
+window.updateFixtureRows = updateFixtureRows;
 import { watchRacingFeed } from './racingFeed.js';
 import Echo from 'laravel-echo';
 import Pusher from 'pusher-js';

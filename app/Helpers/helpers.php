@@ -425,50 +425,159 @@ if (! function_exists('ApiCall')) {
                     return strlen($line);
                 },
             ]);
-            $body = curl_exec($ch);
-            $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-            $contentType = (string) curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
-            $curlErrorCode = curl_errno($ch);
-            $curlError = curl_error($ch);
-            if ($isSportsApiPro) {
-                recordSportsApiProRestResponse($responseHeaders, $requestNumber, $status);
-            }
-            $rawResponse = $options['raw_response'] ?? false;
-            $data = null;
-            $jsonError = null;
-            if ($body !== false && (! $rawResponse || str_contains(strtolower($contentType), 'json'))) {
-                $data = json_decode($body, true);
-                $jsonError = json_last_error() === JSON_ERROR_NONE ? null : json_last_error_msg();
-            }
-            $failed = $body === false || $status < 200 || $status >= 300 || $jsonError !== null
-                || (is_array($data) && ($data['success'] ?? true) === false);
-            if ($captureDiagnostics || $failed) {
-                $diagnostics = apiResponseLogContext([
-                    'url' => $url,
-                    'http_status' => $status,
-                    'content_type' => $contentType,
-                    'curl_errno' => $curlErrorCode,
-                    'curl_error' => $curlError !== '' ? $curlError : null,
-                    'json_error' => $jsonError,
-                    'response_body' => $body === false ? null : $body,
-                ], $secrets);
-                if ($failed) {
-                    Log::warning('API request failed', $diagnostics);
-                }
-            }
-
-            if ($rawResponse) {
-                return [
-                    'body' => $body === false ? '' : $body,
-                    'status' => $status,
-                    'content_type' => $contentType,
-                    'successful' => $body !== false && $status >= 200 && $status < 300,
-                ];
-            }
-
-            return $data;
-        } finally {
+        } catch (Throwable $exception) {
             curl_close($ch);
+            throw $exception;
+        }
+        $complete = static function (string|false $body, ?int $multiError = null) use ($ch, $url, $options, $isSportsApiPro, $requestNumber, &$responseHeaders, $captureDiagnostics, &$diagnostics, $secrets): mixed {
+            try {
+                $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+                $contentType = (string) curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+                $curlErrorCode = $multiError ?? curl_errno($ch);
+                $curlError = curl_error($ch);
+                if ($curlError === '' && $curlErrorCode !== 0) {
+                    $curlError = curl_strerror($curlErrorCode);
+                }
+                if ($isSportsApiPro) {
+                    recordSportsApiProRestResponse($responseHeaders, $requestNumber, $status);
+                }
+                $rawResponse = $options['raw_response'] ?? false;
+                $data = null;
+                $jsonError = null;
+                if ($body !== false && (! $rawResponse || str_contains(strtolower($contentType), 'json'))) {
+                    $data = json_decode($body, true);
+                    $jsonError = json_last_error() === JSON_ERROR_NONE ? null : json_last_error_msg();
+                }
+                $failed = $body === false || $status < 200 || $status >= 300 || $jsonError !== null
+                    || (is_array($data) && ($data['success'] ?? true) === false);
+                if ($captureDiagnostics || $failed) {
+                    $diagnostics = apiResponseLogContext([
+                        'url' => $url,
+                        'http_status' => $status,
+                        'content_type' => $contentType,
+                        'curl_errno' => $curlErrorCode,
+                        'curl_error' => $curlError !== '' ? $curlError : null,
+                        'json_error' => $jsonError,
+                        'response_body' => $body === false ? null : $body,
+                    ], $secrets);
+                    if ($failed) {
+                        Log::warning('API request failed', $diagnostics);
+                    }
+                }
+
+                if ($rawResponse) {
+                    return [
+                        'body' => $body === false ? '' : $body,
+                        'status' => $status,
+                        'content_type' => $contentType,
+                        'successful' => $body !== false && $status >= 200 && $status < 300,
+                    ];
+                }
+
+                return $data;
+            } finally {
+                curl_close($ch);
+            }
+        };
+        if ($options['_pool'] ?? false) {
+            return ['handle' => $ch, 'complete' => $complete];
+        }
+
+        return $complete(curl_exec($ch));
+    }
+}
+
+if (! function_exists('ApiCallPool')) {
+    /**
+     * @param  array<string, array{url: string, key: string|array, options?: array}>  $requests
+     * @return array<string, array{response: mixed, diagnostics: ?array}>
+     */
+    function ApiCallPool(array $requests, int $concurrency = 2): array
+    {
+        $multi = curl_multi_init();
+        $pending = array_keys($requests);
+        $active = [];
+        $results = [];
+        $diagnostics = [];
+        $offset = 0;
+        $concurrency = max(1, min(8, $concurrency));
+        try {
+            do {
+                while (count($active) < $concurrency && isset($pending[$offset])) {
+                    $key = $pending[$offset++];
+                    $request = $requests[$key];
+                    try {
+                        $registration = ApiCall($request['url'], $request['key'], array_replace($request['options'] ?? [], ['_pool' => true]), $diagnostics[$key]);
+                    } catch (Throwable $exception) {
+                        $results[$key] = ['response' => null, 'diagnostics' => $diagnostics[$key] ?? null, 'exception' => $exception];
+
+                        continue;
+                    }
+                    if (! is_array($registration) || ! isset($registration['handle'], $registration['complete'])) {
+                        $results[$key] = ['response' => $registration, 'diagnostics' => $diagnostics[$key]];
+
+                        continue;
+                    }
+                    $active[spl_object_id($registration['handle'])] = $registration + ['key' => $key];
+                    curl_multi_add_handle($multi, $registration['handle']);
+                }
+                do {
+                    $status = curl_multi_exec($multi, $running);
+                } while ($status === CURLM_CALL_MULTI_PERFORM);
+                if ($status !== CURLM_OK) {
+                    throw new RuntimeException('Concurrent API transport failed: '.curl_multi_strerror($status));
+                }
+                while ($info = curl_multi_info_read($multi)) {
+                    $id = spl_object_id($info['handle']);
+                    $registration = $active[$id];
+                    $key = $registration['key'];
+                    $body = $info['result'] === CURLE_OK ? curl_multi_getcontent($info['handle']) : false;
+                    curl_multi_remove_handle($multi, $info['handle']);
+                    unset($active[$id]);
+                    $response = $registration['complete']($body, $info['result']);
+                    $results[$key] = ['response' => $response, 'diagnostics' => $diagnostics[$key]];
+                }
+                if ($active !== [] && curl_multi_select($multi, 0.1) === -1) {
+                    usleep(1000);
+                }
+            } while ($active !== [] || isset($pending[$offset]));
+        } finally {
+            foreach ($active as $registration) {
+                curl_multi_remove_handle($multi, $registration['handle']);
+                curl_close($registration['handle']);
+            }
+            curl_multi_close($multi);
+        }
+
+        return array_replace(array_fill_keys(array_keys($requests), null), $results);
+    }
+}
+
+if (! function_exists('queueSportsSynchronization')) {
+    function queueSportsSynchronization(string $controller, string $method): void
+    {
+        $key = 'Sports:scheduled:'.hash('sha256', $controller.'::'.$method);
+        $pending = Cache::store('redis')->lock($key, 3600);
+        if (! $pending->get()) {
+            return;
+        }
+        $owner = $pending->owner();
+        try {
+            dispatch(static function () use ($controller, $method, $key, $owner): void {
+                try {
+                    app($controller)->{$method}();
+                } finally {
+                    Cache::store('redis')->restoreLock($key, $owner)->release();
+                }
+            })->name($controller.'::'.$method)->onConnection('sports-realtime')
+                ->onQueue(str_contains($method, 'Live') ? 'sports-sync-live' : 'sports-sync-prematch')
+                ->catch(static function (Throwable $exception) use ($key, $owner): void {
+                    Cache::store('redis')->restoreLock($key, $owner)->release();
+                    Log::warning('Scheduled sports synchronization failed', ['exception' => $exception::class]);
+                });
+        } catch (Throwable $exception) {
+            $pending->release();
+            throw $exception;
         }
     }
 }
@@ -730,17 +839,20 @@ if (! function_exists('withRedisLock')) {
 }
 
 if (! function_exists('getCurrentUserTimezone')) {
-    function getCurrentUserTimezone() {
+    function getCurrentUserTimezone()
+    {
         return auth('customers')->user()?->timezone ?? fetch_local_timezone();
+
         return 'Asia/Kolkata';
     }
 }
 
 if (! function_exists('fetch_local_timezone')) {
-    function fetch_local_timezone() {
+    function fetch_local_timezone()
+    {
         try {
             return session('local_timezone', config('app.timezone', 'UTC'));
-        } catch (\Throwable $th) {
+        } catch (Throwable $th) {
             return 'UTC';
         }
     }

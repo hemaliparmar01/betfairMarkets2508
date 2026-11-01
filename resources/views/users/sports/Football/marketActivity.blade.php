@@ -191,7 +191,7 @@
                             const from = number(alert.from_price); const to = number(alert.to_price);
                             const down = to < from;
                             const flash = (state.flashes.get(alertIdentity(alert)) || 0) > Date.now();
-                            return `<tr tabindex="0" role="button" aria-label="View ${escapeHtml(marketLabel(alert))}: ${escapeHtml(marketPosition(alert))}" data-alert-index="${alertIndex}" class="drop-row ${flash ? 'drop-flash' : ''}">
+                            return `<tr tabindex="0" role="button" aria-label="View ${escapeHtml(marketLabel(alert))}: ${escapeHtml(marketPosition(alert))}" data-alert-index="${alertIndex}" data-alert-key="${escapeHtml(alertIdentity(alert))}" class="drop-row ${flash ? 'drop-flash' : ''}">
                                 <td class="font-extrabold text-[var(--text-danger-edge)] dark:text-[var(--text-red-400)]">−${Math.abs(drop(alert)).toFixed(1)}%</td>
                                 <td><strong class="block font-bold text-[rgb(var(--text-main))] dark:text-[var(--text-on-primary)]">${escapeHtml(marketLabel(alert))}</strong><span class="mt-0.5 block text-[11px] text-[rgb(var(--text-muted))] dark:text-[rgb(var(--text-soft))]">${escapeHtml(marketPosition(alert))}</span><small class="mt-0.5 block text-[9px] uppercase text-[var(--text-muted-soft)]">${isLive(alert) ? 'LIVE' : 'PREMATCH'} · ${escapeHtml(alert.sport || '')}${advanced ? `<span class="min-[641px]:hidden"> · ${alertTime(alert.alerted)}</span>` : ` · ${alertTime(alert.alerted)}`}</small></td>
                                 <td class="font-bold"><span class="drop-odds"><span>${price(from)}</span><span aria-hidden="true">→</span><b>${price(to)}</b>${from !== to ? `<span class="${down ? 'text-[var(--text-danger-edge)]' : 'text-[var(--text-emerald-600)]'}" aria-label="Odds ${down ? 'decreased' : 'increased'}">${down ? '↓' : '↑'}</span>` : ''}</span></td>
@@ -200,9 +200,14 @@
                                 ${advanced ? `<td class="text-[10px] leading-relaxed"><span class="block ${edgeClass(pinnacleEdge(alert))}">${(globalThis.bfTranslations?.["Pinnacle:"] ?? "Pinnacle:")} ${edgeText(pinnacleEdge(alert))}</span><span class="block ${edgeClass(edge(alert))}">BF: ${betfairEdgeText(alert)}</span></td><td class="text-[9px] text-[var(--text-muted-soft)]">${alertTime(alert.alerted)}</td>` : ''}
                             </tr>`;
                         }).join('');
-                        return `<tbody><tr class="drop-group"><td colspan="${columns}"><button type="button" data-group="${groupIndex}" data-group-key="${escapeHtml(groupKey)}" aria-expanded="${!collapsed}" aria-controls="pinnacle-group-${groupIndex}" class="flex w-full items-center justify-between gap-3 border-y border-[var(--border-neutral-5-6)] bg-[var(--surface-neutral-0-21)] px-4 py-3 text-left dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--surface))]"><span class="min-w-0"><strong class="block text-sm font-extrabold text-[rgb(var(--text-main))] dark:text-[var(--text-on-primary)]">${escapeHtml(first.home)} v ${escapeHtml(first.away)}</strong><small class="mt-1 block text-[10px] text-[var(--text-brand-35)] dark:text-[rgb(var(--text-soft))]">${escapeHtml(first.league || '')}</small></span><span class="shrink-0 text-[10px] font-semibold text-[var(--text-brand-50-3)] dark:text-[rgb(var(--text-soft))]">${alerts.length} alert${alerts.length === 1 ? '' : 's'} <span data-group-toggle class="ml-2 text-base font-bold" aria-hidden="true">${collapsed ? '↓' : '↑'}</span></span></button></td></tr></tbody><tbody id="pinnacle-group-${groupIndex}" data-group-body="${groupIndex}" class="${collapsed ? 'hidden' : ''}">${rows}</tbody>`;
+                        return `<tbody data-group-key="${escapeHtml(groupKey)}"><tr class="drop-group"><td colspan="${columns}"><button type="button" data-group="${groupIndex}" data-group-key="${escapeHtml(groupKey)}" aria-expanded="${!collapsed}" aria-controls="pinnacle-group-${groupIndex}" class="flex w-full items-center justify-between gap-3 border-y border-[var(--border-neutral-5-6)] bg-[var(--surface-neutral-0-21)] px-4 py-3 text-left dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--surface))]"><span class="min-w-0"><strong class="block text-sm font-extrabold text-[rgb(var(--text-main))] dark:text-[var(--text-on-primary)]">${escapeHtml(first.home)} v ${escapeHtml(first.away)}</strong><small class="mt-1 block text-[10px] text-[var(--text-brand-35)] dark:text-[rgb(var(--text-soft))]">${escapeHtml(first.league || '')}</small></span><span class="shrink-0 text-[10px] font-semibold text-[var(--text-brand-50-3)] dark:text-[rgb(var(--text-soft))]">${alerts.length} alert${alerts.length === 1 ? '' : 's'} <span data-group-toggle class="ml-2 text-base font-bold" aria-hidden="true">${collapsed ? '↓' : '↑'}</span></span></button></td></tr></tbody><tbody id="pinnacle-group-${groupIndex}" data-group-body="${groupIndex}" class="${collapsed ? 'hidden' : ''}">${rows}</tbody>`;
                     }).join('');
-                    root.querySelector('[data-alerts]').innerHTML = header + html + '</table>';
+                    const target = root.querySelector('[data-alerts]');
+                    if (globalThis.updateFixtureRows) {
+                        const template = document.createElement('template');
+                        template.innerHTML = header + html + '</table>';
+                        globalThis.updateFixtureRows(target, template.content);
+                    } else target.innerHTML = header + html + '</table>';
 
                 };
 
@@ -1064,15 +1069,11 @@
                     }
                     events.splice(0, events.length, ...data);
                     const scrollLeft = document.getElementById('eventsWrap').scrollLeft;
-                    @if ($marketActivitySport === 'football')
                     const rows = Array.from(body.children, incoming => previousRows.get(incoming.dataset.id) ?? incoming);
                     rows.forEach((row, index) => {
                         if (eventsBody.children[index] !== row) eventsBody.insertBefore(row, eventsBody.children[index] ?? null);
                     });
                     Array.from(eventsBody.children).slice(rows.length).forEach(row => row.remove());
-                    @else
-                    eventsBody.replaceChildren(...body.children);
-                    @endif
                     document.getElementById('eventsWrap').scrollLeft = scrollLeft;
 
                     if (detailWasOpen && events.some(function(ev) { return String(ev.id) === String(selectedEventId) && !ev.locked; })) {
@@ -1365,7 +1366,8 @@
                         const template = document.createElement('template');
                         template.innerHTML = detailHtml;
                         if (detailContent.querySelectorAll('.runner-row').length !== template.content.querySelectorAll('.runner-row').length) {
-                            detailContent.querySelector('.runners-list').replaceChildren(...template.content.querySelector('.runners-list').childNodes);
+                            if (globalThis.updateFixtureRows) globalThis.updateFixtureRows(detailContent.querySelector('.runners-list'), template.content.querySelector('.runners-list'));
+                            else detailContent.querySelector('.runners-list').replaceChildren(...template.content.querySelector('.runners-list').childNodes);
                         }
                         const fields = detailContent.querySelectorAll('.detail-title, .detail-meta, .runner-name, .runner-back, .runner-lay, .ind-value, .liq-back, .liq-lay, .liquidity-bar span');
                         template.content.querySelectorAll('.detail-title, .detail-meta, .runner-name, .runner-back, .runner-lay, .ind-value, .liq-back, .liq-lay, .liquidity-bar span').forEach((next, index) => {

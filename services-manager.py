@@ -66,6 +66,8 @@ class Manager:
             for index in range(count):
                 instance = name if count == 1 else name + '-' + str(index + 1)
                 unit = spec.get('unit', self.prefix + '-' + instance + '.service')
+                if count > 1 and 'unit' in spec:
+                    unit = unit.removesuffix('.service') + '-' + str(index + 1) + '.service'
                 if not re.fullmatch(r'[a-zA-Z0-9@_.-]+\.service', unit):
                     raise ValueError('Invalid systemd unit')
                 self.instances[instance] = dict(spec, name=name, unit=unit, label='com.' + self.prefix + '.' + instance)
@@ -80,7 +82,13 @@ class Manager:
         directory = Path(spec.get('working_directory', self.root))
         cwd = str((directory if directory.is_absolute() else self.root / directory).resolve())
         command = list(spec['command'])
-        args = [self.php, str(Path(cwd) / 'artisan')] + command
+        args = [self.php]
+        memory_limit = spec.get('php_memory_limit', self.config.get('php_memory_limit'))
+        if memory_limit is not None:
+            if not re.fullmatch(r'[1-9][0-9]*[KMG]', str(memory_limit)):
+                raise ValueError('php_memory_limit must be a finite positive size, such as 512M')
+            args += ['-d', 'memory_limit=' + str(memory_limit)]
+        args += [str(Path(cwd) / 'artisan')] + command
         logs = Path(spec.get('log_directory', self.logs)).resolve()
         restart = spec.get('restart', 'always')
         if self.mac:
@@ -147,11 +155,21 @@ class Manager:
             if re.search(r'\bartisan\s+' + re.escape(spec['command'][0]) + r'(?:\s|$)', line):
                 if spec['command'][0] == 'telegram:listen' and ('--source' in spec['command']) != bool(re.search(r'(?:^|\s)--source(?:\s|$)', line)):
                     continue
-                if spec['command'][0] != 'queue:work' or all(arg in line for arg in spec['command'][1:] if arg.startswith('--queue=')):
+                if spec['command'][0] == 'queue:work':
+                    actual = re.split(r'\bartisan\s+queue:work\s*', line, maxsplit=1)[-1].split()
+                    expected = spec['command'][1:]
+                    actual_connection = actual[0] if actual and not actual[0].startswith('--') else None
+                    expected_connection = expected[0] if expected and not expected[0].startswith('--') else None
+                    if actual_connection and expected_connection and actual_connection != expected_connection:
+                        continue
+                    actual_queues = next((set(arg[8:].split(',')) for arg in actual if arg.startswith('--queue=')), None)
+                    expected_queues = next((set(arg[8:].split(',')) for arg in expected if arg.startswith('--queue=')), None)
+                    if actual_queues is not None and expected_queues is not None and actual_queues.isdisjoint(expected_queues):
+                        continue
                     # Sibling configured workers are safe only when already owned by this supervisor.
                     if spec.get('workers', 1) > 1 and any(self.inspect(other)[1].split('pid=')[-1] == line.strip().split(None, 1)[0] for other in self.instances.values() if other['name'] == spec['name']):
                         continue
-                    raise ValueError('Unmanaged matching Artisan process exists; inspect/migrate it before starting ' + spec['name'])
+                raise ValueError('Unmanaged matching Artisan process exists; inspect/migrate it before starting ' + spec['name'])
 
     def execute(self, action, name=None):
         selected = self.selected(name)

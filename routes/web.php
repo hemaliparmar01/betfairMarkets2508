@@ -22,6 +22,7 @@ use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Session\Middleware\StartSession;
+use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Validation\Rule;
 use Illuminate\View\Middleware\ShareErrorsFromSession;
@@ -147,10 +148,11 @@ Route::prefix('baseball')->name('baseball.')->group(function () {
 
 Route::post('/set-timezone', function (Request $request) {
     $data = $request->timezone;
-    abort_unless(in_array($data, timezone_identifiers_list(\DateTimeZone::ALL_WITH_BC), true), 422);
+    abort_unless(in_array($data, timezone_identifiers_list(DateTimeZone::ALL_WITH_BC), true), 422);
     $request->session()->put([
         'local_timezone' => $data,
     ]);
+
     return response()->json([
         'timezone' => $request->session()->get('local_timezone'),
     ]);
@@ -194,3 +196,14 @@ Route::post('subscriptions/payments/webhooks/{gateway}', [SubscriptionPaymentCon
 
 Route::post('subscriptions/payment/return', [SubscriptionPaymentController::class, 'returnedPost'])
     ->withoutMiddleware([PreventRequestForgery::class, StartSession::class, ShareErrorsFromSession::class, CustomerAuthService::class]);
+
+Route::get('get-cache-data/{cacheKey}', function ($cacheKey) {
+    $cachedData = Redis::get($cacheKey);
+
+    $matches = $cachedData === null ? null : json_decode($cachedData, true);
+    if ($matches) {
+        foreach ($matches as $match) {
+            dump($match);
+        }
+    }
+})->name('get-cache-data');

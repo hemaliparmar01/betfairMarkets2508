@@ -25,7 +25,7 @@ class ProcessAlert implements ShouldBeUnique, ShouldQueue
     /** @param array<string, mixed> $data */
     public function __construct(public string $task = 'scan', public array $data = [])
     {
-        $this->onQueue('default');
+        $this->onQueue('alerts');
     }
 
     public function uniqueId(): string

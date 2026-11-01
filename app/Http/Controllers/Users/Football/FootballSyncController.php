@@ -215,7 +215,7 @@ class FootballSyncController extends Controller
                         'incident_class' => $class,
                         'minute' => $minute,
                         'time_known' => $timeKnown,
-                        'time_estimated' => $kind === 'card' ? $timeEstimated : null,
+                        'time_estimated' => in_array($kind, ['card', 'goal'], true) ? $timeEstimated : null,
                         'added_time' => $added,
                         'seconds' => $incidentSeconds !== null && $incidentSeconds >= 0 ? $incidentSeconds : ($minute + $added) * 60,
                         'is_home' => $home,
@@ -306,6 +306,73 @@ class FootballSyncController extends Controller
             unset($event['kind'], $event['is_home']);
             $timeline[$group][] = $event;
         }
+        foreach (['home', 'away'] as $side) {
+            if (! is_numeric($match[$side.'_score'] ?? null)) {
+                continue;
+            }
+            $group = $side.'_goals';
+            $score = max(0, (int) $match[$side.'_score']);
+            $previousScore = $timeline['reported_counts'][$group] ?? null;
+            $estimates = array_column(array_filter($timeline[$group], static fn (array $event): bool => ($event['source'] ?? '') === 'score'), null, 'id');
+            $actual = array_values(array_filter($timeline[$group], static fn (array $event): bool => ($event['source'] ?? '') !== 'score'));
+            $canEstimateGoals = $frameType !== 'restore' && ($match['result_status'] ?? '') === 'Live'
+                && isset($match['timestamp']);
+            $goalClock = null;
+            foreach ($actual as &$goal) {
+                $estimate = array_find($estimates, static fn (array $event): bool => ! isset($goal[$side.'_score']) || $event[$side.'_score'] === (int) $goal[$side.'_score']);
+                if (! ($goal['time_known'] ?? false)) {
+                    if ($estimate !== null) {
+                        $goal = array_replace($goal, array_intersect_key($estimate, array_flip(['minute', 'added_time', 'seconds', 'time_known', 'time_estimated', 'timestamp'])));
+                    } elseif ($canEstimateGoals) {
+                        $goalClock ??= app(FootballController::class)->footballTimeline($match, $timeline);
+                        if (! $goalClock['finished'] && ($goalClock['minute'] > 0 || $goalClock['running'])) {
+                            $goal['minute'] = min($goalClock['period_limit'], $goalClock['minute']);
+                            $goal['added_time'] = max(0, $goalClock['minute'] - $goal['minute']);
+                            $goal['seconds'] = $goalClock['minute'] * 60;
+                            $goal['time_known'] = $goal['time_estimated'] = true;
+                            $goal['timestamp'] ??= Carbon::now('UTC')->toIso8601ZuluString();
+                        }
+                    }
+                }
+                if ($estimate !== null) {
+                    unset($estimates[$estimate['id']]);
+                }
+            }
+            unset($goal);
+            $remaining = max(0, $score - count($actual));
+            $estimates = array_slice(array_filter($estimates, static fn (array $event): bool => (int) $event[$side.'_score'] <= $score), 0, $remaining, true);
+            $timeline[$group] = array_merge($actual, array_values($estimates));
+            if ($canEstimateGoals && count($timeline[$group]) < $score
+                && ($previousScore === null || $score > (int) $previousScore || empty($timeline['removed']))) {
+                $goalClock ??= app(FootballController::class)->footballTimeline($match, $timeline);
+                if (! $goalClock['finished'] && ($goalClock['minute'] > 0 || $goalClock['running'])) {
+                    $occupied = [];
+                    foreach ($timeline[$group] as $index => $goal) {
+                        $occupied[(int) ($goal[$side.'_score'] ?? $index + 1)] = true;
+                    }
+                    $missing = $score - count($timeline[$group]);
+                    for ($index = 1; $index <= $score && $missing > 0; $index++) {
+                        if (isset($occupied[$index])) {
+                            continue;
+                        }
+                        $minute = min($goalClock['period_limit'], $goalClock['minute']);
+                        $added = max(0, $goalClock['minute'] - $minute);
+                        $timeline[$group][] = ['id' => 'score-'.$side.'-goal-'.$index,
+                            'minute' => $minute, 'added_time' => $added, 'seconds' => ($minute + $added) * 60,
+                            'time_known' => true, 'time_estimated' => true, 'source' => 'score',
+                            'timestamp' => Carbon::now('UTC')->toIso8601ZuluString(),
+                            'home_score' => $side === 'home' ? $index : (int) ($match['home_score'] ?? 0),
+                            'away_score' => $side === 'away' ? $index : (int) ($match['away_score'] ?? 0),
+                            'player' => '', 'player_surname' => null];
+                        $missing--;
+                    }
+                }
+            }
+            usort($timeline[$group], static fn (array $first, array $second): int => [$first['minute'], $first['added_time'], $first['id']] <=> [$second['minute'], $second['added_time'], $second['id']]);
+            if (count($timeline[$group]) >= $score || ($previousScore !== null && $score <= (int) $previousScore)) {
+                $timeline['reported_counts'][$group] = $score;
+            }
+        }
         foreach (['yellow_cards', 'red_cards', 'corners'] as $stat) {
             foreach (['home', 'away'] as $side) {
                 $group = $side.'_'.$stat;
@@ -367,7 +434,7 @@ class FootballSyncController extends Controller
                 $row[$group] = json_encode(array_values(array_unique($minutes)));
             }
             try {
-                DB::table('football_timeline')->upsert([$row], ['match_id'], ['timeline', 'updated_at']);
+                DB::table('football_timeline')->upsert([$row], ['match_id'], array_merge(array_slice($groups, 0, 6), ['timeline', 'updated_at']));
             } catch (Throwable $exception) {
                 if (DB::transactionLevel() > 0) {
                     throw $exception;
@@ -390,49 +457,63 @@ class FootballSyncController extends Controller
                 $onlyIncidents = $goalsComplete && ! empty($timeline['clock']);
                 $key = 'Football:timeline-backfill:'.$matchId;
                 try {
-                    if (Cache::store('redis')->add($key, true, 60)) {
-                        dispatch(static function () use ($matchId, $onlyIncidents): void {
-                            try {
-                                foreach ($onlyIncidents ? ['/incidents'] : ['', '/incidents', '/odds'] as $suffix) {
-                                    if ($suffix === '/odds') {
-                                        $current = array_find(getInRedis('Football:matches') ?? [], static fn (array $match): bool => (string) ($match['sportsApiPro_match_id'] ?? '') === $matchId);
-                                        if (($current['result_status'] ?? '') !== 'Live' || Cache::store('redis')->has('Football:bet365:live:'.$matchId)) {
-                                            continue;
-                                        }
-                                    }
-                                    $requestedAt = microtime(true);
-                                    $response = ApiCall('https://api.sportsapipro.com/v2/football/match/'.$matchId.$suffix, ['x-api-key' => GetSportApiProKey()], ['connect_timeout' => 3, 'timeout' => 15]);
-                                    if (! is_array($response) || ($response['success'] ?? true) === false) {
-                                        continue;
-                                    }
-                                    $payload = $response['data'] ?? $response;
-                                    $payload = $suffix === '' ? ($payload['event'] ?? $payload) : $payload;
-                                    if (! is_array($payload)) {
-                                        continue;
-                                    }
-                                    if ($suffix === '/odds') {
-                                        app(self::class)->mergeBet365LiveOdds($matchId, $payload, $requestedAt);
-
-                                        continue;
-                                    }
-                                    withRedisLock('Football:matches', static function () use ($matchId, $suffix, $payload, $requestedAt): void {
-                                        $matches = getInRedis('Football:matches') ?? [];
-                                        foreach ($matches as &$cachedMatch) {
-                                            if ((string) ($cachedMatch['sportsApiPro_match_id'] ?? '') === $matchId) {
-                                                app(self::class)->storeTimeline($cachedMatch, 'match:'.$matchId.($suffix === '' ? '' : ':incidents'), $payload, 'snapshot', $requestedAt);
+                    $pending = Cache::store('redis')->lock($key.':pending', 3600);
+                    if ($pending->get()) {
+                        if (! Cache::store('redis')->add($key, true, 60)) {
+                            $pending->release();
+                        } else {
+                            $owner = $pending->owner();
+                            dispatch(static function () use ($matchId, $onlyIncidents, $key, $owner): void {
+                                try {
+                                    foreach ($onlyIncidents ? ['/incidents'] : ['', '/incidents', '/odds'] as $suffix) {
+                                        if ($suffix === '/odds') {
+                                            $current = array_find(getInRedis('Football:matches') ?? [], static fn (array $match): bool => (string) ($match['sportsApiPro_match_id'] ?? '') === $matchId);
+                                            if (($current['result_status'] ?? '') !== 'Live' || Cache::store('redis')->has('Football:bet365:live:'.$matchId)) {
+                                                continue;
                                             }
                                         }
-                                        unset($cachedMatch);
-                                        storeInRedis('Football:matches', $matches, 10, false);
-                                    }, 30);
+                                        $requestedAt = microtime(true);
+                                        $response = ApiCall('https://api.sportsapipro.com/v2/football/match/'.$matchId.$suffix, ['x-api-key' => GetSportApiProKey()], ['connect_timeout' => 3, 'timeout' => 15]);
+                                        if (! is_array($response) || ($response['success'] ?? true) === false) {
+                                            continue;
+                                        }
+                                        $payload = $response['data'] ?? $response;
+                                        $payload = $suffix === '' ? ($payload['event'] ?? $payload) : $payload;
+                                        if (! is_array($payload)) {
+                                            continue;
+                                        }
+                                        if ($suffix === '/odds') {
+                                            app(self::class)->mergeBet365LiveOdds($matchId, $payload, $requestedAt);
+
+                                            continue;
+                                        }
+                                        withRedisLock('Football:matches', static function () use ($matchId, $suffix, $payload, $requestedAt): void {
+                                            $matches = getInRedis('Football:matches') ?? [];
+                                            foreach ($matches as &$cachedMatch) {
+                                                if ((string) ($cachedMatch['sportsApiPro_match_id'] ?? '') === $matchId) {
+                                                    app(self::class)->storeTimeline($cachedMatch, 'match:'.$matchId.($suffix === '' ? '' : ':incidents'), $payload, 'snapshot', $requestedAt);
+                                                }
+                                            }
+                                            unset($cachedMatch);
+                                            storeInRedis('Football:matches', $matches, 10, false);
+                                        }, 30);
+                                    }
+                                    Event::dispatch(new FootballSportsScoreUpdated);
+                                } catch (Throwable $exception) {
+                                    Log::warning('Football timeline history unavailable', ['match_id' => $matchId, 'exception' => $exception::class]);
+                                } finally {
+                                    Cache::store('redis')->restoreLock($key.':pending', $owner)->release();
                                 }
-                                Event::dispatch(new FootballSportsScoreUpdated);
-                            } catch (Throwable $exception) {
-                                Log::warning('Football timeline history unavailable', ['match_id' => $matchId, 'exception' => $exception::class]);
-                            }
-                        })->name('Football timeline '.$matchId)->onQueue('default');
+                            })->name('Football timeline '.$matchId)->onConnection('sports-realtime')->onQueue('sports-timeline')
+                                ->catch(static function (Throwable $exception) use ($key, $owner): void {
+                                    Cache::store('redis')->restoreLock($key.':pending', $owner)->release();
+                                });
+                        }
                     }
                 } catch (Throwable $exception) {
+                    if (isset($pending)) {
+                        $pending->release();
+                    }
                     Log::warning('Football timeline history could not be queued', ['match_id' => $matchId, 'exception' => $exception::class]);
                 }
             }
@@ -938,9 +1019,7 @@ class FootballSyncController extends Controller
                 dispatch(static function () use ($matchId, $key, $owner): void {
                     $lock = Cache::store('redis')->restoreLock($key, $owner);
                     try {
-                        if ($lock->isOwnedByCurrentProcess()) {
-                            app(self::class)->loadMatchStatistics($matchId);
-                        }
+                        app(self::class)->loadMatchStatistics($matchId);
                     } finally {
                         $lock->release();
                     }
@@ -974,70 +1053,85 @@ class FootballSyncController extends Controller
             if (! $includePrematch && ($match['result_status'] ?? '') !== 'Prematch') {
                 $sections[] = 'statistics';
             }
-            foreach ($sections as $section) {
-                $lastAttempt = $match['statistics_requests'][$section] ?? [];
-                $ttl = ($lastAttempt['available'] ?? false)
-                    ? ($section === 'statistics' ? (($match['result_status'] ?? '') === 'Finished' ? 86400 : 30) : 1800)
-                    : 120;
-                if (($lastAttempt['at'] ?? 0) > microtime(true) - $ttl
-                    || ($section === 'statistics' && ($match['statistics_updated_at'] ?? 0) > microtime(true) - 30)) {
-                    continue;
-                }
-                $requestedAt = microtime(true);
-                $diagnostics = null;
-                $url = 'https://api.sportsapipro.com/v2/football/match/'.$matchId.($section === 'overview' ? '' : '/'.$section);
-                if (in_array($section, ['home-season', 'away-season'], true)) {
-                    $overview = $responses['overview']['data'] ?? $match['prematch_statistics']['overview'] ?? [];
-                    $side = $section === 'home-season' ? 'home' : 'away';
-                    $teamId = $overview[$side.'Team']['id'] ?? $match[$side.'_team_id'] ?? null;
-                    $tournamentId = $overview['tournament']['uniqueTournament']['id'] ?? null;
-                    $seasonId = $overview['season']['id'] ?? null;
-                    if (! is_numeric($teamId) || (int) $teamId <= 0 || ! is_numeric($tournamentId) || (int) $tournamentId <= 0 || ! is_numeric($seasonId) || (int) $seasonId <= 0) {
-                        $attempts[$section] = ['at' => $requestedAt, 'available' => false];
-
+            foreach (array_chunk($sections, 4) as $batch) {
+                $requests = [];
+                $requestedTimes = [];
+                foreach ($batch as $section) {
+                    $lastAttempt = $match['statistics_requests'][$section] ?? [];
+                    $ttl = ($lastAttempt['available'] ?? false)
+                        ? ($section === 'statistics' ? (($match['result_status'] ?? '') === 'Finished' ? 86400 : 30) : 1800)
+                        : 120;
+                    if (($lastAttempt['at'] ?? 0) > microtime(true) - $ttl
+                        || ($section === 'statistics' && ($match['statistics_updated_at'] ?? 0) > microtime(true) - 30)) {
                         continue;
                     }
-                    $url = 'https://api.sportsapipro.com/v2/football/teams/'.(int) $teamId.'/tournament/'.(int) $tournamentId.'/season/'.(int) $seasonId.'/statistics?type=overall';
-                }
-                try {
-                    $response = $this->requestFootballStatistics($url, $diagnostics, in_array($section, ['overview', 'home-season', 'away-season'], true) ? 3 : 6);
-                    $payload = $response['data'] ?? $response;
-                    if ($section === 'overview') {
-                        $payload = $response['match'] ?? $payload['match'] ?? $payload['event'] ?? $payload;
-                    } elseif (in_array($section, ['home-season', 'away-season'], true)) {
-                        $payload = $payload['statistics'] ?? [];
-                    }
-                    $expectedKeys = match ($section) {
-                        'overview' => ['venue', 'referee', 'startTimestamp', 'roundInfo', 'Info', 'season'],
-                        'home-season', 'away-season' => ['avgRating', 'matches', 'awardedMatches'],
-                        'statistics' => ['statistics'],
-                        'pregame-form' => ['homeTeam', 'awayTeam'],
-                        'h2h' => ['teamDuel', 'managerDuel'],
-                        'streaks' => ['general', 'head2head'],
-                    };
-                    $available = is_array($response) && ($response['success'] ?? true) !== false
-                        && is_array($payload) && array_any($expectedKeys, static fn (string $key): bool => array_key_exists($key, $payload))
-                        && (! isset($response['matchId']) || (string) $response['matchId'] === $matchId)
-                        && ($section !== 'overview' || ! isset($payload['id']) || (string) $payload['id'] === $matchId)
-                        && (! isset($diagnostics['http_status']) || ($diagnostics['http_status'] >= 200 && $diagnostics['http_status'] < 300));
-                    if ($available) {
-                        if ($section === 'overview') {
-                            $payload = array_intersect_key($payload, array_flip(['venue', 'referee', 'startTimestamp', 'roundInfo', 'Info', 'season', 'tournament', 'homeTeam', 'awayTeam']));
-                            foreach (['homeTeam', 'awayTeam'] as $team) {
-                                $payload[$team] = array_intersect_key(is_array($payload[$team] ?? null) ? $payload[$team] : [], array_flip(['id', 'name']));
-                            }
-                        } elseif (in_array($section, ['home-season', 'away-season'], true)) {
-                            $payload = array_intersect_key($payload, array_flip($expectedKeys));
+                    $requestedAt = microtime(true);
+                    $diagnostics = null;
+                    $url = 'https://api.sportsapipro.com/v2/football/match/'.$matchId.($section === 'overview' ? '' : '/'.$section);
+                    if (in_array($section, ['home-season', 'away-season'], true)) {
+                        $overview = $responses['overview']['data'] ?? $match['prematch_statistics']['overview'] ?? [];
+                        $side = $section === 'home-season' ? 'home' : 'away';
+                        $teamId = $overview[$side.'Team']['id'] ?? $match[$side.'_team_id'] ?? null;
+                        $tournamentId = $overview['tournament']['uniqueTournament']['id'] ?? null;
+                        $seasonId = $overview['season']['id'] ?? null;
+                        if (! is_numeric($teamId) || (int) $teamId <= 0 || ! is_numeric($tournamentId) || (int) $tournamentId <= 0 || ! is_numeric($seasonId) || (int) $seasonId <= 0) {
+                            $attempts[$section] = ['at' => $requestedAt, 'available' => false];
+
+                            continue;
                         }
-                        $responses[$section] = ['data' => $payload, 'at' => $requestedAt];
-                    } else {
-                        Log::warning('Football statistics response unavailable', ['match_id' => $matchId, 'section' => $section, 'api' => $diagnostics]);
+                        $url = 'https://api.sportsapipro.com/v2/football/teams/'.(int) $teamId.'/tournament/'.(int) $tournamentId.'/season/'.(int) $seasonId.'/statistics?type=overall';
                     }
-                } catch (Throwable $exception) {
-                    $available = false;
-                    Log::warning('Football statistics request failed', ['match_id' => $matchId, 'section' => $section, 'api' => $diagnostics, 'exception' => $exception::class]);
+                    $requests[$section] = $url;
+                    $requestedTimes[$section] = $requestedAt;
                 }
-                $attempts[$section] = ['at' => $requestedAt, 'available' => $available];
+                $batchDiagnostics = null;
+                $batchResponses = $this->requestFootballStatistics($requests, $batchDiagnostics);
+                foreach ($requests as $section => $url) {
+                    $requestedAt = $requestedTimes[$section];
+                    try {
+                        if (($batchResponses[$section]['exception'] ?? null) instanceof Throwable) {
+                            throw $batchResponses[$section]['exception'];
+                        }
+                        $response = $batchResponses[$section]['response'] ?? null;
+                        $diagnostics = $batchResponses[$section]['diagnostics'] ?? null;
+                        $payload = $response['data'] ?? $response;
+                        if ($section === 'overview') {
+                            $payload = $response['match'] ?? $payload['match'] ?? $payload['event'] ?? $payload;
+                        } elseif (in_array($section, ['home-season', 'away-season'], true)) {
+                            $payload = $payload['statistics'] ?? [];
+                        }
+                        $expectedKeys = match ($section) {
+                            'overview' => ['venue', 'referee', 'startTimestamp', 'roundInfo', 'Info', 'season'],
+                            'home-season', 'away-season' => ['avgRating', 'matches', 'awardedMatches'],
+                            'statistics' => ['statistics'],
+                            'pregame-form' => ['homeTeam', 'awayTeam'],
+                            'h2h' => ['teamDuel', 'managerDuel'],
+                            'streaks' => ['general', 'head2head'],
+                        };
+                        $available = is_array($response) && ($response['success'] ?? true) !== false
+                            && is_array($payload) && array_any($expectedKeys, static fn (string $key): bool => array_key_exists($key, $payload))
+                            && (! isset($response['matchId']) || (string) $response['matchId'] === $matchId)
+                            && ($section !== 'overview' || ! isset($payload['id']) || (string) $payload['id'] === $matchId)
+                            && (! isset($diagnostics['http_status']) || ($diagnostics['http_status'] >= 200 && $diagnostics['http_status'] < 300));
+                        if ($available) {
+                            if ($section === 'overview') {
+                                $payload = array_intersect_key($payload, array_flip(['venue', 'referee', 'startTimestamp', 'roundInfo', 'Info', 'season', 'tournament', 'homeTeam', 'awayTeam']));
+                                foreach (['homeTeam', 'awayTeam'] as $team) {
+                                    $payload[$team] = array_intersect_key(is_array($payload[$team] ?? null) ? $payload[$team] : [], array_flip(['id', 'name']));
+                                }
+                            } elseif (in_array($section, ['home-season', 'away-season'], true)) {
+                                $payload = array_intersect_key($payload, array_flip($expectedKeys));
+                            }
+                            $responses[$section] = ['data' => $payload, 'at' => $requestedAt];
+                        } else {
+                            Log::warning('Football statistics response unavailable', ['match_id' => $matchId, 'section' => $section, 'api' => $diagnostics]);
+                        }
+                    } catch (Throwable $exception) {
+                        $available = false;
+                        Log::warning('Football statistics request failed', ['match_id' => $matchId, 'section' => $section, 'api' => $diagnostics, 'exception' => $exception::class]);
+                    }
+                    $attempts[$section] = ['at' => $requestedAt, 'available' => $available];
+                }
             }
             if ($attempts === []) {
                 return $match;
@@ -1072,8 +1166,19 @@ class FootballSyncController extends Controller
         }
     }
 
-    protected function requestFootballStatistics(string $url, ?array &$diagnostics = null, int $timeout = 6): mixed
+    protected function requestFootballStatistics(string|array $url, ?array &$diagnostics = null, int $timeout = 6): mixed
     {
+        if (is_array($url)) {
+            $requests = [];
+            foreach ($url as $section => $endpoint) {
+                $requests[$section] = ['url' => $endpoint, 'key' => ['x-api-key' => GetSportApiProKey()], 'options' => [
+                    'connect_timeout' => 3, 'timeout' => in_array($section, ['overview', 'home-season', 'away-season'], true) ? 3 : 6,
+                ]];
+            }
+
+            return ApiCallPool($requests, (int) config('services.sports_api_pro.http_concurrency', 2));
+        }
+
         return ApiCall($url, ['x-api-key' => GetSportApiProKey()], ['connect_timeout' => 3, 'timeout' => $timeout], $diagnostics);
     }
 

@@ -24,6 +24,36 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->shareCheckAuthSubscription();
+        View::composer([
+            'users.sports.football.footballDetails', 'users.sports.cricket.cricketDetails',
+            'users.sports.icehockey.icehockeyDetails', 'users.sports.americanfootball.americanfootballDetails',
+            'users.sports.baseball.baseballDetails', 'users.sports.basketball.basketballDetails',
+            'users.sports.tennis.tennisDetails', 'users.sports.horseracing.horseracingDetails',
+            'users.sports.greyhounds.greyhoundsDetails',
+        ], static function ($view): void {
+            $groups = $view->getData()['data'] ?? [];
+            $known = request()->input('_fixture_versions', []);
+            if (is_string($known)) {
+                $known = strlen($known) <= 131072 ? json_decode($known, true) : [];
+            }
+            $known = is_array($known) && count($known) <= 2000 ? $known : [];
+            $access = $view->getData()['checkAuthAndSubscription'] ?? checkAuthAndSubscription();
+            $timeVersion = in_array(request()->input('type'), ['prematch_drops', 'market_shock'], true) ? time() : intdiv(time(), 60);
+            $context = [$view->name(), app()->getLocale(), getCurrentUserTimezone(), auth('customers')->id(), $access, request()->input('type'), request()->input('market_name'), $timeVersion];
+            foreach ($groups as $groupKey => &$group) {
+                foreach ($group['matches'] as $index => &$match) {
+                    $key = hash('xxh3', serialize([$view->name(), $groupKey, $match['unique_key'] ?? $match['sportsApiPro_match_id'] ?? $match['betfair_match_id'] ?? $index]));
+                    $version = hash('xxh3', serialize([$context, $match]));
+                    $match['_fixture_key'] = $key;
+                    $match['_fixture_version'] = $version;
+                    $match['_fixture_reuse'] = ! request()->boolean('append') && ($known[$key] ?? null) === $version;
+                }
+                unset($match);
+            }
+            unset($group);
+            $view->with('data', $groups);
+        });
+
         View::composer(['users.layout.main', 'admin.layouts.main', 'admin.auth.login'], static function ($view): void {
             $view->with('uiTranslations', collect([
                 ' Goals',

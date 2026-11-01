@@ -151,7 +151,7 @@ class AlertService
             fn (object $alert) => ProcessAlert::dispatch('fanout', ['alert_id' => $alert->id])
         );
         DB::table('alert_deliveries')->whereIn('status', ['pending', 'retry'])->where('updated_at', '<', now()->subMinutes(2))
-            ->orderBy('id')->lazyById(100)->each(fn (object $delivery) => ProcessAlert::dispatch('deliver', ['delivery_id' => $delivery->id]));
+            ->orderBy('id')->lazyById(100)->each(fn (object $delivery) => ProcessAlert::dispatch('deliver', ['delivery_id' => $delivery->id])->onQueue($delivery->channel === 'platform' ? 'alerts-platform' : 'alerts-telegram'));
     }
 
     /** @param array<string, mixed> $message */
@@ -390,7 +390,7 @@ class AlertService
                 DB::table('alert_deliveries')->insertOrIgnore(['alert_id' => $alert->id, 'customer_id' => $customer->id, 'channel' => $channel,
                     'destination' => $channel === 'telegram' ? $customer->telegram_chat_id : null, 'status' => 'pending', 'created_at' => now(), 'updated_at' => now()]);
                 $id = DB::table('alert_deliveries')->where(['alert_id' => $alert->id, 'customer_id' => $customer->id, 'channel' => $channel])->value('id');
-                ProcessAlert::dispatch('deliver', ['delivery_id' => $id])->afterCommit();
+                ProcessAlert::dispatch('deliver', ['delivery_id' => $id])->onQueue($channel === 'platform' ? 'alerts-platform' : 'alerts-telegram')->afterCommit();
             });
         }
         DB::table('alerts')->where('id', $alertId)->update(['fanned_out_at' => now()]);

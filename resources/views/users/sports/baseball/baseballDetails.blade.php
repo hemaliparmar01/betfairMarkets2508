@@ -12,6 +12,10 @@
         @if (filled($group['tournament_country'] ?? null)){{ $group['tournament_country'] }} : @endif{{ $group['tournament_name'] }}
     </h2>
     @foreach ($group['matches'] as $event)
+        <!--bf-fixture:{{ $event['_fixture_key'] }}:{{ $event['_fixture_version'] }}-->
+        @if ($event['_fixture_reuse'])
+            <!--bf-fixture-reuse-->
+        @else
         @php
             $choices = ['1' => $event['team1'], '2' => $event['team2']];
             if ($event['prediction_has_draw']) { $choices['X'] = 'Tie'; }
@@ -56,7 +60,9 @@
                 @endforeach
             </div>
         </div>
-    @endforeach
+            @endif
+        <!--bf-fixture-end-->
+        @endforeach
 @empty
     @if (! $append)<p class="py-10 text-center text-sm text-[rgb(var(--text-muted))]" data-baseball-empty>{{ __('No data available.') }}</p>@endif
 @endforelse

@@ -3,6 +3,10 @@
 @forelse ($data as $group)
     <h2 data-league-header="{{ ($group['tournament_country'] ?? '').'|'.$group['tournament_name'].'|'.$group['status'] }}" class="mb-2 mt-5 border-b border-[var(--border-neutral-5-2)] pb-2 text-xs font-bold uppercase tracking-wide text-[var(--text-brand-60)] dark:border-[rgb(var(--border))] dark:text-[rgb(var(--text-soft))]">@if (filled($group['tournament_country'] ?? null)){{ $group['tournament_country'] }} : @endif{{ $group['tournament_name'] }}</h2>
     @foreach ($group['matches'] as $race)
+        <!--bf-fixture:{{ $race['_fixture_key'] }}:{{ $race['_fixture_version'] }}-->
+        @if ($race['_fixture_reuse'])
+            <!--bf-fixture-reuse-->
+        @else
         @php
             $choices = array_column($race['win_runners'], 'runner', 'runnerId');
             $prediction = ['match_id' => $race['id'], 'poll' => 'winner', 'choices' => $choices, 'counts' => $race['prediction_counts'], 'vote' => $race['prediction_vote'], 'locked' => $race['status'] === 'Finished' || $race['timestamp'] <= time()];
@@ -36,7 +40,9 @@
                 @endforeach
             </div>
         </div>
-    @endforeach
+            @endif
+        <!--bf-fixture-end-->
+        @endforeach
 @empty
     @if (! $append)<p data-horseracing-empty class="py-10 text-center text-sm text-[rgb(var(--text-muted))]">{{ __('No data available.') }}</p>@endif
 @endforelse
