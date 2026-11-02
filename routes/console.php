@@ -13,6 +13,7 @@ use App\Jobs\ProcessAlert;
 use App\Services\FootballV6Stats;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schedule;
 
 Artisan::command('inspire', function () {
@@ -26,6 +27,10 @@ Schedule::call(static function (): void {
 })->name('customer-alerts')->everyMinute()->withoutOverlapping(2);
 
 Schedule::command('sports:process-match-backups --scheduled')->runInBackground()->everyMinute()->withoutOverlapping(5);
+
+Schedule::call(static function (): void {
+    DB::table('football_timeline')->where('created_at', '<=', now()->subDays(3))->delete();
+})->name('football-timeline-cleanup')->dailyAt('00:00')->timezone('Asia/Kolkata')->withoutOverlapping();
 
 Schedule::call(function () {
     app(FootballSyncController::class)->queueMatchStatistics();

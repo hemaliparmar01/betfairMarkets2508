@@ -12,12 +12,15 @@ use Illuminate\Http\Request;
 use Illuminate\Mail\Message;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Locale;
@@ -162,7 +165,6 @@ class CustomerAuthService
             report($exception);
             throw ValidationException::withMessages(['mobile' => __('We could not send your login code. Please try again.')]);
         }
-        $this->customers->update((int) $customer->id, ['login_channel_via' => $channel]);
         $request->session()->put('customer_login_otp', [
             'customer_id' => $customer->id, 'nonce' => $nonce, 'expires_at' => now()->timestamp + 600,
             'credential_hash' => hash('sha256', $customer->password),
@@ -223,6 +225,7 @@ class CustomerAuthService
             throw ValidationException::withMessages(['code' => __('The code is incorrect, expired, or has reached five attempts.')]);
         }
         $request->session()->forget('customer_login_otp');
+        $pending['channel'] = $customer->login_channel_via ?? $pending['channel'];
         $data = $pending['data'] + ['credential_hash' => $pending['credential_hash']];
         try {
             $this->authenticate($request, $customer, $data, $pending['channel'], false);
@@ -244,31 +247,117 @@ class CustomerAuthService
     private function deliverCode(Customer $customer, string $code, string $purpose, bool $preferEmail = false): string
     {
         $counter = $purpose === 'login' ? 'login_sms_count' : 'register_sms_count';
-        if (! $preferEmail && $customer->{$counter} < 3 && filled(config('services.infobip.key')) && filled(config('services.infobip.base_url'))) {
+        $channelField = $purpose === 'login' ? 'login_channel_via' : 'verification_via';
+        $callbackUrl = (string) config('app.url');
+        $callbackHost = strtolower(trim((string) parse_url($callbackUrl, PHP_URL_HOST), '[]'));
+        $canReceiveDeliveryReports = filter_var($callbackUrl, FILTER_VALIDATE_URL) !== false
+            && parse_url($callbackUrl, PHP_URL_SCHEME) === 'https'
+            && $callbackHost !== 'localhost'
+            && ! Str::endsWith($callbackHost, ['.localhost', '.local', '.test', '.invalid'])
+            && (filter_var($callbackHost, FILTER_VALIDATE_IP) === false
+                || filter_var($callbackHost, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) !== false);
+        if (! $preferEmail && $canReceiveDeliveryReports && $customer->{$counter} < 3 && filled(config('services.infobip.key')) && filled(config('services.infobip.base_url'))) {
+            $messageId = (string) Str::uuid();
+            $cacheKey = 'customer-otp-sms:'.$messageId;
+            $lock = Cache::lock($cacheKey.':lock', 30);
             try {
+                $lock->block(3);
+                $customer->refresh();
+                $payload = json_decode($customer->{$purpose === 'login' ? 'login_otp' : 'code'}, true, flags: JSON_THROW_ON_ERROR);
+                $expiresAt = $payload['expires_at'];
+                Cache::put($cacheKey, [
+                    'customer_id' => (int) $customer->id, 'purpose' => $purpose,
+                    'code' => Crypt::encryptString($code), 'otp_hash' => $payload['hash'],
+                    'expires_at' => $expiresAt, 'locale' => app()->getLocale(),
+                    'credential_hash' => hash('sha256', $customer->password),
+                    'to' => ltrim($customer->mobile_code, '+').$customer->mobile,
+                ], max(1, $expiresAt - now()->timestamp));
                 $response = Http::withHeaders(['Authorization' => 'App '.config('services.infobip.key')])
                     ->acceptJson()->connectTimeout(3)->timeout(8)
                     ->post(rtrim(config('services.infobip.base_url'), '/').'/sms/2/text/advanced', [
                         'messages' => [[
                             'from' => config('services.infobip.sender'),
-                            'destinations' => [['to' => ltrim($customer->mobile_code, '+').$customer->mobile]],
+                            'destinations' => [['to' => ltrim($customer->mobile_code, '+').$customer->mobile, 'messageId' => $messageId]],
                             'text' => __('Your BF Markets verification code is :code. It expires in 10 minutes.', ['code' => $code]),
+                            'notifyUrl' => rtrim(config('app.url'), '/').URL::temporarySignedRoute('customers.sms.delivery', now()->setTimestamp($expiresAt), ['messageId' => $messageId], false),
+                            'notifyContentType' => 'application/json',
+                            'validityPeriod' => 1,
                         ]],
                     ]);
                 if ($response->successful() && in_array((int) $response->json('messages.0.status.groupId'), [1, 3], true)) {
                     Customer::query()->whereKey($customer->id)->increment($counter);
+                    $this->customers->update((int) $customer->id, [$channelField => 'mobile']);
+                    if ((int) $response->json('messages.0.status.id') === 5 && (int) $response->json('messages.0.status.groupId') === 3) {
+                        Cache::forget($cacheKey);
+                    }
 
                     return 'mobile';
                 }
+                Cache::forget($cacheKey);
             } catch (\Throwable $exception) {
+                Cache::forget($cacheKey);
                 report($exception);
+            } finally {
+                $lock->release();
             }
         }
-        Mail::raw(__("Your BF Markets verification code is: :code\n\nThis code expires in 10 minutes. If you did not request this, ignore this email.", ['code' => $code]), function (Message $message) use ($customer, $purpose): void {
-            $message->to($customer->email)->subject($purpose === 'login' ? __('Your BF Markets login code') : __('Verify your BF Markets account'));
+        Mail::send([
+            'html' => 'users.emails.reset-password',
+            'raw' => __("Your BF Markets verification code is: :code\n\nThis code expires in 10 minutes. If you did not request this, ignore this email.", ['code' => $code]),
+        ], ['customer' => $customer, 'code' => $code, 'purpose' => $purpose], function (Message $message) use ($customer, $purpose): void {
+            $message->from(config('mail.from.address'), 'BF Markets')
+                ->to($customer->email)->subject($purpose === 'login' ? __('Your BF Markets login code') : __('Verify your BF Markets account'));
         });
+        $this->customers->update((int) $customer->id, [$channelField => 'email']);
 
         return 'email';
+    }
+
+    /** @param array<int, array{messageId: string, to: string, status: array{groupId: int, id: int}}> $results */
+    public function handleSmsDelivery(string $messageId, array $results): void
+    {
+        $cacheKey = 'customer-otp-sms:'.$messageId;
+        Cache::lock($cacheKey.':lock', 30)->block(12, function () use ($cacheKey, $messageId, $results): void {
+            $delivery = Cache::get($cacheKey);
+            if (! is_array($delivery)) {
+                return;
+            }
+            foreach ($results as $result) {
+                if ($result['messageId'] !== $messageId || ltrim($result['to'], '+') !== $delivery['to']) {
+                    continue;
+                }
+                $group = (int) $result['status']['groupId'];
+                if ($group === 3 && (int) $result['status']['id'] === 5) {
+                    Cache::forget($cacheKey);
+
+                    return;
+                }
+                if (! in_array($group, [2, 4, 5], true)) {
+                    continue;
+                }
+                $customer = $this->customers->find($delivery['customer_id']);
+                $payload = $customer === null ? null : json_decode($customer->{$delivery['purpose'] === 'login' ? 'login_otp' : 'code'} ?? '', true);
+                if ($customer === null || $customer->is_blocked || $customer->is_suspended
+                    || ($delivery['purpose'] === 'register' && $customer->is_verified)
+                    || ! is_array($payload) || ($payload['expires_at'] ?? 0) <= now()->timestamp
+                    || ($payload['attempts'] ?? 0) >= 5 || ($payload['hash'] ?? '') !== $delivery['otp_hash']
+                    || ! hash_equals($delivery['credential_hash'], hash('sha256', $customer->password))) {
+                    Cache::forget($cacheKey);
+
+                    return;
+                }
+                $locale = app()->getLocale();
+                try {
+                    app()->setLocale($delivery['locale']);
+                    $this->deliverCode($customer, Crypt::decryptString($delivery['code']), $delivery['purpose'], true);
+                    Cache::forget($cacheKey);
+                } finally {
+                    app()->setLocale($locale);
+                }
+
+                return;
+            }
+        });
     }
 
     /** @param array<string, mixed> $data */
@@ -358,8 +447,7 @@ class CustomerAuthService
         RateLimiter::hit($key, 3600);
 
         try {
-            $channel = $this->deliverCode($customer, $code, 'register');
-            $this->customers->update((int) $customer->id, ['verification_via' => $channel]);
+            $this->deliverCode($customer, $code, 'register');
         } catch (\Throwable $exception) {
             Customer::query()->where('id', $customer->id)->where('code', $payload)->update(['code' => null]);
             report($exception);
@@ -397,7 +485,7 @@ class CustomerAuthService
             throw ValidationException::withMessages(['code' => __('The code is incorrect, expired, or has reached five attempts. Request a new code if needed.')]);
         }
         $request->session()->forget('customer_verification');
-        $request->session()->regenerate();
+        $this->authenticate($request, $customer, [], $customer->verification_via ?? 'email', false);
     }
 
     /** @return array<string, mixed> */

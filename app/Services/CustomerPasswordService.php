@@ -23,8 +23,12 @@ class CustomerPasswordService
             'email' => $email, 'is_blocked' => false, 'is_suspended' => false,
         ], function (Customer $customer, string $token): void {
             $url = rtrim(config('app.url'), '/').route('customers.password.reset', ['token' => $token, 'email' => $customer->email], false);
-            Mail::raw("Reset your BF Markets password: {$url}\n\nThis link expires in 60 minutes. If you did not request it, ignore this email.", function (Message $message) use ($customer): void {
-                $message->to($customer->email)->subject('Reset your BF Markets password');
+            Mail::send([
+                'html' => 'users.emails.reset-password',
+                'raw' => "Reset your BF Markets password: {$url}\n\nThis link expires in 60 minutes. If you did not request it, ignore this email.",
+            ], ['customer' => $customer, 'url' => $url], function (Message $message) use ($customer): void {
+                $message->from(config('mail.from.address'), 'BF Markets')
+                    ->to($customer->email)->subject('Reset your BF Markets password');
             });
         });
     }

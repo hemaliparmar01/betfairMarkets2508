@@ -12,6 +12,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class AuthController extends Controller
@@ -21,6 +22,20 @@ class AuthController extends Controller
     public function login(Request $request): View
     {
         return view('users.login', $this->auth->formCountries() + ['conflictingSession' => $this->auth->pendingLoginSession($request)]);
+    }
+
+    public function smsDelivery(Request $request, string $messageId): Response
+    {
+        $data = $request->validate([
+            'results' => ['required', 'array', 'max:100'],
+            'results.*.messageId' => ['required', 'string', 'max:100'],
+            'results.*.to' => ['required', 'string', 'max:32'],
+            'results.*.status.groupId' => ['required', 'integer'],
+            'results.*.status.id' => ['required', 'integer'],
+        ]);
+        $this->auth->handleSmsDelivery($messageId, $data['results']);
+
+        return response('OK');
     }
 
     public function register(): View
@@ -105,7 +120,7 @@ class AuthController extends Controller
     {
         $this->auth->verifyEmail($request, $request->validated('code'));
 
-        return redirect()->route('login')->with('status', __('Email verified successfully. You can now log in.'));
+        return redirect()->intended(route('football.home'));
     }
 
     public function resendVerification(Request $request): RedirectResponse

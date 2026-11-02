@@ -6,28 +6,31 @@ use App\Models\CustomerLoginSession;
 use App\Models\User;
 use Database\Factories\CustomerFactory;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Mail\Message;
+use Illuminate\Mail\Events\MessageSent;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Password;
-use Symfony\Component\Mime\Email;
 use Tests\TestCase;
 
 class PasswordResetTest extends TestCase
 {
     use RefreshDatabase;
 
-    /** @var array<int, array{text: string, recipient: string}> */
+    /** @var array<int, array{text: string, html: ?string, recipient: string, sender: string, subject: ?string}> */
     private array $messages = [];
 
     protected function setUp(): void
     {
         parent::setUp();
         $this->withoutVite();
-        Mail::shouldReceive('raw')->andReturnUsing(function (string $text, callable $callback): void {
-            $message = new Message(new Email);
-            $callback($message);
-            $this->messages[] = ['text' => $text, 'recipient' => $message->getSymfonyMessage()->getTo()[0]->getAddress()];
+        config(['mail.default' => 'array']);
+        Event::listen(MessageSent::class, function (MessageSent $event): void {
+            $message = $event->message;
+            $this->messages[] = [
+                'text' => $message->getTextBody(), 'html' => $message->getHtmlBody(),
+                'recipient' => $message->getTo()[0]->getAddress(),
+                'sender' => $message->getFrom()[0]->getName(), 'subject' => $message->getSubject(),
+            ];
         });
     }
 
@@ -40,11 +43,26 @@ class PasswordResetTest extends TestCase
 
     public function test_forgot_password_sends_customer_link_and_keeps_generic_response(): void
     {
-        $customer = CustomerFactory::new()->create();
+        config(['app.url' => 'https://bfmarkets.example', 'mail.from.name' => 'Laravel']);
+        $customer = CustomerFactory::new()->create(['name' => '<script>alert("test")</script>']);
         $this->from('/forgot-password')->post('/forgot-password', ['email' => $customer->email])
             ->assertRedirect('/forgot-password')->assertSessionHas('status');
         $this->assertSame($customer->email, $this->messages[0]['recipient']);
         $this->assertStringContainsString('/reset-password/', $this->messages[0]['text']);
+        $this->assertSame('BF Markets', $this->messages[0]['sender']);
+        $this->assertSame('Reset your BF Markets password', $this->messages[0]['subject']);
+        $this->assertIsString($this->messages[0]['html']);
+        $document = new \DOMDocument;
+        $document->loadHTML($this->messages[0]['html'], LIBXML_NOERROR | LIBXML_NOWARNING);
+        $xpath = new \DOMXPath($document);
+        $resetUrl = $xpath->evaluate('string(//a[normalize-space(.)="Reset Password"]/@href)');
+        $this->assertStringStartsWith('https://bfmarkets.example/reset-password/', $resetUrl);
+        $this->assertStringContainsString($resetUrl, $this->messages[0]['text']);
+        $this->assertStringContainsString('60 minutes', $this->messages[0]['html']);
+        $this->assertStringContainsString('If you did not request', $this->messages[0]['html']);
+        $this->assertStringContainsString('&lt;script&gt;', $this->messages[0]['html']);
+        $this->assertSame(0, $xpath->query('//script')->length);
+        $this->assertTrue(Password::broker('customers')->tokenExists($customer, basename(parse_url($resetUrl, PHP_URL_PATH))));
         $status = session('status');
         $this->post('/forgot-password', ['email' => 'unknown@example.com'])->assertSessionHas('status', $status);
         $this->assertCount(1, $this->messages);

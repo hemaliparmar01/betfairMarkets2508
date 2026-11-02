@@ -17,6 +17,7 @@ use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Redis;
+use Illuminate\Support\Facades\Schedule;
 use Illuminate\Support\Facades\Schema;
 use ReflectionClass;
 use ReflectionMethod;
@@ -635,6 +636,31 @@ class FixturesAuditTest extends TestCase
             $this->assertArrayNotHasKey($field, $restored);
         }
         $this->assertArrayNotHasKey('yellow_cards', $restored['live_stats']);
+    }
+
+    public function test_midnight_timeline_cleanup_deletes_only_records_at_least_three_days_old(): void
+    {
+        $this->travelTo(new \DateTimeImmutable('2026-11-04 18:30:00 UTC'));
+        (require database_path('migrations/2026_10_26_110659_create_football_timeline_table.php'))->up();
+        (require database_path('migrations/2026_10_26_124628_add_timeline_to_football_timeline_table.php'))->up();
+        $scores = array_fill_keys(['home_goals', 'away_goals', 'home_yellow_cards', 'away_yellow_cards', 'home_red_cards', 'away_red_cards'], '[]');
+        foreach (['old' => '2026-11-01 18:29:59', 'boundary' => '2026-11-01 18:30:00', 'recent' => '2026-11-01 18:30:01', 'today' => '2026-11-04 18:30:00', 'unknown' => null] as $matchId => $createdAt) {
+            DB::table('football_timeline')->insert($scores + ['match_id' => $matchId, 'created_at' => $createdAt, 'updated_at' => now(), 'timeline' => '{"home_goals":[]}']);
+        }
+        $cleanup = collect(Schedule::events())->firstWhere('description', 'football-timeline-cleanup');
+        $this->assertNotNull($cleanup);
+        $this->assertTrue($cleanup->isDue($this->app));
+
+        $cleanup->run($this->app);
+
+        $this->assertSame(['recent', 'today', 'unknown'], DB::table('football_timeline')->orderBy('id')->pluck('match_id')->all());
+        $this->assertDatabaseHas('football_timeline', ['match_id' => 'recent', 'timeline' => '{"home_goals":[]}', 'created_at' => '2026-11-01 18:30:01']);
+        $cleanup->run($this->app);
+        $this->assertDatabaseCount('football_timeline', 3);
+        $this->travel(1)->minutes();
+        $this->assertFalse($cleanup->isDue($this->app));
+        $this->travelTo(new \DateTimeImmutable('2026-11-05 00:00:00 UTC'));
+        $this->assertFalse($cleanup->isDue($this->app));
     }
 
     public function test_database_restores_exact_timeline_and_display_for_empty_and_partial_cache(): void

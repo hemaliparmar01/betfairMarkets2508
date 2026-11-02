@@ -43,6 +43,10 @@ Route::get('popup', function () {
     return view('popup');
 });
 
+Route::post('auth/infobip/delivery/{messageId}', [AuthController::class, 'smsDelivery'])
+    ->whereUuid('messageId')->middleware('signed:relative')->name('customers.sms.delivery')
+    ->withoutMiddleware([StartSession::class, ShareErrorsFromSession::class, CustomerAuthService::class, PreventRequestForgery::class]);
+
 Route::middleware('guest:customers')->group(function () {
     Route::get('login', [AuthController::class, 'login'])->name('login');
     Route::post('login/mobile/send-code', [AuthController::class, 'sendLoginCode'])->middleware('throttle:5,1')->name('login.mobile.send-code');
