@@ -1166,9 +1166,9 @@ trait FootballTrait
         }
 
         foreach ($getData as $data) {
-            if (($data['data_sync_complete'] ?? false) !== true) {
-                continue;
-            }
+            // if (($data['data_sync_complete'] ?? false) !== true) {
+            //     continue;
+            // }
 
             if (($data['result_status'] ?? null) === 'Finished') {
                 continue;

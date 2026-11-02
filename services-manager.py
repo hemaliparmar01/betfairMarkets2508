@@ -67,7 +67,7 @@ class Manager:
                 instance = name if count == 1 else name + '-' + str(index + 1)
                 unit = spec.get('unit', self.prefix + '-' + instance + '.service')
                 if count > 1 and 'unit' in spec:
-                    unit = unit.removesuffix('.service') + '-' + str(index + 1) + '.service'
+                    unit = re.sub(r'\.service$', '', unit) + '-' + str(index + 1) + '.service'
                 if not re.fullmatch(r'[a-zA-Z0-9@_.-]+\.service', unit):
                     raise ValueError('Invalid systemd unit')
                 self.instances[instance] = dict(spec, name=name, unit=unit, label='com.' + self.prefix + '.' + instance)
