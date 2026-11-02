@@ -103,7 +103,12 @@ class FootballSyncController extends Controller
                 }
             }
         }
-        $timeline['removed'] = array_replace($storedTimeline['removed'] ?? [], $match['timeline']['removed'] ?? $previous['timeline']['removed'] ?? []);
+        $timeline['removed'] = $storedTimeline['removed'] ?? [];
+        foreach ([$previous['timeline']['removed'] ?? [], $match['timeline']['removed'] ?? []] as $removed) {
+            foreach ($removed as $id => $removedAt) {
+                $timeline['removed'][$id] = max($removedAt, $timeline['removed'][$id] ?? 0);
+            }
+        }
         $timeline['events'] = array_diff_key($events, $timeline['removed']);
         $canEstimateCards = $frameType === 'update' && $requestedAt === null && ($timeline['initialized'] ?? false) && ($match['result_status'] ?? '') === 'Live';
         $cardClock = null;
@@ -133,6 +138,7 @@ class FootballSyncController extends Controller
                 }
                 $events = $timeline['events'] ?? [];
                 $beforeEvents = $events;
+                $incomingGoals = [];
                 foreach ($incidents as $incident) {
                     if (! is_array($incident)) {
                         continue;
@@ -225,17 +231,38 @@ class FootballSyncController extends Controller
                         'away_score' => $incident['awayScore'] ?? null,
                     ], static fn (mixed $value): bool => $value !== null && $value !== ''));
                     $events[$id] += ['timestamp' => null, 'player' => '', 'player_surname' => null, 'home_score' => null, 'away_score' => null];
+                    if ($kind === 'goal') {
+                        $incomingGoals[$id] = $home;
+                    }
+                }
+                $goalPeriod = array_find($incidents, static fn (mixed $incident): bool => is_array($incident)
+                    && ($incident['incidentType'] ?? null) === 'period'
+                    && is_numeric($incident['homeScore'] ?? null) && is_numeric($incident['awayScore'] ?? null)
+                    && (($incident['isLive'] ?? null) === true || (in_array(strtoupper((string) ($incident['text'] ?? '')), ['FT', 'AET', 'AP'], true) && ($incident['isLive'] ?? null) === false)));
+                $confirmedHome = $goalPeriod['homeScore'] ?? ($requestedAt !== null && $frameType === 'snapshot' ? $match['home_score'] ?? null : null);
+                $confirmedAway = $goalPeriod['awayScore'] ?? ($requestedAt !== null && $frameType === 'snapshot' ? $match['away_score'] ?? null : null);
+                $incomingHomeGoals = count(array_filter($incomingGoals));
+                // Only a complete score-confirmed history may remove goals absent from a frame.
+                if (! $preserveNewerEvents && is_numeric($confirmedHome) && is_numeric($confirmedAway)
+                    && $incomingHomeGoals === (int) $confirmedHome
+                    && count($incomingGoals) - $incomingHomeGoals === (int) $confirmedAway) {
+                    foreach ($events as $id => $event) {
+                        if (($event['kind'] ?? '') === 'goal' && ! array_key_exists($id, $incomingGoals)) {
+                            unset($events[$id]);
+                            if (($event['source'] ?? '') !== 'score') {
+                                $timeline['removed'][$id] = $receivedAt;
+                            }
+                        }
+                    }
                 }
                 $timeline['events'] = $events;
                 $timeline['initialized'] = ($timeline['initialized'] ?? false) || $frameType === 'snapshot';
-                if ($frameType === 'snapshot') {
-                    $timeline['finalized'] = ($timeline['finalized'] ?? false)
-                        || ($requestedAt !== null && (($timeline['clock']['finished'] ?? false) || ($match['result_status'] ?? '') === 'Finished'))
-                        || array_any($incidents, static fn (mixed $incident): bool => is_array($incident)
-                            && ($incident['incidentType'] ?? null) === 'period'
-                            && in_array(strtoupper((string) ($incident['text'] ?? '')), ['FT', 'AET', 'AP'], true)
-                            && ($incident['isLive'] ?? null) === false);
-                }
+                $timeline['finalized'] = ($timeline['finalized'] ?? false)
+                    || ($frameType === 'snapshot' && $requestedAt !== null && (($timeline['clock']['finished'] ?? false) || ($match['result_status'] ?? '') === 'Finished'))
+                    || array_any($incidents, static fn (mixed $incident): bool => is_array($incident)
+                        && ($incident['incidentType'] ?? null) === 'period'
+                        && in_array(strtoupper((string) ($incident['text'] ?? '')), ['FT', 'AET', 'AP'], true)
+                        && ($incident['isLive'] ?? null) === false);
                 if ($events !== $beforeEvents || ! isset($timeline['incidents_updated_at'])) {
                     $timeline['incidents_updated_at'] = max($receivedAt, $timeline['incidents_updated_at'] ?? 0);
                 }
@@ -302,6 +329,12 @@ class FootballSyncController extends Controller
             if ($kind === null || ! isset($event['is_home'])) {
                 continue;
             }
+            if ($kind === 'goals' && ($event['source'] ?? '') === 'score') {
+                continue;
+            }
+            if ($kind === 'goals' && ($event['time_estimated'] ?? false)) {
+                $event = array_replace($event, ['minute' => 0, 'added_time' => 0, 'seconds' => 0, 'time_known' => false, 'time_estimated' => false, 'timestamp' => null]);
+            }
             $group = ($event['is_home'] ? 'home_' : 'away_').$kind;
             unset($event['kind'], $event['is_home']);
             $timeline[$group][] = $event;
@@ -313,61 +346,6 @@ class FootballSyncController extends Controller
             $group = $side.'_goals';
             $score = max(0, (int) $match[$side.'_score']);
             $previousScore = $timeline['reported_counts'][$group] ?? null;
-            $estimates = array_column(array_filter($timeline[$group], static fn (array $event): bool => ($event['source'] ?? '') === 'score'), null, 'id');
-            $actual = array_values(array_filter($timeline[$group], static fn (array $event): bool => ($event['source'] ?? '') !== 'score'));
-            $canEstimateGoals = $frameType !== 'restore' && ($match['result_status'] ?? '') === 'Live'
-                && isset($match['timestamp']);
-            $goalClock = null;
-            foreach ($actual as &$goal) {
-                $estimate = array_find($estimates, static fn (array $event): bool => ! isset($goal[$side.'_score']) || $event[$side.'_score'] === (int) $goal[$side.'_score']);
-                if (! ($goal['time_known'] ?? false)) {
-                    if ($estimate !== null) {
-                        $goal = array_replace($goal, array_intersect_key($estimate, array_flip(['minute', 'added_time', 'seconds', 'time_known', 'time_estimated', 'timestamp'])));
-                    } elseif ($canEstimateGoals) {
-                        $goalClock ??= app(FootballController::class)->footballTimeline($match, $timeline);
-                        if (! $goalClock['finished'] && ($goalClock['minute'] > 0 || $goalClock['running'])) {
-                            $goal['minute'] = min($goalClock['period_limit'], $goalClock['minute']);
-                            $goal['added_time'] = max(0, $goalClock['minute'] - $goal['minute']);
-                            $goal['seconds'] = $goalClock['minute'] * 60;
-                            $goal['time_known'] = $goal['time_estimated'] = true;
-                            $goal['timestamp'] ??= Carbon::now('UTC')->toIso8601ZuluString();
-                        }
-                    }
-                }
-                if ($estimate !== null) {
-                    unset($estimates[$estimate['id']]);
-                }
-            }
-            unset($goal);
-            $remaining = max(0, $score - count($actual));
-            $estimates = array_slice(array_filter($estimates, static fn (array $event): bool => (int) $event[$side.'_score'] <= $score), 0, $remaining, true);
-            $timeline[$group] = array_merge($actual, array_values($estimates));
-            if ($canEstimateGoals && count($timeline[$group]) < $score
-                && ($previousScore === null || $score > (int) $previousScore || empty($timeline['removed']))) {
-                $goalClock ??= app(FootballController::class)->footballTimeline($match, $timeline);
-                if (! $goalClock['finished'] && ($goalClock['minute'] > 0 || $goalClock['running'])) {
-                    $occupied = [];
-                    foreach ($timeline[$group] as $index => $goal) {
-                        $occupied[(int) ($goal[$side.'_score'] ?? $index + 1)] = true;
-                    }
-                    $missing = $score - count($timeline[$group]);
-                    for ($index = 1; $index <= $score && $missing > 0; $index++) {
-                        if (isset($occupied[$index])) {
-                            continue;
-                        }
-                        $minute = min($goalClock['period_limit'], $goalClock['minute']);
-                        $added = max(0, $goalClock['minute'] - $minute);
-                        $timeline[$group][] = ['id' => 'score-'.$side.'-goal-'.$index,
-                            'minute' => $minute, 'added_time' => $added, 'seconds' => ($minute + $added) * 60,
-                            'time_known' => true, 'time_estimated' => true, 'source' => 'score',
-                            'timestamp' => Carbon::now('UTC')->toIso8601ZuluString(),
-                            'home_score' => $side === 'home' ? $index : (int) ($match['home_score'] ?? 0),
-                            'away_score' => $side === 'away' ? $index : (int) ($match['away_score'] ?? 0),
-                            'player' => '', 'player_surname' => null];
-                        $missing--;
-                    }
-                }
-            }
             usort($timeline[$group], static fn (array $first, array $second): int => [$first['minute'], $first['added_time'], $first['id']] <=> [$second['minute'], $second['added_time'], $second['id']]);
             if (count($timeline[$group]) >= $score || ($previousScore !== null && $score <= (int) $previousScore)) {
                 $timeline['reported_counts'][$group] = $score;
@@ -442,7 +420,8 @@ class FootballSyncController extends Controller
                 Log::warning('Football timeline persistence failed', ['match_id' => $matchId, 'exception' => $exception::class]);
             }
         }
-        $missingTimedEvents = array_any($groups, static fn (string $group): bool => array_any($match['timeline'][$group], static fn (array $event): bool => ! ($event['time_known'] ?? false) || ($event['time_estimated'] ?? false)));
+        $missingTimedEvents = array_any($groups, static fn (string $group): bool => array_any($match['timeline'][$group], static fn (array $event): bool => ! ($event['time_known'] ?? false) || ($event['time_estimated'] ?? false)))
+            || array_any(['home', 'away'], static fn (string $side): bool => count($timeline[$side.'_goals']) < (int) ($match[$side.'_score'] ?? 0));
         foreach ($match['timeline']['reported_counts'] ?? [] as $group => $count) {
             if (in_array($group, $groups, true) && count(array_filter($match['timeline'][$group], static fn (array $event): bool => (bool) ($event['time_known'] ?? false))) < (int) $count) {
                 $missingTimedEvents = true;
@@ -1361,7 +1340,7 @@ class FootballSyncController extends Controller
         $databaseMarkets = [];
         $databaseLookupKeys = [];
 
-        foreach (($payloads['liveMap'] ?? []) as $payload) {
+        foreach (($payloads['liveMap'] ?? []) as $payloadKey => $payload) {
             if (! isset($payload['openTimestamp'], $payload['team1'], $payload['team2'])) {
                 continue;
             }
@@ -1373,7 +1352,8 @@ class FootballSyncController extends Controller
                 $payload['team1'],
                 $payload['team2'],
                 $payloadTimestamp,
-                $getExistingRecords
+                $getExistingRecords,
+                betfairMatchId: $payloadKey
             );
             if (($getExistingRecords[$existingKey ?? $payloadUniqueKey]['result_status'] ?? null) === 'Finished') {
                 continue;
@@ -1410,7 +1390,8 @@ class FootballSyncController extends Controller
             $team2 = $payload['team2'];
             $uniqueKey = $this->generateUniqueKey($team1, $team2, $currentTimestamp);
 
-            $checkIsExists = $this->checkIfRecordExistsOnAnotherApi($uniqueKey, $team1, $team2, $currentTimestamp, $getExistingRecords);
+            $checkIsExists = $this->checkIfRecordExistsOnAnotherApi($uniqueKey, $team1, $team2, $currentTimestamp, $getExistingRecords, betfairMatchId: $payloadKey);
+            $uniqueKey = $checkIsExists ?? $uniqueKey;
             if ($checkIsExists !== null && ($getExistingRecords[$checkIsExists]['result_status'] ?? null) === 'Finished') {
                 $mainArray[$checkIsExists] = $getExistingRecords[$checkIsExists];
 
@@ -1661,7 +1642,7 @@ class FootballSyncController extends Controller
 
                 $tempArray = [];
                 $uniqueKey = $this->generateUniqueKey($homeTeam, $awayTeam, (string) $startTimestamp);
-                $checkIsExists = $this->checkIfRecordExistsOnAnotherApi($uniqueKey, $homeTeam, $awayTeam, $startTimestamp, $getExistingRecords);
+                $checkIsExists = $this->checkIfRecordExistsOnAnotherApi($uniqueKey, $homeTeam, $awayTeam, $startTimestamp, $getExistingRecords, sportsApiMatchId: $payload['id']);
                 $existingRecord = $checkIsExists === null ? [] : ($getExistingRecords[$checkIsExists] ?? []);
 
                 if (($existingRecord['result_status'] ?? null) === 'Finished') {
@@ -1749,6 +1730,9 @@ class FootballSyncController extends Controller
                     unset($getExistingRecords[$checkIsExists]['events'], $getExistingRecords[$checkIsExists]['goals'], $getExistingRecords[$checkIsExists]['goal_counts']);
                     $databaseMatches[$checkIsExists] = $getExistingRecords[$checkIsExists];
                 } else {
+                    if (isset($getExistingRecords[$uniqueKey])) {
+                        $uniqueKey .= '|'.$payload['id'];
+                    }
                     $tempArray['unique_key'] = $uniqueKey;
                     $tempArray['sportsApiPro_match_id'] = $payload['id'];
                     $tempArray['timeline'] = [];
@@ -1797,6 +1781,7 @@ class FootballSyncController extends Controller
 
     private function storeMatchesInDatabase(array $matches): void
     {
+        $matches = $this->mergeDuplicateMatches($matches);
         if ($matches === []) {
             return;
         }
@@ -2139,15 +2124,29 @@ class FootballSyncController extends Controller
         return str_replace(' ', '_', $name);
     }
 
-    private function checkIfRecordExistsOnAnotherApi(string $uniqueKey, string $team1, string $team2, string|int $timestamp, ?array $existingRecords = null)
+    private function checkIfRecordExistsOnAnotherApi(string $uniqueKey, string $team1, string $team2, string|int $timestamp, ?array $existingRecords = null, int|string|null $sportsApiMatchId = null, int|string|null $betfairMatchId = null)
     {
         $existingRecords ??= getInRedis($this->sports.':matches') ?? [];
 
-        if (array_key_exists($uniqueKey, $existingRecords)) {
+        foreach ($existingRecords as $key => $record) {
+            if (($sportsApiMatchId !== null && (string) ($record['sportsApiPro_match_id'] ?? '') === (string) $sportsApiMatchId)
+                || ($betfairMatchId !== null && (string) ($record['betfair_match_id'] ?? '') === (string) $betfairMatchId)) {
+                return $key;
+            }
+        }
+        if (array_key_exists($uniqueKey, $existingRecords)
+            && ($sportsApiMatchId === null || empty($existingRecords[$uniqueKey]['sportsApiPro_match_id']) || (string) $existingRecords[$uniqueKey]['sportsApiPro_match_id'] === (string) $sportsApiMatchId)
+            && ($betfairMatchId === null || empty($existingRecords[$uniqueKey]['betfair_match_id']) || (string) $existingRecords[$uniqueKey]['betfair_match_id'] === (string) $betfairMatchId)) {
             return $uniqueKey;
         }
 
         foreach ($existingRecords as $key => $record) {
+            if ($sportsApiMatchId !== null && ! empty($record['sportsApiPro_match_id']) && (string) $record['sportsApiPro_match_id'] !== (string) $sportsApiMatchId) {
+                continue;
+            }
+            if ($betfairMatchId !== null && ! empty($record['betfair_match_id']) && (string) $record['betfair_match_id'] !== (string) $betfairMatchId) {
+                continue;
+            }
             $recordTimestamp = (int) ($record['timestamp'] ?? 0);
             $currentTimestamp = (int) $timestamp;
 
@@ -2163,6 +2162,49 @@ class FootballSyncController extends Controller
         }
 
         return null;
+    }
+
+    /** @param array<string, array<string, mixed>> $matches
+     * @return array<string, array<string, mixed>>
+     */
+    public function mergeDuplicateMatches(array $matches): array
+    {
+        $matchKeys = [];
+        foreach ($matches as $key => $match) {
+            $id = (string) ($match['sportsApiPro_match_id'] ?? '');
+            if (! preg_match('/^[1-9][0-9]*$/', $id)) {
+                continue;
+            }
+            if (! isset($matchKeys[$id])) {
+                $matchKeys[$id] = $key;
+
+                continue;
+            }
+            $previousKey = $matchKeys[$id];
+            $previous = $matches[$previousKey];
+            $canonicalKey = ! empty($match['betfair_match_id']) && empty($previous['betfair_match_id']) ? $key : $previousKey;
+            $canonical = $matches[$canonicalKey];
+            $previousVersion = [($previous['result_status'] ?? '') === 'Finished', max([$previous['provider_lifecycle']['sequence'] ?? 0, ...array_values($previous['websocket_change_timestamps'] ?? [])]), $previous['timeline']['clock_updated_at'] ?? 0];
+            $version = [($match['result_status'] ?? '') === 'Finished', max([$match['provider_lifecycle']['sequence'] ?? 0, ...array_values($match['websocket_change_timestamps'] ?? [])]), $match['timeline']['clock_updated_at'] ?? 0];
+            $newer = $version > $previousVersion ? $match : $previous;
+            $older = $version > $previousVersion ? $previous : $match;
+            $merged = array_replace($older, $newer, array_intersect_key($canonical, array_flip(['unique_key', 'team1', 'team2', 'betfair_match_id'])));
+            $merged['unique_key'] = $canonicalKey;
+            if (isset($previous['markets']) || isset($match['markets'])) {
+                $merged['markets'] = array_replace($previous['markets'] ?? [], $match['markets'] ?? [], $canonical['markets'] ?? []);
+            }
+            $merged['websocket_change_timestamps'] = $newer['websocket_change_timestamps'] ?? [];
+            foreach ($older['websocket_change_timestamps'] ?? [] as $channel => $sequence) {
+                $merged['websocket_change_timestamps'][$channel] = max($sequence, $merged['websocket_change_timestamps'][$channel] ?? 0);
+            }
+            $merged['data_sync_complete'] = ! empty($merged['sportsApiPro_match_id']) && ! empty($merged['betfair_match_id']);
+            $this->storeTimeline($merged, frameType: 'restore', previous: $older, storedTimeline: []);
+            $matches[$canonicalKey] = $merged;
+            unset($matches[$canonicalKey === $key ? $previousKey : $key]);
+            $matchKeys[$id] = $canonicalKey;
+        }
+
+        return $matches;
     }
 
     public function teamSimilarity(string $teamA, string $teamB): float

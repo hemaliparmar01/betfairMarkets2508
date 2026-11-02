@@ -92,7 +92,7 @@
                 data-sportApi-match-id="{{ $event['sportsApiPro_match_id'] }}"
                 data-betfair-match-id="{{ $event['betfair_match_id'] }}"
                 data-home-score="{{ $event['home_score'] ?? '' }}" data-away-score="{{ $event['away_score'] ?? '' }}"
-                data-goal-signal="{{ $event['goal_highlight_until'] ?? 0 }}" data-match-status="{{ __($event['status']) }}" data-goal-highlight-seconds="{{ config('services.fixtures.goal_highlight_seconds', 40) }}"
+                data-goal-signal="{{ $event['goal_highlight_until'] ?? 0 }}" data-match-status="{{ $event['status'] }}" data-goal-highlight-seconds="{{ config('services.fixtures.goal_highlight_seconds', 40) }}"
                 class="event-row {{ request()->input('type') === 'prematch_drops' ? 'football-alert football-alert--prematch' : (request()->input('type') === 'market_shock' ? 'football-alert football-alert--shock' : '') }} grid min-w-0 cursor-pointer grid-cols-[minmax(0,1fr)_148px_360px] items-center [background:var(--surface-row)] [border-radius:12px] [padding:5px_12px_5px_16px] [border:1px_solid_var(--border-neutral-5)] [gap:4px_12px] [transition:0.06s] [min-height:44px] dark:[background:rgb(var(--surface))] dark:[border-color:rgb(var(--border))] dark:[&:hover]:[background:rgb(var(--bg))] [&:hover]:[background:var(--surface-neutral-0-16)] [&:hover]:[border-color:var(--border-brand-10)] max-[1024px]:grid-cols-[148px_minmax(0,1fr)] max-[1024px]:gap-2 max-[480px]:grid-cols-1 max-[480px]:p-2.5">
                 @if (request()->input('type') === 'market_shock')
                     <div class="football-alert-league">
@@ -175,7 +175,7 @@
                             <span class="min-w-0 truncate">{{ $event['team1'] }}</span>
                         </span>
                         <span
-                            data-score-status="{{ __($event['status']) }}" class="score-badge match-score block w-[44px] min-w-[44px] max-w-[44px] justify-self-center whitespace-nowrap px-1 text-center text-[16px] font-bold tabular-nums [font-variant-numeric:tabular-nums] [transition:color_0.3s] max-[480px]:text-[14px]">{{ $event['score'] ?? '—' }}</span>
+                            data-score-status="{{ $event['status'] }}" class="score-badge match-score block w-[44px] min-w-[44px] max-w-[44px] justify-self-center whitespace-nowrap px-1 text-center text-[16px] font-bold tabular-nums [font-variant-numeric:tabular-nums] [transition:color_0.3s] max-[480px]:text-[14px]">{{ $event['score'] ?? '—' }}</span>
                         <span
                             data-goal-team="away" class="team-name away flex w-full min-w-0 items-center justify-start gap-1 pl-1 text-left font-normal text-[var(--text-secondary)] [transition:color_0.3s] dark:text-[rgb(var(--text-soft))]"
                             title="{{ $event['team2'] }}">
@@ -273,7 +273,7 @@
                                     <div class="relative grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1 bg-[var(--surface-brand-20)] px-5 py-2">
                                         <span class="min-w-0 break-words text-right">{{ $event['team1'] }}</span>
                                         <span class="rounded bg-[var(--surface-neutral-80)] px-1.5 py-1">
-                                            <strong data-timeline-detail-score data-score-status="{{ __($event['status']) }}" class="match-score match-score-on-dark block whitespace-nowrap">{{ $event['score'] }}</strong>
+                                            <strong data-timeline-detail-score data-score-status="{{ $event['status'] }}" class="match-score match-score-on-dark block whitespace-nowrap">{{ $event['score'] }}</strong>
                                             <span data-timeline-detail-minute>{{ $timeline['minute_label'] }}</span>
                                         </span>
                                         <span class="min-w-0 break-words text-left">{{ $event['team2'] }}</span>
@@ -471,7 +471,7 @@
                                 <span
                                     class="max-w-[36%] text-sm font-semibold sm:text-base">{{ $event['team1'] }}</span>
                                 <span
-                                    data-score-status="{{ __($event['status']) }}" class="match-score match-score-on-dark text-2xl font-extrabold tracking-wider sm:text-4xl">{{ $event['score'] }}</span>
+                                    data-score-status="{{ $event['status'] }}" class="match-score match-score-on-dark text-2xl font-extrabold tracking-wider sm:text-4xl">{{ $event['score'] }}</span>
                                 <span
                                     class="max-w-[36%] text-sm font-semibold sm:text-base">{{ $event['team2'] }}</span>
                             </div>

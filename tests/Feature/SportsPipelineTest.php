@@ -118,6 +118,78 @@ class SportsPipelineTest extends TestCase
         }
     }
 
+    public function test_football_provider_name_changes_reuse_existing_ids_and_keys(): void
+    {
+        $sync = $this->sync('Football');
+        $sports = new ReflectionMethod($sync, 'readsportApiData');
+        $betfair = new ReflectionMethod($sync, 'readBetFairData');
+        $event = $this->sportsEvent(['homeTeam' => ['name' => 'Red Star FC'], 'awayTeam' => ['name' => 'Nancy']]);
+        $sports->invoke($sync, ['events' => [$event]], 'Football:matches', false, 10);
+        $originalKey = array_key_first(getInRedis('Football:matches'));
+        $betfairFixture = $this->betfair('Football', ['team1' => 'Red Star', 'team2' => 'Nancy', 'openTimestamp' => gmdate('c', $event['startTimestamp'])]);
+
+        $betfair->invoke($sync, ['liveMap' => ['456' => $betfairFixture]], 'Football:matches', false, 10);
+
+        $matches = getInRedis('Football:matches');
+        $this->assertSame([$originalKey], array_keys($matches));
+        $this->assertSame($originalKey, $matches[$originalKey]['unique_key']);
+        $this->assertSame('456', (string) $matches[$originalKey]['betfair_match_id']);
+        $renamed = array_replace($event, ['homeTeam' => ['name' => 'Completely Renamed Club'], 'startTimestamp' => $event['startTimestamp'] + 300]);
+        $sports->invoke($sync, ['events' => [$renamed, $renamed]], 'Football:matches', false, 10);
+        $matches = getInRedis('Football:matches');
+        $this->assertSame([$originalKey], array_keys($matches));
+        $this->assertCount(1, $matches[$originalKey]['markets']);
+        $sync->persistOddsSnapshots($matches);
+        $this->assertDatabaseCount('football_matches', 1);
+        $this->assertDatabaseCount('football_markets', 1);
+
+        $sports->invoke($sync, ['events' => [array_replace($event, ['id' => 124])]], 'Football:matches', false, 10);
+        $this->assertCount(2, getInRedis('Football:matches'));
+    }
+
+    public function test_football_existing_duplicate_rows_merge_before_live_updates_and_stale_writes(): void
+    {
+        $sync = $this->sync('Football');
+        $start = time() - 3700;
+        $base = ['sportsApiPro_match_id' => 123, 'team2' => 'Nancy', 'timestamp' => $start, 'result_status' => 'Live', 'minutes_status' => '2nd half', 'home_score' => 1];
+        $fresh = $base + ['unique_key' => 'sports-key', 'team1' => 'Red Star FC', 'away_score' => 3, 'websocket_change_timestamps' => ['match:123' => 20]];
+        $old = $base + ['unique_key' => 'betfair-key', 'team1' => 'Red Star', 'betfair_match_id' => '456', 'away_score' => 2, 'websocket_change_timestamps' => ['match:123' => 10], 'markets' => ['456_MATCH_ODDS' => $this->betfair('Football')['markets']]];
+        Redis::set('Football:matches', json_encode(['sports-key' => $fresh, 'betfair-key' => $old]));
+        Redis::expire('Football:matches', 500);
+
+        $matches = getInRedis('Football:matches');
+
+        $this->assertSame(['betfair-key'], array_keys($matches));
+        $this->assertSame(3, $matches['betfair-key']['away_score']);
+        $this->assertSame('Red Star', $matches['betfair-key']['team1']);
+        $this->assertCount(1, $matches['betfair-key']['markets']);
+        $this->assertLessThanOrEqual(500, Redis::ttl('Football:matches'));
+        $this->assertGreaterThan(490, Redis::ttl('Football:matches'));
+        $this->assertCount(1, json_decode(Redis::get('Football:matches'), true));
+        $listener = app(ListenSportsApiPro::class);
+        (new ReflectionMethod($listener, 'updateFootballCache'))->invoke($listener, 'match:123', ['id' => 123, 'homeScore' => ['current' => 1], 'awayScore' => ['current' => 4], 'status' => ['code' => 7, 'type' => 'inprogress'], 'changes' => ['changeTimestamp' => 21]]);
+        storeInRedis('Football:matches', ['sports-key' => $fresh], 10, false);
+        $matches = getInRedis('Football:matches');
+        $this->assertSame(['betfair-key'], array_keys($matches));
+        $this->assertSame(4, $matches['betfair-key']['away_score']);
+        $correction = array_replace($fresh, ['away_score' => 2, 'websocket_change_timestamps' => ['match:123' => 22]]);
+        storeInRedis('Football:matches', ['sports-key' => $correction], 10, false);
+        $matches = getInRedis('Football:matches');
+        $this->assertSame(['betfair-key'], array_keys($matches));
+        $this->assertSame(2, $matches['betfair-key']['away_score']);
+        $sync->persistOddsSnapshots($matches);
+        $this->assertDatabaseCount('football_matches', 1);
+        $this->assertSame(2, json_decode(DB::table('football_matches')->value('payload'), true)['away_score']);
+        Bus::assertDispatched(CallQueuedClosure::class, static fn (CallQueuedClosure $job): bool => $job->queue === 'sports-timeline');
+        $matches['betfair-key']['result_status'] = 'Finished';
+        storeInRedis('Football:matches', $matches, 10, false);
+        storeInRedis('Football:matches', ['sports-key' => array_replace($fresh, ['websocket_change_timestamps' => ['match:123' => 30]])], 10, false);
+        $finished = getInRedis('Football:matches');
+        $this->assertSame(['betfair-key'], array_keys($finished));
+        $this->assertSame('Finished', $finished['betfair-key']['result_status']);
+        $this->assertSame(2, $finished['betfair-key']['away_score']);
+    }
+
     #[DataProvider('teamSports')]
     public function test_provider_payload_parsers_merge_by_utc_and_preserve_one_match_and_market(string $sport): void
     {
@@ -651,10 +723,9 @@ class SportsPipelineTest extends TestCase
         $scoreFrame = ['type' => 'update', 'channel' => 'match:123', 'data' => ['id' => 123, 'homeScore.current' => 2, 'awayScore.current' => 0]];
         (new ReflectionMethod($listener, 'processSportsFrame'))->invokeArgs($listener, ['football', $config, $scoreFrame, $socket, &$subscriptions]);
         $scored = getInRedis('Football:matches')['known'];
-        $this->assertCount(2, $scored['timeline']['home_goals']);
-        $estimated = $scored['timeline']['home_goals'][1];
-        $this->assertSame(20, $estimated['minute']);
-        $this->assertTrue($estimated['time_estimated']);
+        $this->assertCount(1, $scored['timeline']['home_goals']);
+        $this->assertSame(2, $scored['home_score']);
+        $this->assertSame(10, $scored['timeline']['home_goals'][0]['minute']);
         $this->assertSame($scored['timeline'], json_decode(DB::table('football_timeline')->where('match_id', '123')->value('timeline'), true));
         $withoutTimeline = $scored;
         unset($withoutTimeline['timeline']);

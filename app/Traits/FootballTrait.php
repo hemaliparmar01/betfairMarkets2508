@@ -14,26 +14,81 @@ use Illuminate\Support\Str;
 trait FootballTrait
 {
     private const LEAGUE_PRIORITY = [
-        'Premier League', 'La Liga', 'Serie A', 'Bundesliga', 'Germany Bundesliga', 'Ligue 1',
-        'UEFA Champions League', 'UEFA Europa League', 'UEFA Conference League',
-        'Primeira Liga', 'Eredivisie', 'Süper Lig', 'Belgian Pro League',
-        'Scottish Premiership', 'Greek Super League', 'Austrian Bundesliga',
-        'Swiss Super League', 'EFL Championship', 'Serie B', 'LaLiga 2', 'Ligue 2',
-        'Danish Superliga', 'Eliteserien', 'Allsvenskan', 'Ekstraklasa',
-        'Czech First League', 'Brasileirão Série A', 'Argentine Primera División',
-        'Liga MX', 'Major League Soccer (MLS)', 'Saudi Pro League', 'J1 League',
-        'K League 1', 'Chinese Super League', 'Croatian HNL', 'Serbian SuperLiga',
-        'Romanian SuperLiga', 'Ukrainian Premier League', 'Israeli Premier League',
-        'Norwegian Eliteserien', 'Swedish Allsvenskan', 'EFL League One', 'Liga',
-        'Segunda Federación / Primera Federación', 'Serie C',
-        'National 1 / Championnat National', 'Liga Portugal 2', 'Eerste Divisie',
-        'Belgian Challenger Pro League', 'Scottish Championship', 'Greek Super League 2',
-        'Danish 1st Division', 'Swedish Superettan', 'Norwegian OBOS-ligaen',
-        'Polish I Liga', 'Czech National Football League', 'Croatian First Football League',
-        'Serbian First League', 'Major International Competitions', 'FIFA World Cup',
-        'UEFA European Championship', 'Copa America', 'CONMEBOL Libertadores',
-        'CONMEBOL Sudamericana', 'UEFA Nations League', 'FIFA Club World Cup',
-        'AFC Champions League Elite', 'CAF Champions League', 'CONCACAF Champions Cup',
+        ['FIFA', ['FIFA World Cup', 'World Cup', 'World Championship']],
+        ['FIFA', ['FIFA World Cup Qualifiers', 'FIFA World Cup Qualification', 'World Cup Qualifiers', 'World Cup Qualification', 'World Championship Qualification']],
+        ['FIFA', ['FIFA Club World Cup', 'Club World Cup']],
+        ['FIFA', ['Other Major FIFA International Competitions']],
+        ['UEFA', ['UEFA European Championship (EURO)', 'UEFA European Championship', 'European Championship', 'EURO', 'UEFA EURO']],
+        ['UEFA', ['EURO Qualifiers', 'EURO Qualification', 'UEFA EURO Qualifiers', 'UEFA EURO Qualification', 'UEFA European Championship Qualifiers', 'UEFA European Championship Qualification', 'European Championship Qualifiers', 'European Championship Qualification']],
+        ['UEFA', ['UEFA Champions League', 'Champions League']],
+        ['UEFA', ['UEFA Champions League Qualifiers', 'UEFA Champions League Qualification', 'Champions League Qualifiers', 'Champions League Qualification']],
+        ['UEFA', ['UEFA Europa League', 'Europa League']],
+        ['UEFA', ['UEFA Europa League Qualifiers', 'UEFA Europa League Qualification', 'Europa League Qualifiers', 'Europa League Qualification']],
+        ['UEFA', ['UEFA Conference League', 'UEFA Europa Conference League', 'Conference League', 'Europa Conference League']],
+        ['UEFA', ['UEFA Conference League Qualifiers', 'UEFA Conference League Qualification', 'UEFA Europa Conference League Qualifiers', 'UEFA Europa Conference League Qualification', 'Conference League Qualifiers', 'Conference League Qualification', 'Europa Conference League Qualification']],
+        ['UEFA', ['UEFA Nations League', 'Nations League']],
+        ['UEFA', ['UEFA Super Cup', 'European Super Cup']],
+        ['England', ['Premier League', 'English Premier League']],
+        ['Spain', ['La Liga', 'Spanish La Liga', 'Primera Division']],
+        ['Italy', ['Serie A', 'Italian Serie A']],
+        ['Germany', ['Bundesliga', '1. Bundesliga', 'German Bundesliga', 'Germany Bundesliga']],
+        ['France', ['Ligue 1', 'French Ligue 1']],
+        ['Portugal', ['Primeira Liga', 'Portuguese Primeira Liga', 'Liga Portugal', 'Liga Portugal Betclic']],
+        ['Netherlands', ['Eredivisie', 'Dutch Eredivisie']],
+        ['Turkey', ['Süper Lig', 'Turkish Super Lig']],
+        ['Belgium', ['Belgian Pro League', 'Pro League', 'Jupiler Pro League', 'Belgian Jupiler Pro League']],
+        ['Scotland', ['Scottish Premiership', 'Premiership']],
+        ['Greece', ['Super League Greece', 'Greek Super League', 'Super League', 'Super League 1']],
+        ['Austria', ['Austrian Bundesliga', 'Bundesliga']],
+        ['Switzerland', ['Swiss Super League', 'Super League']],
+        ['Denmark', ['Danish Superliga', 'Superliga', 'Superligaen']],
+        ['Norway', ['Eliteserien', 'Norwegian Eliteserien']],
+        ['Sweden', ['Allsvenskan', 'Swedish Allsvenskan']],
+        ['Poland', ['Ekstraklasa']],
+        ['Czech Republic', ['Czech First League', '1. Liga']],
+        ['Croatia', ['Croatian HNL', 'HNL', '1. HNL']],
+        ['Serbia', ['Serbian SuperLiga', 'SuperLiga']],
+        ['Romania', ['Romanian SuperLiga', 'SuperLiga', 'Liga I', 'Liga 1']],
+        ['Ukraine', ['Ukrainian Premier League', 'Premier League']],
+        ['Israel', ['Israeli Premier League', 'Premier League', 'Ligat HaAl']],
+        ['England', ['EFL Championship', 'Championship', 'English Championship']],
+        ['England', ['EFL League One', 'League One', 'League 1', 'English League 1']],
+        ['England', ['EFL League Two', 'League Two', 'League 2', 'English League 2']],
+        ['Spain', ['LaLiga 2', 'Segunda Division']],
+        ['Italy', ['Serie B', 'Italian Serie B']],
+        ['Italy', ['Serie C', 'Italian Serie C']],
+        ['Germany', ['2. Bundesliga', 'Bundesliga 2']],
+        ['Germany', ['3. Liga']],
+        ['France', ['Ligue 2', 'French Ligue 2']],
+        ['France', ['Championnat National', 'National', 'National 1']],
+        ['Portugal', ['Liga Portugal 2', 'Liga Portugal 2 Meu Super', 'Segunda Liga']],
+        ['Netherlands', ['Eerste Divisie']],
+        ['Belgium', ['Challenger Pro League', 'Belgian Challenger Pro League']],
+        ['Scotland', ['Scottish Championship', 'Championship']],
+        ['Greece', ['Super League 2', 'Greek Super League 2']],
+        ['Austria', ['2. Liga']],
+        ['Denmark', ['Danish 1st Division', '1st Division', '1. Division']],
+        ['Norway', ['OBOS-ligaen', 'Norwegian OBOS-ligaen', '1. Division']],
+        ['Sweden', ['Superettan', 'Swedish Superettan']],
+        ['Poland', ['I Liga', 'Polish I Liga', '1. Liga']],
+        ['Czech Republic', ['Czech National Football League', 'FNL', '2. Liga']],
+        ['Croatia', ['Croatian First Football League', 'Prva NL', '1. NL']],
+        ['Serbia', ['Serbian First League', 'Prva Liga']],
+        ['Switzerland', ['Swiss Challenge League', 'Challenge League']],
+        ['Brazil', ['Brasileirão Série A', 'Brazilian Serie A', 'Serie A']],
+        ['Argentina', ['Argentine Primera División', 'Primera Division', 'Liga Profesional']],
+        ['Mexico', ['Liga MX']],
+        ['USA / Canada', ['Major League Soccer (MLS)', 'Major League Soccer', 'MLS', 'USA MLS']],
+        ['Saudi Arabia', ['Saudi Pro League', 'Pro League', 'Saudi Professional League']],
+        ['Japan', ['J1 League', 'J.League']],
+        ['South Korea', ['K League 1']],
+        ['China', ['Chinese Super League', 'Super League']],
+        ['Australia', ['A-League Men', 'A-League']],
+        ['South Africa', ['South African Premier Division', 'Premier Soccer League', 'Premiership']],
+        ['Egypt', ['Egyptian Premier League', 'Premier League']],
+        ['Morocco', ['Botola Pro', 'Botola']],
+        ['UAE', ['UAE Pro League', 'Pro League', 'UAE Arabian Gulf League']],
+        ['Qatar', ['Qatar Stars League', 'Stars League']],
     ];
 
     protected bool $footballHasMore = false;
@@ -274,7 +329,7 @@ trait FootballTrait
 
             return true;
         });
-        $sortByTime = in_array($type, ['by_time', 'upcoming'], true);
+        $sortByTime = $type === 'by_time';
         $groupByCompetition = in_array($type, [null, 'all'], true);
         $page = max(1, (int) request()->input('page', 1));
         $perPage = min(100, max(1, (int) request()->input('per_page', 20)));
@@ -571,27 +626,51 @@ trait FootballTrait
     private function footballLeaguePriority(string $tournament, ?string $country = null): int
     {
         $normalize = static fn (string $name): string => strtolower((string) preg_replace('/[^a-z0-9]+/i', '', Str::ascii($name)));
-        static $priorities = null;
-        $priorities ??= array_flip(array_map($normalize, self::LEAGUE_PRIORITY));
-        $aliases = [
-            'englishpremierleague' => 'Premier League', 'spanishlaliga' => 'La Liga',
-            'italianseriea' => 'Serie A', 'germanbundesliga' => 'Bundesliga',
-            'frenchligue1' => 'Ligue 1', 'uefaeuropaconferenceleague' => 'UEFA Conference League',
-            'portugueseprimeiraliga' => 'Primeira Liga', 'dutcheredivisie' => 'Eredivisie',
-            'turkishsuperlig' => 'Süper Lig', 'belgianjupilerproleague' => 'Belgian Pro League',
-            'englishchampionship' => 'EFL Championship', 'englishleague1' => 'EFL League One',
-            'brazilianseriea' => 'Brasileirão Série A', 'usamls' => 'Major League Soccer (MLS)',
-            'mls' => 'Major League Soccer (MLS)', 'majorleaguesoccer' => 'Major League Soccer (MLS)',
-        ];
+        $country = $normalize($country ?? '');
         $name = $normalize($tournament);
-        if ($country !== null && $country !== '' && $name === 'premierleague' && $normalize($country) !== 'england') {
+        if ($country === '' || $name === '') {
             return PHP_INT_MAX;
         }
-        if ($name === 'bundesliga' && $normalize($country ?? '') === 'austria') {
-            $name = 'austrianbundesliga';
+
+        static $priorities = null;
+        if ($priorities === null) {
+            $countryAliases = [
+                'FIFA' => ['World', 'International'], 'UEFA' => ['Europe'],
+                'England' => ['ENG'], 'Spain' => ['ESP', 'España'], 'Italy' => ['ITA', 'Italia'],
+                'Germany' => ['GER', 'DEU', 'Deutschland'], 'France' => ['FRA'], 'Portugal' => ['POR', 'PRT'],
+                'Netherlands' => ['NED', 'NLD', 'Holland'], 'Turkey' => ['TUR', 'Türkiye'],
+                'Belgium' => ['BEL'], 'Scotland' => ['SCO'], 'Greece' => ['GRE', 'GRC'], 'Austria' => ['AUT'],
+                'Switzerland' => ['SUI', 'CHE'], 'Denmark' => ['DEN', 'DNK'], 'Norway' => ['NOR'], 'Sweden' => ['SWE'],
+                'Poland' => ['POL'], 'Czech Republic' => ['Czechia', 'CZE'], 'Croatia' => ['CRO', 'HRV'],
+                'Serbia' => ['SRB'], 'Romania' => ['ROU'], 'Ukraine' => ['UKR'], 'Israel' => ['ISR'],
+                'Brazil' => ['BRA'], 'Argentina' => ['ARG'], 'Mexico' => ['MEX'],
+                'USA / Canada' => ['USA', 'US', 'United States', 'United States of America', 'Canada', 'CAN'],
+                'Saudi Arabia' => ['KSA', 'SAU'], 'Japan' => ['JPN'],
+                'South Korea' => ['KOR', 'Korea Republic', 'Republic of Korea'], 'China' => ['CHN', 'China PR', 'PR China'],
+                'Australia' => ['AUS'], 'South Africa' => ['RSA', 'ZAF'], 'Egypt' => ['EGY'], 'Morocco' => ['MAR'],
+                'UAE' => ['United Arab Emirates', 'ARE'], 'Qatar' => ['QAT'],
+            ];
+            $priorities = [];
+            foreach (self::LEAGUE_PRIORITY as $rank => [$competitionCountry, $leagues]) {
+                foreach ([$competitionCountry, ...($countryAliases[$competitionCountry] ?? [])] as $countryAlias) {
+                    $countryKey = $normalize($countryAlias);
+                    foreach ($leagues as $league) {
+                        $priorities[$countryKey][$normalize($league)] = $rank + 1;
+                    }
+                }
+                if ($competitionCountry === 'UEFA') {
+                    foreach ($leagues as $league) {
+                        $leagueKey = $normalize($league);
+                        if (str_starts_with($leagueKey, 'uefa')) {
+                            $priorities['world'][$leagueKey] = $rank + 1;
+                            $priorities['international'][$leagueKey] = $rank + 1;
+                        }
+                    }
+                }
+            }
         }
 
-        return $priorities[$normalize($aliases[$name] ?? $name)] ?? PHP_INT_MAX;
+        return $priorities[$country][$name] ?? PHP_INT_MAX;
     }
 
     public function footballTimeline(array $match, array $timeline): array

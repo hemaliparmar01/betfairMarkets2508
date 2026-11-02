@@ -695,6 +695,9 @@ if (! function_exists('storeInRedis')) {
         $existingData = Redis::get($cacheKey);
         $existingData = $existingData ? json_decode($existingData, true) : [];
         $mergedData = array_replace($existingData, $data);
+        if ($cacheKey === 'Football:matches') {
+            $mergedData = app(FootballSyncController::class)->mergeDuplicateMatches($mergedData);
+        }
         $sport = MatchBackup::sportForCache($cacheKey);
         if ($sport !== null && $mergeLifecycle) {
             $cleaned = array_fill_keys(Redis::zrangebyscore($cacheKey.':cleaned', time(), '+inf'), true);
@@ -781,6 +784,11 @@ if (! function_exists('getInRedis')) {
         $matches = $cachedData === null ? null : json_decode($cachedData, true);
         if ($cacheKey === 'Football:matches' && is_array($matches) && $matches !== []) {
             try {
+                $controller = app(FootballSyncController::class);
+                $originalMatches = $matches;
+                $matches = $controller->mergeDuplicateMatches($matches);
+                $changed = $matches !== $originalMatches;
+                unset($originalMatches);
                 $matchIds = [];
                 $matchKeys = [];
                 foreach ($matches as $matchKey => $match) {
@@ -794,8 +802,6 @@ if (! function_exists('getInRedis')) {
                     }
                 }
                 $savedTimelines = $matchIds === [] ? collect() : DB::table('football_timeline')->whereIn('match_id', $matchIds)->get(['match_id', 'timeline'])->keyBy('match_id');
-                $changed = false;
-                $controller = null;
                 foreach ($matchKeys as $matchKey) {
                     $match = &$matches[$matchKey];
                     $saved = $savedTimelines->get((string) ($match['sportsApiPro_match_id'] ?? ''));
