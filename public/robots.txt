@@ -1,2 +1,22 @@
 User-agent: *
-Disallow:
+Allow: /
+Disallow: /admin
+Disallow: /api/
+Disallow: /login
+Disallow: /register
+Disallow: /forgot-password
+Disallow: /reset-password
+Disallow: /verify-email
+Disallow: /my-profile
+Disallow: /notifications
+Disallow: /subscriptions
+Disallow: /subscriptions-details
+Disallow: /popup
+Disallow: /*?*filter=
+Disallow: /*?*type=
+Disallow: /*?*market=
+Disallow: /*?*market_name=
+Disallow: /*?*sort=
+Disallow: /*?*search=
+
+Sitemap: https://bfmarketsanalytics.com/sitemap.xml

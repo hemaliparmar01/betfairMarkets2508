@@ -49,7 +49,7 @@
 <header class="top-bar flex flex-wrap items-center justify-between gap-3.5 border-b border-[var(--border-neutral-5-2)] pb-3.5 dark:[border-bottom-color:rgb(var(--border))] [display:flex] [align-items:center] [justify-content:space-between] [flex-wrap:wrap] [padding-bottom:12px] [border-bottom:1px_solid_var(--border-neutral-5-2)] [transition:border-color_0.3s] [gap:14px] [padding-bottom:14px] max-[480px]:[align-items:center]">
     <div class="logo-area flex flex-col items-start [display:flex] [flex-direction:column] [align-items:flex-start] [gap:0]">
         <a href="{{ route(request()->routeIs('horseracing.*') ? 'horseracing.home' : (request()->routeIs('greyhounds.*') ? 'greyhounds.home' : (request()->routeIs('tennis.*') ? 'tennis.home' : (request()->routeIs('basketball.*') ? 'basketball.home' : (request()->routeIs('baseball.*') ? 'baseball.home' : (request()->routeIs('americanfootball.*') ? 'americanfootball.home' : (request()->routeIs('icehockey.*') ? 'icehockey.home' : (request()->routeIs('cricket.*') ? 'cricket.home' : 'football.home')))))))) }}" class="flex flex-col items-start">
-            <img data-branding="logo" src="{{ $branding['assets']['logo_'.app()->getLocale().'_light'] ?? $branding['defaults']['logo'] }}" class="h-auto max-w-full w-[250px] max-[480px]:w-[190px]" alt="BF Markets">
+            <img data-branding="logo" src="{{ $branding['assets']['logo_'.app()->getLocale().'_light'] ?? $branding['defaults']['logo'] }}" class="h-auto max-w-full w-[250px] max-[480px]:w-[190px]" alt="BF Markets Analytics">
             <script>window.updateBrandingAssets();</script>
         </a>
     </div>

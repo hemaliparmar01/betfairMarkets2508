@@ -4,7 +4,28 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <title>@yield('title', __('BF Markets · Data Terminal'))</title>
+    <title>{{ $seo['title'] ?? trim($__env->yieldContent('title', __('BF Markets · Data Terminal'))) }}</title>
+    <meta name="robots" content="{{ $seo['robots'] }}">
+    <link rel="canonical" href="{{ $seo['canonical'] }}">
+    @if ($seo['description'])
+        <meta name="description" content="{{ $seo['description'] }}">
+        <meta property="og:title" content="{{ $seo['title'] ?? trim($__env->yieldContent('title')) }}">
+        <meta property="og:description" content="{{ $seo['description'] }}">
+        <meta property="og:type" content="website">
+        <meta property="og:url" content="{{ $seo['canonical'] }}">
+        <meta property="og:site_name" content="BF Markets Analytics">
+        <meta property="og:locale" content="{{ app()->isLocale('ka') ? 'ka_GE' : 'en_US' }}">
+        <meta property="og:image" content="{{ $seo['image'] }}">
+        <meta property="og:image:alt" content="BF Markets Analytics">
+        <meta name="twitter:card" content="summary_large_image">
+        <meta name="twitter:title" content="{{ $seo['title'] ?? trim($__env->yieldContent('title')) }}">
+        <meta name="twitter:description" content="{{ $seo['description'] }}">
+        <meta name="twitter:image" content="{{ $seo['image'] }}">
+        <meta name="twitter:url" content="{{ $seo['canonical'] }}">
+    @endif
+    @if ($seo['schema'] !== [])
+        <script type="application/ld+json">{!! json_encode($seo['schema'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_THROW_ON_ERROR) !!}</script>
+    @endif
     <meta name="author" content="Digital Analytics Group LLC">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -34,7 +55,7 @@
         };
     </script>
 </head>
-<body class="min-w-0 max-[480px]:!px-2 max-[480px]:!pt-2 @if (request()->routeIs('cricket.*', 'icehockey.*', 'americanfootball.*', 'baseball.*', 'basketball.*', 'tennis.*', 'greyhounds.*', 'horseracing.*')) [&_a]:cursor-pointer [&_button:enabled]:cursor-pointer [&_select]:cursor-pointer [&_summary]:cursor-pointer @endif">
+<body class="min-w-0 max-[480px]:!px-2 max-[480px]:!pt-2 [&_a]:cursor-pointer [&_button:enabled]:cursor-pointer @if (request()->routeIs('cricket.*', 'icehockey.*', 'americanfootball.*', 'baseball.*', 'basketball.*', 'tennis.*', 'greyhounds.*', 'horseracing.*')) [&_select]:cursor-pointer [&_summary]:cursor-pointer @endif">
     <script>
         try {
             if (localStorage.getItem('bf-markets-theme') === 'dark') {

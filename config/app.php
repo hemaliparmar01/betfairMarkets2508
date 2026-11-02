@@ -15,6 +15,43 @@ return [
 
     'name' => env('APP_NAME', 'Laravel'),
 
+    'seo_pages' => [
+        'football.home' => [
+            'title' => 'BF Markets Analytics | Sports Exchange Market Data & Analytics',
+            'description' => 'Real-time sports exchange market data and analytics. Monitor odds movements, liquidity, market activity, momentum, volatility and automated alerts with BF Markets Analytics.',
+        ],
+        'football.market-activity' => [
+            'title' => 'Sports Market Activity & Liquidity | BF Markets Analytics',
+            'description' => 'Monitor real-time sports exchange market activity, Back/Lay prices, liquidity, momentum, volatility and price movements with BF Markets Analytics.',
+            'index' => false,
+        ],
+        'football.pinnacle-odds' => [
+            'title' => 'Pinnacle Odds Drops & Market Movement | BF Markets',
+            'description' => 'Track Pinnacle odds drops and price movements in real time, with market data, NVP and exchange comparisons from BF Markets Analytics.',
+            'index' => false,
+        ],
+        'notifications' => [
+            'title' => 'Sports Market Alerts & Telegram Notifications | BF Markets',
+            'description' => 'Receive automated sports market alerts for odds movements, market shocks, favourite losses and other market signals through Telegram.',
+            'index' => false,
+        ],
+        'faq' => [
+            'description' => 'Learn about BF Markets Analytics, sports exchange market data, available markets, platform access and alerts.',
+            'faq' => [
+                'How quickly is the data updated?' => 'BF Markets uses high-speed infrastructure so that market changes, odds movements, and liquidity updates are delivered to users in real time.',
+            ],
+        ],
+        'manifesto' => ['description' => 'Read the BF Markets manifesto and the principles behind its sports exchange market analytics platform.'],
+        'filter-guide' => ['description' => 'Understand the existing BF Markets filters for live fixtures, favourites, prematch drops and market shocks.'],
+        'market-activity-guide' => ['description' => 'Learn how to read Back/Lay prices, balance, momentum, delta, volatility and liquidity in BF Markets.'],
+        'pinnacle-odds-drops-guide' => ['description' => 'Learn about Pinnacle odds drops, NVP, fair prices and comparisons with exchange market data.'],
+        'contact-us' => ['description' => 'Contact BF Markets Analytics for help with the platform, accounts and sports exchange market monitoring.'],
+        'privacy-policy' => ['description' => 'Read how BF Markets handles personal information, account data and privacy requests.'],
+        'terms-of-service' => ['description' => 'Read the terms that govern access to and use of the BF Markets platform.'],
+        'disclaimer' => ['description' => 'Read the BF Markets disclaimer and the limitations of sports market data and analytics.'],
+        'refund-policy' => ['description' => 'Read the refund conditions and request process for BF Markets subscriptions.'],
+    ],
+
     'branding_assets' => [
         'logo_en_light' => 'Logo — English — Light Mode',
         'logo_en_dark' => 'Logo — English — Dark Mode',

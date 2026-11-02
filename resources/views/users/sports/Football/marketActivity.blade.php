@@ -55,7 +55,7 @@
         <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div>
                 <h1 class="flex items-center gap-2 text-2xl font-extrabold text-[rgb(var(--text-main))] dark:text-[var(--text-on-primary)] max-[480px]:text-xl">
-                    <i class="fas fa-arrow-trend-down text-[var(--text-danger-15)]"></i> {{ __('Pinnacle Odds') }}
+                    <i class="fas fa-arrow-trend-down text-[var(--text-danger-15)]"></i> {{ __('Pinnacle Odds Drops & Market Movement') }}
                 </h1>
                 <p class="mt-1 text-sm text-[rgb(var(--text-muted))] dark:text-[rgb(var(--text-soft))]">{{ __('Realtime Pinnacle odds drops compared with Betfair prices') }}</p>
             </div>
@@ -85,7 +85,7 @@
 
         <div class="overflow-hidden rounded-2xl border border-[var(--border-neutral-5-6)] bg-[rgb(var(--surface))] dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--surface))]">
             <div class="flex flex-wrap items-center justify-between gap-3 bg-[var(--surface-heading)] px-4 py-3 text-white">
-                <h2 class="flex items-center gap-2 text-sm font-extrabold uppercase tracking-wide"><span class="size-2 rounded-full bg-[var(--surface-danger-0-3)]"></span>{{ __('Pinnacle Drops') }}</h2>
+                <h2 class="flex items-center gap-2 text-sm font-extrabold uppercase tracking-wide"><span class="size-2 rounded-full bg-[var(--surface-danger-0-3)]"></span>{{ __('Real-Time Pinnacle Odds Drops') }}</h2>
                 <span class="text-xs font-semibold text-white/70" data-alert-meta>{{ __('Prematch') }} {{ __('· ODDS-DROP · ≥5%') }}</span>
             </div>
             <div class="min-w-0" data-alerts></div>
@@ -485,7 +485,7 @@
 @endphp
 
     <div class="page-header my-[18px] flex min-w-0 flex-wrap items-center justify-between gap-3 [display:flex] [align-items:center] [justify-content:space-between] [flex-wrap:wrap] [gap:12px] [margin:18px_0_14px] [margin:28px_0_8px] max-[480px]:items-start">
-        <h1 class="page-title [font-size:24px] [font-weight:800] [color:rgb(var(--text-main))] [display:flex] [align-items:center] [gap:10px] [letter-spacing:-0.3px] [transition:color_0.3s] dark:[color:var(--text-on-primary)] [&_i]:[color:rgb(var(--primary))] [&_i]:[font-size:22px] max-[768px]:[font-size:18px] max-[768px]:[&_i]:[font-size:18px] max-[480px]:[font-size:16px] [font-size:32px] [font-weight:700] [letter-spacing:-0.5px] [gap:12px] [&_i]:[font-size:28px] max-[768px]:[font-size:24px] max-[480px]:[font-size:20px] max-[480px]:[gap:8px] max-[480px]:[&_i]:[font-size:20px] max-[768px]:[font-size:22px] max-[768px]:[gap:10px] max-[768px]:[&_i]:[font-size:22px] max-[480px]:[font-size:19px] max-[1024px]:[font-size:28px] max-[480px]:[font-size:21px]"><i class="fas fa-bolt"></i> {{ __('Market Activity') }}</h1>
+        <h1 class="page-title [font-size:24px] [font-weight:800] [color:rgb(var(--text-main))] [display:flex] [align-items:center] [gap:10px] [letter-spacing:-0.3px] [transition:color_0.3s] dark:[color:var(--text-on-primary)] [&_i]:[color:rgb(var(--primary))] [&_i]:[font-size:22px] max-[768px]:[font-size:18px] max-[768px]:[&_i]:[font-size:18px] max-[480px]:[font-size:16px] [font-size:32px] [font-weight:700] [letter-spacing:-0.5px] [gap:12px] [&_i]:[font-size:28px] max-[768px]:[font-size:24px] max-[480px]:[font-size:20px] max-[480px]:[gap:8px] max-[480px]:[&_i]:[font-size:20px] max-[768px]:[font-size:22px] max-[768px]:[gap:10px] max-[768px]:[&_i]:[font-size:22px] max-[480px]:[font-size:19px] max-[1024px]:[font-size:28px] max-[480px]:[font-size:21px]"><i class="fas fa-bolt"></i> {{ __('Real-Time Sports Market Activity') }}</h1>
         <div class="header-indicators flex flex-wrap items-center gap-2 [gap:8px] max-[480px]:w-full">
             <button type="button"
                 class="collapse-toggle inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-bold   [gap:6px] [padding:6px_14px] [border-radius:30px] [font-size:12.5px]  [background:var(--surface-control)] [border:1px_solid_var(--border-control)] [color:var(--text-secondary)] cursor-pointer [transition:0.2s] select-none [font-family:inherit] dark:[background:rgb(var(--surface-soft))] dark:[border-color:rgb(var(--border))] dark:[color:rgb(var(--text-soft))] [&:hover]:[border-color:var(--border-primary)] [&:hover]:[color:rgb(var(--primary))] dark:[&:hover]:[border-color:rgb(var(--border))] dark:[&:hover]:[color:rgb(var(--primary))] [&_i]:[transition:transform_0.3s]"

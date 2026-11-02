@@ -174,16 +174,16 @@ Route::post('notifications/telegram/source', [NotificationController::class, 'so
     ->withoutMiddleware([StartSession::class, ShareErrorsFromSession::class, CustomerAuthService::class, PreventRequestForgery::class]);
 Route::get('subscriptions', [SubscriptionController::class, 'subscriptions'])->name('subscriptions');
 Route::get('subscriptions-details', [SubscriptionController::class, 'getSubscriptions'])->name('checkout-single');
-Route::get('feature-request', [FeatureRequestController::class, 'featureRequest'])->name('feature-request');
-Route::get('disclaimer', [StaticPageController::class, 'disclaimer'])->name('disclaimer');
-Route::get('privacy-policy', [StaticPageController::class, 'privacyPolicy'])->name('privacy-policy');
-Route::get('terms-of-service', [StaticPageController::class, 'termsOfService'])->name('terms-of-service');
-Route::get('refund-policy', [StaticPageController::class, 'refundPolicy'])->name('refund-policy');
-Route::get('faq', [StaticPageController::class, 'faq'])->name('faq');
-Route::get('manifesto', [StaticPageController::class, 'manifesto'])->name('manifesto');
-Route::get('filter-guide', [StaticPageController::class, 'filterGuide'])->name('filter-guide');
-Route::get('market-activity-guide', [StaticPageController::class, 'marketActivityGuide'])->name('market-activity-guide');
-Route::get('pinnacle-odds-drops-guide', [StaticPageController::class, 'pinnacleOddsDropsGuide'])->name('pinnacle-odds-drops-guide');
+Route::get('/guides/feature-request', [FeatureRequestController::class, 'featureRequest'])->name('feature-request');
+Route::get('/guides/disclaimer', [StaticPageController::class, 'disclaimer'])->name('disclaimer');
+Route::get('/guides/privacy-policy', [StaticPageController::class, 'privacyPolicy'])->name('privacy-policy');
+Route::get('/guides/terms-of-service', [StaticPageController::class, 'termsOfService'])->name('terms-of-service');
+Route::get('/guides/refund-policy', [StaticPageController::class, 'refundPolicy'])->name('refund-policy');
+Route::get('/guides/faq', [StaticPageController::class, 'faq'])->name('faq');
+Route::get('/guides/manifesto', [StaticPageController::class, 'manifesto'])->name('manifesto');
+Route::get('/guides/filter-guide', [StaticPageController::class, 'filterGuide'])->name('filter-guide');
+Route::get('/guides/market-activity-guide', [StaticPageController::class, 'marketActivityGuide'])->name('market-activity-guide');
+Route::get('/guides/pinnacle-odds-drops-guide', [StaticPageController::class, 'pinnacleOddsDropsGuide'])->name('pinnacle-odds-drops-guide');
 
 require __DIR__.'/admin.php';
 

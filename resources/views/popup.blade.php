@@ -56,12 +56,14 @@
     <!DOCTYPE html>
     <html>
 
+    @if (request()->is('popup'))
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>{{ __('Bottom Modal') }}</title>
         @vite(['resources/users/css/app.css', 'resources/users/js/app.js'])
     </head>
+    @endif
 
     <body class="m-0 p-0">
         <div id="subscriptionModal" class="fixed inset-0 z-50 flex items-end justify-center overflow-hidden bg-black/60">

@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ __('Admin Login') }}</title>
+    <meta name="robots" content="noindex, follow">
     @vite(['resources/admin/css/app.css', 'resources/admin/js/app.js'])
     <script>window.bfTranslations = {{ Illuminate\Support\Js::from($uiTranslations) }};</script>
 </head>

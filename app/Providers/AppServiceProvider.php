@@ -46,6 +46,61 @@ class AppServiceProvider extends ServiceProvider
             }
             $view->with('branding', $branding);
         });
+        View::composer('users.layout.main', static function ($view): void {
+            $route = request()->route()?->getName();
+            $page = config('app.seo_pages')[$route] ?? null;
+            $fixtureSport = match ($route) {
+                'tennis.home' => 'Tennis', 'basketball.home' => 'Basketball', 'cricket.home' => 'Cricket',
+                'icehockey.home' => 'Ice Hockey', 'americanfootball.home' => 'American Football',
+                'baseball.home' => 'Baseball', 'horseracing.home' => 'Horse Racing', 'greyhounds.home' => 'Greyhounds',
+                default => null,
+            };
+            if ($fixtureSport !== null) {
+                $page = [
+                    'title' => __(':sport Fixtures & Odds | BF Markets Analytics', ['sport' => __($fixtureSport)]),
+                    'description' => __('Monitor live and upcoming :sport fixtures with real-time scores, odds movements, statistics and market information.', ['sport' => __($fixtureSport)]),
+                    'index' => ! in_array($route, ['horseracing.home', 'greyhounds.home'], true),
+                ];
+            }
+            $canonical = url(request()->path());
+            $index = $page !== null && ($page['index'] ?? true);
+            foreach (array_keys(request()->query()) as $parameter) {
+                if (! str_starts_with($parameter, 'utm_') && ! in_array($parameter, ['gclid', 'fbclid'], true)) {
+                    $index = false;
+                }
+            }
+            $seo = [
+                'title' => isset($page['title']) ? __($page['title']) : null,
+                'description' => isset($page['description']) ? __($page['description']) : null,
+                'canonical' => $canonical,
+                'robots' => $index ? 'index, follow' : 'noindex, follow',
+                'image' => $view->getData()['branding']['assets']['logo_'.app()->getLocale().'_light'] ?? asset('logo.png'),
+                'schema' => [],
+            ];
+            if ($route === 'football.home') {
+                $seo['schema'] = [
+                    ['@type' => 'Organization', '@id' => $canonical.'#organization', 'name' => 'BF Markets Analytics', 'url' => $canonical, 'logo' => $seo['image'], 'parentOrganization' => ['@type' => 'Organization', 'name' => 'Digital Analytics Group LLC']],
+                    ['@type' => 'WebSite', 'name' => 'BF Markets Analytics', 'url' => $canonical, 'inLanguage' => app()->getLocale(), 'publisher' => ['@id' => $canonical.'#organization']],
+                    ['@type' => 'SoftwareApplication', 'name' => 'BF Markets Analytics', 'applicationCategory' => 'BusinessApplication', 'operatingSystem' => 'Web', 'description' => __('Real-time sports exchange market analytics and market data platform.'), 'brand' => ['@type' => 'Brand', 'name' => 'BF Markets Analytics'], 'url' => $canonical],
+                ];
+            } elseif ($page !== null && ($page['index'] ?? true)) {
+                $seo['schema'][] = ['@type' => 'BreadcrumbList', 'itemListElement' => [
+                    ['@type' => 'ListItem', 'position' => 1, 'name' => __('Fixtures'), 'item' => route('football.home')],
+                    ['@type' => 'ListItem', 'position' => 2, 'name' => trim(view()->yieldContent('title')), 'item' => $canonical],
+                ]];
+            }
+            if (isset($page['faq'])) {
+                $questions = [];
+                foreach ($page['faq'] as $question => $answer) {
+                    $questions[] = ['@type' => 'Question', 'name' => __($question), 'acceptedAnswer' => ['@type' => 'Answer', 'text' => __($answer)]];
+                }
+                $seo['schema'][] = ['@type' => 'FAQPage', 'mainEntity' => $questions];
+            }
+            if ($seo['schema'] !== []) {
+                $seo['schema'] = ['@context' => 'https://schema.org', '@graph' => $seo['schema']];
+            }
+            $view->with('seo', $seo);
+        });
         View::composer([
             'users.sports.football.footballDetails', 'users.sports.cricket.cricketDetails',
             'users.sports.icehockey.icehockeyDetails', 'users.sports.americanfootball.americanfootballDetails',
