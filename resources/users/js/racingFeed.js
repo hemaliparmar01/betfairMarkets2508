@@ -10,7 +10,8 @@ export function watchRacingFeed(root, refresh, sport) {
     function render() {
         const unavailable = !subscribed || health?.state !== 'live' || Date.now() - receivedAt > 45000;
         notice.classList.toggle('text-[var(--text-amber-700)]', unavailable);
-        notice.textContent = !subscribed ? (globalThis.bfTranslations?.["Live connection unavailable. Displaying the last received values."] ?? "Live connection unavailable. Displaying the last received values.")
+        notice.hidden = !subscribed;
+        notice.textContent = !subscribed ? ''
             : !health || health.state === 'waiting' ? (globalThis.bfTranslations?.["Waiting for the provider feed."] ?? "Waiting for the provider feed.")
             : health.state !== 'live' || Date.now() - receivedAt > 45000 ? (globalThis.bfTranslations?.["Provider updates unavailable or delayed. Displaying the last received values."] ?? "Provider updates unavailable or delayed. Displaying the last received values.")
             : (globalThis.bfTranslations?.["Feed connected. Prices and available sizes update when the provider sends a change."] ?? "Feed connected. Prices and available sizes update when the provider sends a change.");
