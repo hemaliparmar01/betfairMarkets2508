@@ -126,11 +126,14 @@ if (! function_exists('updateOddsMonitoring')) {
                 }
             }
         }
+        if ($now < (float) ($previous['liquidity_updated_at'] ?? 0)) {
+            return $previous;
+        }
         $hasPreviousOpening = hasMeaningfulOpeningOdds($previous);
         $previous = prepareOddsMonitoring($previous);
         $opening = meaningfulOpeningOdds($quote, $previous, $now, $canStart);
         $runner = array_replace(prepareOddsMonitoring(array_replace($previous, $quote)), $opening);
-        $price = $quote['backOdds'] ?? null;
+        $price = $runner['backOdds'] ?? null;
         $current = is_numeric($price) && is_finite((float) $price) && (float) $price > 1 ? (float) $price : 0.0;
         $runner['monitoring_baseline_version'] = 1;
         $runner['monitoring_started_at'] = $previous['monitoring_started_at'] ?? (int) $now;
@@ -165,6 +168,49 @@ if (! function_exists('updateOddsMonitoring')) {
             $runner['previousBackOdds'] = hasMeaningfulOpeningOdds($beforeBatch)
                 ? ($previousBatchPrice > 1 ? $previousBatchPrice : (float) ($previousBatchHistory[array_key_last($previousBatchHistory)]['odds'] ?? $current))
                 : ($initial > 1 ? $initial : $current);
+        }
+
+        if (array_key_exists('backSize', $quote) || array_key_exists('laySize', $quote)) {
+            if (! array_key_exists('liquidity_session', $quote)) {
+                unset($runner['liquidity_session'], $runner['liquidity_feed']);
+            }
+            $backSize = $runner['backSize'] ?? null;
+            $laySize = $runner['laySize'] ?? null;
+            $validBook = is_numeric($backSize) && is_finite((float) $backSize) && (float) $backSize >= 0
+                && is_numeric($laySize) && is_finite((float) $laySize) && (float) $laySize >= 0
+                && ((float) $backSize === 0.0 || $current > 1)
+                && ((float) $laySize === 0.0 || (is_numeric($runner['layOdds'] ?? null) && is_finite((float) $runner['layOdds']) && (float) $runner['layOdds'] > 1));
+            $runner['liquidity_valid'] = $validBook;
+            $runner['liquidity_updated_at'] = $now;
+            $liquidityHistory = $previous['liquidity_history'] ?? [];
+            if (! $validBook || ($runner['liquidity_book'] ?? null) !== ($previous['liquidity_book'] ?? null)
+                || ($runner['market_status'] ?? 'OPEN') !== ($previous['market_status'] ?? 'OPEN')
+                || in_array($runner['market_status'] ?? 'OPEN', ['SUSPENDED', 'CLOSED'], true)
+                || ((empty($runner['liquidity_session']) || ($runner['liquidity_session'] ?? null) !== ($previous['liquidity_session'] ?? null))
+                    && $now - (float) ($previous['liquidity_updated_at'] ?? 0) > 75)) {
+                $liquidityHistory = [];
+            }
+            if ($validBook) {
+                $anchor = null;
+                $recent = [];
+                foreach ($liquidityHistory as $point) {
+                    if ($point['timestamp'] < $now - 900) {
+                        $anchor = $point;
+                    } else {
+                        $recent[] = $point;
+                    }
+                }
+                $liquidityHistory = $anchor === null ? $recent : [$anchor, ...$recent];
+                $point = ['timestamp' => $now, 'back' => (float) $laySize, 'lay' => (float) $backSize];
+                $last = array_key_last($liquidityHistory);
+                if ($last !== null && ($liquidityHistory[$last]['timestamp'] === $now
+                    || ($last > 0 && (int) ($liquidityHistory[$last]['timestamp'] / 10) === (int) ($now / 10)))) {
+                    $liquidityHistory[$last] = $point;
+                } elseif ($last === null || $liquidityHistory[$last]['timestamp'] < $now) {
+                    $liquidityHistory[] = $point;
+                }
+            }
+            $runner['liquidity_history'] = array_slice($liquidityHistory, -93);
         }
 
         return $runner;
@@ -205,13 +251,95 @@ if (! function_exists('prepareMatchOddsMonitoring')) {
      * @param  array<string, mixed>  $match
      * @return array<string, mixed>
      */
-    function prepareMatchOddsMonitoring(array $match): array
+    function prepareMatchOddsMonitoring(array $match, bool $withMarketPressure = false): array
     {
+        $now = microtime(true);
+        $feedHealth = [];
         foreach ($match['markets'] ?? [] as $key => $runners) {
             $match['markets'][$key] = array_map('prepareOddsMonitoring', $runners);
-            if (! array_any($match['markets'][$key], 'hasMeaningfulOpeningOdds')) {
-                unset($match['market_indicators'][$key]);
+            if (! $withMarketPressure) {
+                if (! array_any($match['markets'][$key], 'hasMeaningfulOpeningOdds')) {
+                    unset($match['market_indicators'][$key]);
+                }
+
+                continue;
             }
+            $back = 0.0;
+            $lay = 0.0;
+            $lastUpdate = null;
+            $freshUntil = null;
+            $favorite = null;
+            $valid = $runners !== [];
+            $stale = false;
+            $historical = [60 => ['back' => 0.0, 'lay' => 0.0, 'valid' => true], 300 => ['back' => 0.0, 'lay' => 0.0, 'valid' => true], 900 => ['back' => 0.0, 'lay' => 0.0, 'valid' => true]];
+            foreach ($runners as $runner) {
+                $price = (float) ($runner['currentBackOdds'] ?? $runner['backOdds'] ?? 0);
+                if ($price > 1 && ($favorite === null || $price < (float) ($favorite['currentBackOdds'] ?? $favorite['backOdds'] ?? 0))) {
+                    $favorite = $runner;
+                }
+                $backSize = $runner['backSize'] ?? null;
+                $laySize = $runner['laySize'] ?? null;
+                $valid = $valid && is_numeric($backSize) && is_finite((float) $backSize) && (float) $backSize >= 0
+                    && is_numeric($laySize) && is_finite((float) $laySize) && (float) $laySize >= 0
+                    && ($runner['liquidity_valid'] ?? true);
+                $back += max(0, (float) $laySize);
+                $lay += max(0, (float) $backSize);
+                $updatedAt = (float) ($runner['liquidity_updated_at'] ?? 0);
+                $expiresAt = $updatedAt + 75;
+                if (! empty($runner['liquidity_session'])) {
+                    $feed = $runner['liquidity_feed'] ?? (($match['result_status'] ?? '') === 'Live' ? 'live' : 'prematch');
+                    $health = $feedHealth[$feed] ??= racingFeedHealth($feed);
+                    $stale = $stale || $updatedAt <= 0 || $health['state'] !== 'live' || (float) $runner['liquidity_session'] !== (float) ($health['session'] ?? 0);
+                    $expiresAt = (float) ($health['checked_at'] ?? 0) + 75;
+                } else {
+                    $stale = $stale || $updatedAt <= 0 || $now - $updatedAt > 75;
+                }
+                $lastUpdate = $lastUpdate === null ? $updatedAt : max($lastUpdate, $updatedAt);
+                $freshUntil = $freshUntil === null ? $expiresAt : min($freshUntil, $expiresAt);
+                $references = [];
+                foreach ($runner['liquidity_history'] ?? [] as $point) {
+                    foreach ($historical as $window => $unused) {
+                        if ($point['timestamp'] <= $now - $window) {
+                            $references[$window] = $point;
+                        }
+                    }
+                }
+                foreach ($historical as $window => &$totals) {
+                    $reference = $references[$window] ?? null;
+                    if ($reference === null || (empty($runner['liquidity_session']) && $now - $window - $reference['timestamp'] > 75)) {
+                        $totals['valid'] = false;
+                    } else {
+                        $totals['back'] += $reference['back'];
+                        $totals['lay'] += $reference['lay'];
+                    }
+                }
+                unset($totals);
+            }
+            $total = $back + $lay;
+            $backPercent = $valid && $total > 0 ? $back / $total * 100 : null;
+            $deltas = [];
+            foreach ($historical as $window => $totals) {
+                $previousTotal = $totals['back'] + $totals['lay'];
+                $deltas[$window] = ! $stale && $backPercent !== null && $totals['valid'] && $previousTotal > 0
+                    ? $backPercent - $totals['back'] / $previousTotal * 100 : null;
+            }
+            $momentum = $deltas[60];
+            $active = ! $stale && ! in_array($match['market_status'] ?? 'OPEN', ['SUSPENDED', 'CLOSED'], true)
+                && ($match['result_status'] ?? '') !== 'Finished'
+                && ! array_any($runners, static fn (array $runner): bool => in_array($runner['market_status'] ?? 'OPEN', ['SUSPENDED', 'CLOSED'], true));
+            $racing = in_array($runners[array_key_first($runners)]['marketType'] ?? '', ['WIN', 'PLACE', 'EACH_WAY', 'MATCH_BET', 'MONEY_BACK_2ND', 'EXACTA', 'QUINELLA'], true);
+            $initial = (float) ($favorite['initialBackOdds'] ?? 0);
+            $price = (float) ($favorite['currentBackOdds'] ?? $favorite['backOdds'] ?? 0);
+            $movement = $initial > 1 && $price > 1 ? abs(($initial - $price) / $initial * 100) : null;
+            $match['market_indicators'][$key] = array_replace($match['market_indicators'][$key] ?? [], [
+                'back_total' => $back, 'lay_total' => $lay, 'liquidity' => $total,
+                'back_percent' => $backPercent, 'lay_percent' => $backPercent === null ? null : 100 - $backPercent,
+                'balance' => ! $active || $backPercent === null ? 'unknown' : ($racing ? ($backPercent > 58 ? 'back' : ($backPercent < 42 ? 'lay' : 'balanced')) : ($back > $lay * 1.05 ? 'back' : ($lay > $back * 1.05 ? 'lay' : 'balanced'))),
+                'momentum' => ! $active || $momentum === null ? 'unknown' : ($momentum > 10 ? 'strong_back' : ($momentum > 3 ? 'back' : ($momentum < -10 ? 'strong_lay' : ($momentum < -3 ? 'lay' : 'neutral')))),
+                'delta' => $active ? $deltas[300] : null, 'delta_windows' => $active ? $deltas : [60 => null, 300 => null, 900 => null],
+                'updated_at' => $lastUpdate ?: null, 'fresh_until' => $freshUntil, 'stale' => $stale, 'active' => $active,
+                'volatility' => $match['market_indicators'][$key]['volatility'] ?? ($movement === null ? 'unknown' : ($movement >= 10 ? 'high' : ($movement >= 3 ? 'medium' : 'low'))),
+            ]);
         }
 
         return $match;
@@ -219,16 +347,16 @@ if (! function_exists('prepareMatchOddsMonitoring')) {
 }
 
 if (! function_exists('racingFeedHealth')) {
-    /** @return array{state: string, last_frame_at: ?int} */
+    /** @return array{state: string, last_frame_at: ?int, checked_at: ?int, session: ?float} */
     function racingFeedHealth(string $sport): array
     {
-        $feed = $sport === 'greyhounds' ? 'greyhounds' : 'horse_prematch';
+        $feed = in_array($sport, ['live', 'prematch', 'greyhounds', 'horse_prematch'], true) ? $sport : 'horse_prematch';
         $connection = Cache::store('redis')->get('Betfair:racing:connection', []);
         $health = Cache::store('redis')->get('Betfair:racing:feed:'.$feed, []);
         $state = ($connection['state'] ?? '') === 'connected' && time() - ($connection['at'] ?? 0) <= 75
             ? ($health['state'] ?? 'waiting') : 'disconnected';
 
-        return ['state' => $state, 'last_frame_at' => $health['at'] ?? null];
+        return ['state' => $state, 'last_frame_at' => $health['at'] ?? null, 'checked_at' => $connection['at'] ?? null, 'session' => $connection['session'] ?? null];
     }
 }
 
@@ -690,10 +818,19 @@ if (! function_exists('getSportsApiProImage')) {
 }
 
 if (! function_exists('storeInRedis')) {
-    function storeInRedis(string $cacheKey, array $data, int $ttlMinutes = 10, bool $mergeLifecycle = true)
+    /**
+     * Reuse decoded rows only while their JSON still matches the current cache.
+     *
+     * @param  array<string, mixed>  $data
+     * @param  array<string, mixed>|null  $existingData
+     */
+    function storeInRedis(string $cacheKey, array $data, int $ttlMinutes = 10, bool $mergeLifecycle = true, ?array $existingData = null)
     {
-        $existingData = Redis::get($cacheKey);
-        $existingData = $existingData ? json_decode($existingData, true) : [];
+        $cachedData = Redis::get($cacheKey);
+        if ($existingData === null || $cachedData !== json_encode($existingData)) {
+            $existingData = $cachedData ? json_decode($cachedData, true) : [];
+        }
+        unset($cachedData);
         $mergedData = array_replace($existingData, $data);
         if ($cacheKey === 'Football:matches') {
             $mergedData = app(FootballSyncController::class)->mergeDuplicateMatches($mergedData);
@@ -762,7 +899,12 @@ if (! function_exists('storeInRedis')) {
                     $savedTimelines = DB::table('football_timeline')->whereIn('match_id', $matchIds)->get(['match_id', 'timeline'])->keyBy('match_id');
                 }
             } catch (Throwable $exception) {
-                Log::warning('Football timeline cache fallback unavailable', ['exception' => $exception::class]);
+                Log::warning('Football timeline cache fallback unavailable', [
+                    'exception' => $exception::class,
+                    'message' => $exception->getMessage(),
+                    'file' => $exception->getFile(),
+                    'line' => $exception->getLine(),
+                ]);
             }
             foreach ($mergedData as $matchKey => &$match) {
                 $saved = $savedTimelines->get((string) ($match['sportsApiPro_match_id'] ?? ''));
@@ -817,7 +959,12 @@ if (! function_exists('getInRedis')) {
                     Redis::eval('if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("SET", KEYS[1], ARGV[2], "KEEPTTL") end return 0', 1, $cacheKey, $cachedData, json_encode($matches));
                 }
             } catch (Throwable $exception) {
-                Log::warning('Football timeline read fallback unavailable', ['exception' => $exception::class]);
+                Log::warning('Football timeline read fallback unavailable', [
+                    'exception' => $exception::class,
+                    'message' => $exception->getMessage(),
+                    'file' => $exception->getFile(),
+                    'line' => $exception->getLine(),
+                ]);
             }
         }
 

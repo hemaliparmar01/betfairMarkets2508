@@ -32,7 +32,7 @@ trait GreyhoundsTrait
         $today = Carbon::now(getCurrentUserTimezone())->toDateString();
         $type = request()->input('type', 'all');
         $matches = array_map(function (array $race): array {
-            $race = prepareMatchOddsMonitoring($race);
+            $race = prepareMatchOddsMonitoring($race, true);
             $race['country'] = $this->getGreyhoundsCountry($race);
             $race['details_available'] = now()->timestamp >= (int) $race['timestamp'] - 300;
 

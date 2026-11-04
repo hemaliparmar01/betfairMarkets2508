@@ -30,7 +30,7 @@ Schedule::command('sports:process-match-backups --scheduled')->runInBackground()
 
 Schedule::call(static function (): void {
     DB::table('football_timeline')->where('created_at', '<=', now()->subDays(3))->delete();
-})->name('football-timeline-cleanup')->dailyAt('00:00')->timezone('Asia/Kolkata')->withoutOverlapping();
+})->name('football-timeline-cleanup')->dailyAt('00:00')->timezone('UTC')->withoutOverlapping();
 
 Schedule::call(function () {
     app(FootballSyncController::class)->queueMatchStatistics();

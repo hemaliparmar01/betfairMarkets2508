@@ -176,12 +176,6 @@ class GreyhoundsSyncController extends Controller
                     $favorite = array_reduce($runners, static function (?array $favorite, array $runner): ?array {
                         return ($runner['initialBackOdds'] ?? 0) > 1 && $runner['currentBackOdds'] > 0 && ($favorite === null || $runner['currentBackOdds'] < $favorite['currentBackOdds']) ? $runner : $favorite;
                     }, null);
-                    $totalBack = array_sum(array_column($runners, 'backSize'));
-                    $totalLay = array_sum(array_column($runners, 'laySize'));
-                    $liquidity = $totalBack + $totalLay;
-                    $ratio = $liquidity > 0 ? $totalBack / $liquidity : 0.5;
-                    $previousSize = (float) ($favorite['previousBackSize'] ?? 0);
-                    $delta = $previousSize > 0 ? ((float) ($favorite['backSize'] ?? 0) - $previousSize) / $previousSize * 100 : 0;
                     $recent = $favorite['recentOddsHistory'] ?? [];
                     $returns = [];
                     for ($index = 1; $index < count($recent); $index++) {
@@ -191,12 +185,10 @@ class GreyhoundsSyncController extends Controller
                     }
                     $mean = $returns === [] ? 0 : array_sum($returns) / count($returns);
                     $deviation = $returns === [] ? 0 : sqrt(array_sum(array_map(static fn (float $value): float => ($value - $mean) ** 2, $returns)) / count($returns)) * 100;
-                    $race['market_indicators'][$marketKey] = ['favorite_id' => $favorite['runnerId'] ?? null, 'favorite_back_size' => $favorite['backSize'] ?? 0, 'back_total' => $totalBack, 'lay_total' => $totalLay, 'liquidity' => $liquidity, 'back_percent' => $ratio * 100,
-                        'balance' => $ratio > 0.58 ? 'back' : ($ratio < 0.42 ? 'lay' : 'balanced'), 'delta' => $delta,
-                        'momentum' => $delta > 10 ? 'strong_back' : ($delta > 3 ? 'back' : ($delta < -10 ? 'strong_lay' : ($delta < -3 ? 'lay' : 'neutral'))),
-                        'volatility' => $deviation > 15 ? 'high' : ($deviation > 5 ? 'medium' : 'low'), 'volatility_percent' => $deviation];
+                    $race['market_indicators'][$marketKey] = ['favorite_id' => $favorite['runnerId'] ?? null, 'favorite_back_size' => $favorite['backSize'] ?? 0, 'volatility' => $deviation > 15 ? 'high' : ($deviation > 5 ? 'medium' : 'low'), 'volatility_percent' => $deviation];
                 }
                 $race['markets'] = $markets;
+                $race = prepareMatchOddsMonitoring($race, true);
                 $race['data_sync_complete'] = isset($markets[$raceId.'_WIN']);
                 if ($race !== $before) {
                     $matches[$key] = $race;

@@ -76,7 +76,7 @@ class BaseballSyncController extends Controller
         $cacheKey = $this->sports.':matches';
         $date = Carbon::now('UTC')->format('Y-m-d');
         $key = 'x-api-key: '.$this->getsportsAPIProKeys;
-        $scheduleData = ApiCall("https://api.sportsapipro.com/v2/baseball/api/schedule/{$date}", $key);
+        $scheduleData = ApiCall('https://api.sportsapipro.com/v2/baseball/api/today', $key);
         $scheduleData = is_array($scheduleData['data'] ?? null) ? $scheduleData['data'] : ($scheduleData ?? []);
         if (! is_array($scheduleData['events'] ?? null)) {
             return [];

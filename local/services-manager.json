@@ -16,7 +16,7 @@
       "enabled": true,
       "overrides": {
         "local": {
-          "php_memory_limit": "1G"
+          "php_memory_limit": "2G"
         }
       }
     },
@@ -286,7 +286,7 @@
       "enabled": true,
       "overrides": {
         "local": {
-          "php_memory_limit": "1G"
+          "php_memory_limit": "2G"
         }
       }
     },
@@ -328,7 +328,7 @@
   "overrides": {
     "local": {
       "prefix": "bfmarkets2508",
-      "php_memory_limit": "512M"
+      "php_memory_limit": "2G"
     }
   }
 }

@@ -16,6 +16,7 @@ use Illuminate\Queue\CallQueuedClosure;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Facades\Schedule;
 use Illuminate\Support\Facades\Schema;
@@ -26,6 +27,111 @@ use Tests\TestCase;
 
 class FixturesAuditTest extends TestCase
 {
+    public function test_market_pressure_uses_resting_order_interest_and_rolling_percentage_points(): void
+    {
+        $now = floor(microtime(true)) - 1;
+        $runner = [];
+        for ($offset = -920; $offset <= 0; $offset += 10) {
+            $backInterest = $offset <= -800 ? 20 : ($offset <= -300 ? 40 : ($offset <= -60 ? 80 : 60));
+            $runner = updateOddsMonitoring(['marketId' => '456', 'runnerId' => 11, 'backOdds' => 2.0, 'layOdds' => 2.02, 'backSize' => 100 - $backInterest, 'laySize' => $backInterest], $runner, $now + $offset);
+        }
+
+        $match = prepareMatchOddsMonitoring(['result_status' => 'Prematch', 'markets' => ['456_MATCH_ODDS' => [$runner]]], true);
+        $indicator = $match['market_indicators']['456_MATCH_ODDS'];
+
+        $this->assertSame(60.0, $indicator['back_percent']);
+        $this->assertSame(40.0, $indicator['lay_percent']);
+        $this->assertSame('back', $indicator['balance']);
+        $this->assertSame('strong_lay', $indicator['momentum']);
+        $this->assertSame([60 => -20.0, 300 => 20.0, 900 => 40.0], $indicator['delta_windows']);
+        $this->assertSame(20.0, $indicator['delta']);
+        $this->assertLessThanOrEqual(93, count($runner['liquidity_history']));
+        $this->assertSame([['timestamp' => (int) ($now - 920), 'odds' => 2.0]], $runner['backOddsHistory']);
+        $this->assertArrayNotHasKey('matched', $runner);
+    }
+
+    public function test_market_pressure_handles_empty_one_sided_invalid_stale_and_suspended_books(): void
+    {
+        $now = microtime(true);
+        $quote = ['backOdds' => 2.0, 'layOdds' => 2.02, 'backSize' => 0, 'laySize' => 100];
+        $runner = updateOddsMonitoring($quote, [], $now);
+        $match = ['result_status' => 'Prematch', 'markets' => ['market' => [$runner]]];
+        $indicator = prepareMatchOddsMonitoring($match, true)['market_indicators']['market'];
+        $this->assertSame(100.0, $indicator['back_percent']);
+        $this->assertSame('back', $indicator['balance']);
+        $this->assertNull($indicator['delta']);
+        $this->assertSame('unknown', $indicator['momentum']);
+
+        foreach ([['backSize' => 0, 'laySize' => 0], ['backSize' => -1], ['laySize' => 'bad']] as $changes) {
+            $invalid = updateOddsMonitoring(array_replace($quote, $changes), $runner, $now + 1);
+            $indicator = prepareMatchOddsMonitoring(['markets' => ['market' => [$invalid]]], true)['market_indicators']['market'];
+            $this->assertNull($indicator['back_percent']);
+            $this->assertSame('unknown', $indicator['balance']);
+            $this->assertNull($indicator['delta']);
+        }
+
+        $stale = array_replace($runner, ['liquidity_updated_at' => $now - 76]);
+        $indicator = prepareMatchOddsMonitoring(['markets' => ['market' => [$stale]]], true)['market_indicators']['market'];
+        $this->assertTrue($indicator['stale']);
+        $this->assertSame('unknown', $indicator['balance']);
+        $this->assertNull($indicator['delta']);
+        $indicator = prepareMatchOddsMonitoring(array_replace($match, ['market_status' => 'SUSPENDED']), true)['market_indicators']['market'];
+        $this->assertFalse($indicator['active']);
+        $this->assertSame('unknown', $indicator['balance']);
+    }
+
+    public function test_team_market_volatility_uses_existing_football_thresholds_and_preserves_racing_values(): void
+    {
+        $now = microtime(true);
+        $quote = ['backOdds' => 2.0, 'layOdds' => 2.02, 'backSize' => 100, 'laySize' => 100];
+        $first = updateOddsMonitoring($quote, [], $now);
+        foreach ([['price' => 2.0, 'volatility' => 'low'], ['price' => 1.9, 'volatility' => 'medium'], ['price' => 1.7, 'volatility' => 'high']] as $case) {
+            $runner = updateOddsMonitoring(array_replace($quote, ['backOdds' => $case['price'], 'layOdds' => $case['price'] + 0.02]), $first, $now + 1);
+            $result = prepareMatchOddsMonitoring(['markets' => ['market' => [$runner]]], true);
+            $this->assertSame($case['volatility'], $result['market_indicators']['market']['volatility']);
+        }
+        $result = prepareMatchOddsMonitoring(['markets' => ['market' => [$first]], 'market_indicators' => ['market' => ['volatility' => 'high']]], true);
+        $this->assertSame('high', $result['market_indicators']['market']['volatility']);
+        $result = prepareMatchOddsMonitoring(['markets' => ['market' => [['backOdds' => 2.0, 'backSize' => 100, 'laySize' => 100]]]], true);
+        $this->assertSame('unknown', $result['market_indicators']['market']['volatility']);
+    }
+
+    public function test_liquidity_history_is_bounded_rejects_old_quotes_and_resets_after_a_gap_or_selection_change(): void
+    {
+        $quote = ['marketId' => '456', 'runnerId' => 11, 'backOdds' => 2.0, 'layOdds' => 2.02, 'backSize' => 25, 'laySize' => 75];
+        $runner = [];
+        for ($second = 0; $second <= 3600; $second++) {
+            $runner = updateOddsMonitoring($quote, $runner, 1000.0 + $second);
+        }
+        $this->assertLessThanOrEqual(93, count($runner['liquidity_history']));
+        $this->assertSame($runner, updateOddsMonitoring(array_replace($quote, ['laySize' => 1]), $runner, 4599.0));
+        $this->assertSame($runner['liquidity_history'], updateOddsMonitoring($quote, $runner, 4600.0)['liquidity_history']);
+        $recovered = updateOddsMonitoring($quote, $runner, 4680.0);
+        $this->assertCount(1, $recovered['liquidity_history']);
+        $changed = updateOddsMonitoring(array_replace($quote, ['runnerId' => 12]), $runner, 4601.0);
+        $this->assertCount(1, $changed['liquidity_history']);
+        $partial = updateOddsMonitoring(['marketId' => '456', 'runnerId' => 11, 'backSize' => 50], $runner, 4601.0);
+        $this->assertSame(75.0, $partial['liquidity_history'][array_key_last($partial['liquidity_history'])]['back']);
+        $this->assertSame(50.0, $partial['liquidity_history'][array_key_last($partial['liquidity_history'])]['lay']);
+    }
+
+    public function test_a_fresh_rest_quote_does_not_inherit_an_old_websocket_session(): void
+    {
+        $now = microtime(true);
+        $quote = ['marketId' => '456', 'runnerId' => 11, 'backOdds' => 2.0, 'layOdds' => 2.02, 'backSize' => 60, 'laySize' => 40];
+        $previous = updateOddsMonitoring($quote + ['liquidity_session' => $now - 1000, 'liquidity_feed' => 'prematch'], [], $now - 61);
+
+        $fresh = updateOddsMonitoring(array_replace($quote, ['backSize' => 26, 'laySize' => 74]), $previous, $now - 1);
+        $indicator = prepareMatchOddsMonitoring(['markets' => ['market' => [$fresh]]], true)['market_indicators']['market'];
+
+        $this->assertArrayNotHasKey('liquidity_session', $fresh);
+        $this->assertArrayNotHasKey('liquidity_feed', $fresh);
+        $this->assertFalse($indicator['stale']);
+        $this->assertSame('strong_back', $indicator['momentum']);
+        $this->assertSame(34.0, $indicator['delta_windows'][60]);
+        $this->assertSame('low', $indicator['volatility']);
+    }
+
     private function football(): object
     {
         return new class
@@ -44,6 +150,45 @@ class FixturesAuditTest extends TestCase
         $trait = $this->football();
 
         return (new ReflectionMethod($trait, 'footballTimeline'))->invoke($trait, $match, $match['timeline'] ?? []);
+    }
+
+    public function test_timeline_read_fallback_retains_cached_matches_and_logs_the_actual_error(): void
+    {
+        $matches = ['match' => ['sportsApiPro_match_id' => '17365784', 'home_score' => 4, 'away_score' => 2]];
+        $error = new \Error('Timeline read failed');
+        Redis::shouldReceive('get')->once()->with('Football:matches')->andReturn(json_encode($matches));
+        DB::shouldReceive('table')->once()->with('football_timeline')->andThrow($error);
+        Log::shouldReceive('warning')->once()->with('Football timeline read fallback unavailable', [
+            'exception' => \Error::class,
+            'message' => $error->getMessage(),
+            'file' => $error->getFile(),
+            'line' => $error->getLine(),
+        ]);
+
+        $result = getInRedis('Football:matches');
+
+        $this->assertSame($matches, $result);
+    }
+
+    public function test_timeline_cache_fallback_preserves_the_cache_write_and_logs_the_actual_error(): void
+    {
+        $matches = ['match' => ['sportsApiPro_match_id' => '17365784', 'home_score' => 4, 'away_score' => 2]];
+        $error = new \Error('Timeline cache fallback failed');
+        $sync = \Mockery::mock(FootballSyncController::class)->makePartial();
+        $sync->shouldReceive('storeTimeline')->once()->andReturn(false);
+        $this->app->instance(FootballSyncController::class, $sync);
+        Redis::shouldReceive('get')->once()->with('Football:matches')->andReturn(json_encode($matches));
+        Redis::shouldReceive('set')->once()->with('Football:matches', json_encode($matches));
+        Redis::shouldReceive('expire')->once()->with('Football:matches', 600);
+        DB::shouldReceive('table')->once()->with('football_timeline')->andThrow($error);
+        Log::shouldReceive('warning')->once()->with('Football timeline cache fallback unavailable', [
+            'exception' => \Error::class,
+            'message' => $error->getMessage(),
+            'file' => $error->getFile(),
+            'line' => $error->getLine(),
+        ]);
+
+        storeInRedis('Football:matches', $matches, mergeLifecycle: false);
     }
 
     public function test_unsupported_smart_filters_return_empty_without_loading_cache_or_provider(): void
@@ -77,7 +222,7 @@ class FixturesAuditTest extends TestCase
             $base = ['unique_key' => 'live', 'timestamp' => time() - 600, 'result_status' => 'Live', 'minutes_status' => 'Live', 'sportsApiPro_match_id' => '101', 'betfair_match_id' => '201', 'data_sync_complete' => true, 'tournament' => 'Test League', 'team1' => 'Home', 'team2' => 'Away', 'home_score' => 1, 'away_score' => 0, 'markets' => []];
             $cache[$sport.':matches'] = json_encode([
                 'live' => $base,
-                'upcoming' => array_replace($base, ['unique_key' => 'upcoming', 'sportsApiPro_match_id' => '102', 'timestamp' => time() + 120, 'result_status' => 'Prematch', 'minutes_status' => 'Prematch']),
+                'upcoming' => array_replace($base, ['unique_key' => 'upcoming', 'sportsApiPro_match_id' => '102', 'timestamp' => time() + ($sport === 'Football' ? 172800 : 120), 'result_status' => 'Prematch', 'minutes_status' => 'Prematch']),
                 'finished' => array_replace($base, ['unique_key' => 'finished', 'sportsApiPro_match_id' => '103', 'result_status' => 'Finished']),
                 'hidden' => array_replace($base, ['unique_key' => 'hidden', 'sportsApiPro_match_id' => '104', 'timestamp' => time() - 86400, 'internal_backup' => ['since' => time()]]),
             ]);
@@ -686,6 +831,80 @@ class FixturesAuditTest extends TestCase
             $sync->storeTimeline($match, frameType: 'restore');
             $this->assertSame($saved, $match['timeline']);
         }
+    }
+
+    public function test_complete_card_histories_replace_changed_ids_and_restore_without_duplicate_cards(): void
+    {
+        (require database_path('migrations/2026_10_26_110659_create_football_timeline_table.php'))->up();
+        (require database_path('migrations/2026_10_26_124628_add_timeline_to_football_timeline_table.php'))->up();
+        Bus::fake();
+        $sync = $this->sync();
+        $goals = [
+            ['id' => 'g1', 'incidentType' => 'goal', 'isHome' => true, 'time' => 8, 'homeScore' => 1, 'awayScore' => 0],
+            ['id' => 'g2', 'incidentType' => 'goal', 'isHome' => true, 'time' => 79, 'homeScore' => 2, 'awayScore' => 0],
+            ['id' => 'g3', 'incidentType' => 'goal', 'isHome' => false, 'time' => 90, 'addedTime' => 2, 'homeScore' => 2, 'awayScore' => 1],
+        ];
+        $cards = array_map(static fn (int $minute): array => ['id' => 'old-'.$minute, 'incidentType' => 'card', 'incidentClass' => 'yellow', 'isHome' => false, 'time' => $minute, 'rescinded' => false], [51, 58, 79]);
+        $latestCards = array_map(static fn (array $card): array => array_replace($card, ['id' => 'new-'.$card['time']]), $cards);
+        foreach (['Live', 'Finished'] as $index => $status) {
+            $id = (string) (123 + $index);
+            $match = ['sportsApiPro_match_id' => $id, 'timestamp' => time() - 5400, 'result_status' => $status, 'home_score' => 2, 'away_score' => 1];
+            $period = ['incidentType' => 'period', 'text' => $status === 'Live' ? 'Second half' : 'FT', 'isLive' => $status === 'Live', 'homeScore' => 2, 'awayScore' => 1];
+            $initial = ['incidents' => [$period, ...$goals, ...$cards], 'changes' => ['changeTimestamp' => 20]];
+            $sync->storeTimeline($match, "match:{$id}:incidents", $initial, 'snapshot');
+            $oldTimeline = $match['timeline'];
+            $sync->storeTimeline($match, "match:{$id}:incidents", ['incidents' => [array_replace($cards[0], ['id' => 'temporary', 'time' => 0])], 'changes' => ['changeTimestamp' => 21]]);
+            $this->assertCount(4, $match['timeline']['away_yellow_cards']);
+
+            $latest = ['incidents' => [$period, ...$goals, ...$latestCards], 'changes' => ['changeTimestamp' => 22]];
+            $sync->storeTimeline($match, "match:{$id}:incidents", $latest, 'snapshot');
+
+            $this->assertSame(['new-51', 'new-58', 'new-79'], array_column($match['timeline']['away_yellow_cards'], 'id'));
+            $this->assertSame([51, 58, 79], array_column($match['timeline']['away_yellow_cards'], 'minute'));
+            $this->assertSame([], $match['timeline']['home_yellow_cards']);
+            $this->assertCount(3, array_filter($this->timeline($match)['events'], static fn (array $event): bool => $event['kind'] === 'yellow'));
+            $saved = json_decode(DB::table('football_timeline')->where('match_id', $id)->value('timeline'), true);
+            $this->assertSame($match['timeline'], $saved);
+            $stale = array_replace($match, ['timeline' => $oldTimeline]);
+            $sync->storeTimeline($stale, frameType: 'restore', storedTimeline: $saved);
+            $this->assertSame($saved['away_yellow_cards'], $stale['timeline']['away_yellow_cards']);
+            $this->assertSame($saved['removed'], $stale['timeline']['removed']);
+            unset($match['timeline']);
+            $sync->storeTimeline($match, frameType: 'restore');
+            $this->assertSame($saved, $match['timeline']);
+            $sync->storeTimeline($match, "match:{$id}:incidents", $initial, 'snapshot', microtime(true) - 100);
+            $this->assertSame($saved, $match['timeline']);
+            $initial['changes']['changeTimestamp'] = 23;
+            $sync->storeTimeline($match, "match:{$id}:incidents", $initial, 'snapshot');
+            $this->assertSame(['old-51', 'old-58', 'old-79'], array_column($match['timeline']['away_yellow_cards'], 'id'));
+        }
+    }
+
+    public function test_card_reconciliation_preserves_partial_updates_and_distinct_cards_at_the_same_minute(): void
+    {
+        $sync = $this->sync();
+        $match = ['sportsApiPro_match_id' => '123', 'result_status' => 'Live', 'home_score' => 0, 'away_score' => 0];
+        $period = ['incidentType' => 'period', 'text' => 'Second half', 'isLive' => true, 'homeScore' => 0, 'awayScore' => 0];
+        $yellow = ['id' => 'yellow-1', 'incidentType' => 'card', 'incidentClass' => 'yellow', 'isHome' => false, 'time' => 58, 'rescinded' => false];
+        $red = array_replace($yellow, ['id' => 'red-1', 'incidentClass' => 'yellowRed']);
+        $sync->storeTimeline($match, 'match:123:incidents', ['incidents' => [$period, $yellow, $red]], 'snapshot', storedTimeline: []);
+        $second = array_replace($yellow, ['id' => 'yellow-2']);
+        $sync->storeTimeline($match, 'match:123:incidents', ['incidents' => [$second]], 'snapshot', storedTimeline: []);
+        $this->assertSame(['yellow-1', 'yellow-2'], array_column($match['timeline']['away_yellow_cards'], 'id'));
+        $this->assertSame(['red-1'], array_column($match['timeline']['away_red_cards'], 'id'));
+        $third = array_replace($yellow, ['id' => 'yellow-3', 'time' => 79]);
+        $sync->storeTimeline($match, 'match:123:incidents', ['incidents' => [$third]], storedTimeline: []);
+        $this->assertCount(3, $match['timeline']['away_yellow_cards']);
+        $history = ['incidents' => [$period, $yellow, $second, array_replace($red, ['id' => 'red-2', 'incidentClass' => 'red'])], 'home' => [], 'away' => []];
+
+        $sync->storeTimeline($match, 'match:123:incidents', $history, storedTimeline: []);
+
+        $this->assertSame(['yellow-1', 'yellow-2'], array_column($match['timeline']['away_yellow_cards'], 'id'));
+        $this->assertSame(['red-2'], array_column($match['timeline']['away_red_cards'], 'id'));
+        $sync->storeTimeline($match, 'match:123:incidents', ['incidents' => [$period]], 'snapshot', storedTimeline: []);
+        $this->assertSame([], $match['timeline']['away_yellow_cards']);
+        $this->assertSame([], $match['timeline']['away_red_cards']);
+        $this->assertSame(0, $match['timeline']['reported_counts']['away_yellow_cards']);
     }
 
     public function test_partial_and_older_goal_histories_do_not_remove_confirmed_goals(): void

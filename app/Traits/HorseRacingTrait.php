@@ -30,7 +30,7 @@ trait HorseRacingTrait
         $today = Carbon::now(getCurrentUserTimezone())->toDateString();
         $type = request()->input('type', 'all');
         $matches = array_map(
-            fn (array $race): array => prepareMatchOddsMonitoring($race),
+            fn (array $race): array => prepareMatchOddsMonitoring($race, true),
             array_filter(getVisibleSportsMatches('HorseRacing:matches') ?? [], static fn (array $race): bool => ($race['result_status'] ?? '') !== 'Finished')
         );
         $matches = array_values(array_filter($matches, static function (array $race) use ($today, $type, $favorites): bool {

@@ -43,6 +43,11 @@ class ListenBetfairOdds extends Command
 
     private float $lastHealthHeartbeat = 0;
 
+    /** @var array<string, array{int, int}> */
+    private array $feedSequences = [];
+
+    private float $connectionStartedAt = 0;
+
     public function handle(): int
     {
         $listenerLock = Cache::store('redis')->lock('Football:betfair-odds-listener', 120);
@@ -97,12 +102,15 @@ class ListenBetfairOdds extends Command
             $connectedAt = null;
 
             try {
-                foreach (['greyhounds', 'horse_prematch'] as $racingFeed) {
+                foreach (['live', 'prematch', 'greyhounds', 'horse_prematch'] as $racingFeed) {
                     Cache::store('redis')->put('Betfair:racing:feed:'.$racingFeed, ['state' => 'waiting', 'at' => null], 86400);
                 }
                 $socket = connect(new WebsocketHandshake('wss://betfair-odds.com/betfair/v1/stream'));
                 $connectedAt = microtime(true);
+                $this->connectionStartedAt = $connectedAt;
+                $this->lastHealthHeartbeat = 0;
                 $books = ['live' => [], 'prematch' => [], 'greyhounds' => [], 'horse_prematch' => []];
+                $this->feedSequences = [];
                 $snapshotStarted = ['live' => false, 'prematch' => false, 'greyhounds' => false, 'horse_prematch' => false];
                 $snapshotChanges = ['live' => [], 'prematch' => [], 'greyhounds' => [], 'horse_prematch' => []];
 
@@ -121,7 +129,9 @@ class ListenBetfairOdds extends Command
                         continue;
                     }
 
-                    $this->recordRacingFeedHealth($frame);
+                    if (! $this->recordRacingFeedHealth($frame)) {
+                        continue;
+                    }
 
                     $type = $frame['type'] ?? null;
 
@@ -207,6 +217,7 @@ class ListenBetfairOdds extends Command
 
                         $changedEvents = $snapshotChanges[$feed];
                         $snapshotChanges[$feed] = [];
+                        $snapshotStarted[$feed] = false;
                         if (in_array($feed, ['greyhounds', 'horse_prematch'], true) && ($frame['meta']['stale'] ?? false) === false) {
                             foreach (getInRedis($feed === 'greyhounds' ? 'Greyhounds:matches' : 'HorseRacing:matches') ?? [] as $race) {
                                 if (($race['result_status'] ?? '') !== 'Finished' && ! isset($books[$feed][(string) $race['betfair_match_id']])) {
@@ -246,6 +257,9 @@ class ListenBetfairOdds extends Command
                             }
                             foreach (($eventDelta['rows'] ?? []) as $row) {
                                 if (is_array($row)) {
+                                    if (isset($eventDelta['status'])) {
+                                        $row['market_status'] = $eventDelta['status'];
+                                    }
                                     $rows[$this->rowKey($row)] = $row;
                                 }
                             }
@@ -280,6 +294,8 @@ class ListenBetfairOdds extends Command
                     }
 
                     foreach ($changedEvents as $eventId => $event) {
+                        $event['_liquidity_session'] = $connectedAt;
+                        $event['_liquidity_feed'] = $feed;
                         if (in_array($feed, ['greyhounds', 'horse_prematch'], true) && isset($pendingChanges[$feed][$eventId])
                             && (($event['removed'] ?? false) || in_array($event['win_market_status'] ?? $event['status'] ?? '', ['SUSPENDED', 'CLOSED'], true))) {
                             try {
@@ -372,17 +388,25 @@ class ListenBetfairOdds extends Command
     }
 
     /** @param array<string, mixed> $frame */
-    private function recordRacingFeedHealth(array $frame): void
+    private function recordRacingFeedHealth(array $frame): bool
     {
+        $feed = $frame['feed'] ?? null;
+        $type = $frame['type'] ?? '';
+        if ($feed !== null && in_array($type, ['snapshot', 'delta', 'update'], true) && isset($frame['meta']['seq'])) {
+            $previous = $this->feedSequences[$feed] ?? null;
+            $sequence = [(int) $frame['meta']['seq'], (int) ($frame['meta']['delta_seq'] ?? ($type === 'update' && (int) $frame['meta']['seq'] === ($previous[0] ?? null) ? $previous[1] : 0))];
+            if ($previous !== null && ($sequence < $previous || ($sequence === $previous && $type !== 'snapshot' && isset($frame['meta']['delta_seq'])))) {
+                return false;
+            }
+            $this->feedSequences[$feed] = $sequence;
+        }
         if (microtime(true) - $this->lastHealthHeartbeat >= 5) {
-            Cache::store('redis')->put('Betfair:racing:connection', ['state' => 'connected', 'at' => time()], 86400);
+            Cache::store('redis')->put('Betfair:racing:connection', ['state' => 'connected', 'at' => time(), 'session' => $this->connectionStartedAt], 86400);
             $this->lastHealthHeartbeat = microtime(true);
         }
-        $feed = $frame['feed'] ?? null;
-        if (! in_array($feed, ['greyhounds', 'horse_prematch'], true)) {
-            return;
+        if (! in_array($feed, ['live', 'prematch', 'greyhounds', 'horse_prematch'], true)) {
+            return true;
         }
-        $type = $frame['type'] ?? '';
         if ($type === 'stale') {
             $state = ($frame['stale'] ?? true) ? 'stale' : 'live';
         } elseif ($type === 'error') {
@@ -390,9 +414,11 @@ class ListenBetfairOdds extends Command
         } elseif (in_array($type, ['snapshot', 'delta', 'update'], true)) {
             $state = ($frame['meta']['stale'] ?? false) ? 'stale' : 'live';
         } else {
-            return;
+            return true;
         }
         Cache::store('redis')->put('Betfair:racing:feed:'.$feed, ['state' => $state, 'at' => time()], 86400);
+
+        return true;
     }
 
     private function flushPendingChanges(array &$pendingChanges): bool
@@ -464,10 +490,6 @@ class ListenBetfairOdds extends Command
                             break;
                     }
                 }
-                $feedUpdated = $footballEvents !== [] && withRedisLock(
-                    'Football:matches',
-                    fn (): bool => $this->updateFootballCache($footballEvents, $isLive)
-                );
                 if ($cricketEvents !== [] && app(CricketSyncController::class)->mergeBetfairWebSocketData($cricketEvents, $isLive)) {
                     try {
                         Event::dispatch(new CricketSportsScoreUpdated);
@@ -510,6 +532,11 @@ class ListenBetfairOdds extends Command
                         Log::warning('Tennis odds refresh broadcast failed', ['exception' => $e::class]);
                     }
                 }
+                $pendingChanges[$feed] = array_intersect_key($pendingChanges[$feed], $footballEvents);
+                $feedUpdated = $footballEvents !== [] && withRedisLock(
+                    'Football:matches',
+                    fn (): bool => $this->updateFootballCache($footballEvents, $isLive)
+                );
             } catch (LockTimeoutException $e) {
                 Log::warning('Betfair Odds cache write lock timed out; pending odds will be retried without reconnecting.', [
                     'feed' => $feed,
@@ -538,9 +565,23 @@ class ListenBetfairOdds extends Command
     private function bufferOddsEvent(array $pending, array $event, float $receivedAt): array
     {
         $updates = $pending['_odds_updates'] ?? [];
+        $members = [];
         foreach ($event['markets'] ?? [] as $runner) {
+            $members[($runner['marketId'] ?? '').'_'.($runner['marketType'] ?? '')][] = $this->rowKey($runner);
+        }
+        foreach ($members as &$selections) {
+            sort($selections, SORT_STRING);
+            $selections = hash('xxh3', implode('|', $selections));
+        }
+        unset($selections);
+        foreach ($event['markets'] ?? [] as $index => $runner) {
+            $runner['market_status'] ??= $event['win_market_status'] ?? $event['status'] ?? 'OPEN';
+            $runner['liquidity_session'] = $event['_liquidity_session'] ?? 0;
+            $runner['liquidity_feed'] = $event['_liquidity_feed'] ?? null;
+            $runner['liquidity_book'] = $members[($runner['marketId'] ?? '').'_'.($runner['marketType'] ?? '')];
+            $event['markets'][$index] = $runner;
             $key = $this->rowKey($runner);
-            $quote = array_intersect_key($runner, array_flip(['backOdds', 'backSize', 'layOdds', 'laySize']));
+            $quote = array_intersect_key($runner, array_flip(['backOdds', 'backSize', 'layOdds', 'laySize', 'market_status', 'liquidity_session', 'liquidity_feed', 'liquidity_book']));
             $points = $updates[$key] ?? [];
             $last = $points !== [] ? $points[array_key_last($points)] : null;
             unset($last['observed_at']);
@@ -568,6 +609,8 @@ class ListenBetfairOdds extends Command
         if ($matches === []) {
             return false;
         }
+
+        $existingMatches = $matches;
 
         $matchKeys = [];
         foreach ($matches as $matchKey => $match) {
@@ -795,7 +838,7 @@ class ListenBetfairOdds extends Command
         if ($updated) {
             app(FootballSyncController::class)->persistOddsSnapshots($changedMatches);
             unset($changedMatches);
-            storeInRedis('Football:matches', $matches, 30, false);
+            storeInRedis('Football:matches', $matches, 30, false, $existingMatches);
         }
 
         return $updated;

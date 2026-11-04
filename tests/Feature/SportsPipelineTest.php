@@ -7,15 +7,19 @@ use Amp\TimeoutCancellation;
 use Amp\Websocket\Client\WebsocketConnection;
 use App\Console\Commands\ListenBetfairOdds;
 use App\Console\Commands\ListenSportsApiPro;
+use App\Events\CricketSportsScoreUpdated;
 use App\Events\FootballSportsScoreUpdated;
 use App\Http\Controllers\Users\Cricket\CricketSyncController;
 use App\Models\BasketballMatch;
 use App\Services\MatchBackup;
+use Database\Factories\CustomerFactory;
 use GuzzleHttp\Handler\MockHandler;
 use GuzzleHttp\HandlerStack;
 use GuzzleHttp\Middleware;
 use GuzzleHttp\Psr7\Response;
 use Illuminate\Bus\Dispatcher;
+use Illuminate\Contracts\Cache\Lock;
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Request;
 use Illuminate\Queue\CallQueuedClosure;
@@ -225,6 +229,74 @@ class SportsPipelineTest extends TestCase
         $this->assertSame($before, Redis::get($key));
     }
 
+    public function test_football_prematch_sync_restores_missing_future_database_fixtures_and_markets(): void
+    {
+        $sync = $this->sync('Football');
+        $future = ['unique_key' => 'future-fixture', 'sportsApiPro_match_id' => 123, 'betfair_match_id' => '456', 'team1' => 'Home Alpha', 'team2' => 'Away Beta', 'tournament' => 'Test League', 'timestamp' => time() + 172800, 'result_status' => 'Prematch', 'minutes_status' => 'Prematch', 'data_sync_complete' => true, 'markets' => ['456_MATCH_ODDS' => $this->betfair('Football')['markets']]];
+        $sync->persistOddsSnapshots(['future-fixture' => $future]);
+        Redis::set('Football:matches', '[]');
+        $started = $this->sportsEvent(['id' => 999, 'startTimestamp' => time() - 60, 'status' => ['code' => 7, 'type' => 'inprogress']]);
+
+        (new ReflectionMethod($sync, 'readsportApiData'))->invoke($sync, ['events' => [$started]], 'Football:matches', false, 30);
+
+        $restored = getInRedis('Football:matches');
+        $this->assertSame(['future-fixture'], array_keys($restored));
+        $this->assertSame(123, (int) $restored['future-fixture']['sportsApiPro_match_id']);
+        $this->assertSame('Prematch', $restored['future-fixture']['result_status']);
+        $this->assertSame($future['timestamp'], $restored['future-fixture']['timestamp']);
+        $this->assertSame(2.0, (float) $restored['future-fixture']['markets']['456_MATCH_ODDS'][0]['backOdds']);
+        $this->assertGreaterThan(0, Redis::ttl('Football:matches'));
+    }
+
+    public function test_football_database_recovery_keeps_newer_cache_and_does_not_restore_provider_terminal_or_past_matches(): void
+    {
+        $sync = $this->sync('Football');
+        $future = ['unique_key' => 'cached-live', 'sportsApiPro_match_id' => 123, 'team1' => 'Home Alpha', 'team2' => 'Away Beta', 'tournament' => 'Test League', 'timestamp' => time() + 3600, 'result_status' => 'Prematch', 'minutes_status' => 'Prematch', 'markets' => []];
+        $cancelled = array_replace($future, ['unique_key' => 'cancelled', 'sportsApiPro_match_id' => 456]);
+        $past = array_replace($future, ['unique_key' => 'past', 'sportsApiPro_match_id' => 789, 'timestamp' => time() - 60]);
+        $sync->persistOddsSnapshots(['cached-live' => $future, 'cancelled' => $cancelled, 'past' => $past]);
+        $live = array_replace($future, ['result_status' => 'Live', 'minutes_status' => '1st half', 'home_score' => 1]);
+        Redis::set('Football:matches', json_encode(['cached-live' => $live]));
+        $event = $this->sportsEvent(['id' => 456, 'status' => ['code' => 70, 'type' => 'canceled']]);
+
+        (new ReflectionMethod($sync, 'readsportApiData'))->invoke($sync, ['events' => [$event]], 'Football:matches', false, 30);
+
+        $restored = getInRedis('Football:matches');
+        $this->assertSame(['cached-live'], array_keys($restored));
+        $this->assertSame('Live', $restored['cached-live']['result_status']);
+        $this->assertSame(1, $restored['cached-live']['home_score']);
+    }
+
+    public function test_hidden_football_database_restore_keeps_market_backups_and_recovers_quotes_on_resume(): void
+    {
+        $sync = $this->sync('Football');
+        $match = ['unique_key' => 'hidden-football', 'sportsApiPro_match_id' => 123, 'betfair_match_id' => '456', 'team1' => 'Home Alpha', 'team2' => 'Away Beta', 'tournament' => 'Test League', 'timestamp' => time() - 10800, 'result_status' => 'Live', 'minutes_status' => '2nd half', 'data_sync_complete' => true, 'home_score' => 0, 'away_score' => 0, 'internal_backup' => ['since' => time(), 'checks' => 0], 'markets' => ['456_MATCH_ODDS' => $this->betfair('Football')['markets']]];
+        $match['markets']['456_MATCH_ODDS'][0] = updateOddsMonitoring($match['markets']['456_MATCH_ODDS'][0], [], time() - 60);
+        $sync->persistOddsSnapshots(['hidden-football' => $match]);
+        Redis::del('Football:matches');
+
+        app(MatchBackup::class)->process('football');
+
+        $restored = getInRedis('Football:matches')['hidden-football'];
+        $this->assertArrayNotHasKey('markets', $restored);
+        $this->assertSame(1, DB::table('football_markets')->count());
+        $this->assertSame([], getVisibleSportsMatches('Football:matches'));
+        $restored['home_score'] = 1;
+        MatchBackup::observe($restored, 'football', ['status' => ['type' => 'inprogress'], 'changes' => ['changeTimestamp' => time()]], 'match:123');
+        storeInRedis('Football:matches', ['hidden-football' => $restored], mergeLifecycle: false);
+        $event = $this->betfair('Football');
+        $event['markets'][0]['backOdds'] = 1.8;
+
+        $this->mergeBetfair('Football', ['456' => $event], true);
+
+        $resumed = getInRedis('Football:matches')['hidden-football'];
+        $quote = array_values($resumed['markets']['456_MATCH_ODDS'])[0];
+        $this->assertSame(1.8, $quote['backOdds']);
+        $this->assertSame(2.0, (float) $quote['previousBackOdds']);
+        $this->assertSame(1, $resumed['home_score']);
+        $this->assertSame(1, DB::table('football_markets')->count());
+    }
+
     #[DataProvider('teamSports')]
     public function test_sports_only_fixture_and_delayed_betfair_data_keep_existing_scores(string $sport): void
     {
@@ -321,6 +393,151 @@ class SportsPipelineTest extends TestCase
         $event['markets'][0]['handicap'] = -1.5;
         $pending = $method->invoke($listener, $pending, $event, 103.0);
         $this->assertCount(2, $pending['_odds_updates']);
+    }
+
+    #[DataProvider('allSports')]
+    public function test_market_activity_maps_pink_to_back_interest_for_every_sport_without_swapping_quotes(string $sport): void
+    {
+        $fixture = $this->betfair($sport);
+        $quote = $fixture['markets'][0];
+        $fixture['markets'] = [];
+        foreach ([[11, 899.69, 1300], [12, 2200, 194.87], [13, 1100, 77.76]] as [$id, $back, $lay]) {
+            $fixture['markets'][] = array_replace($quote, ['runnerId' => (string) $id, 'runner' => 'Selection '.$id, 'backSize' => $back, 'laySize' => $lay]);
+        }
+        $sync = $this->sync($sport);
+        if (in_array($sport, ['HorseRacing', 'Greyhounds'], true)) {
+            $sync->mergeBetfairWebSocketData(['456' => $fixture], false, true);
+        } else {
+            (new ReflectionMethod($sync, 'readBetFairData'))->invoke($sync, ['liveMap' => ['456' => $fixture]], $sport.':matches', false, 10);
+            (new ReflectionMethod($sync, 'readsportApiData'))->invoke($sync, ['events' => [$this->sportsEvent(['startTimestamp' => strtotime($fixture['openTimestamp'])])]], $sport.':matches', false, 10);
+            $this->mergeBetfair($sport, ['456' => $fixture]);
+        }
+        $this->app->instance('request', Request::create('/', 'GET', ['type' => 'all']));
+        $controller = app('App\\Http\\Controllers\\Users\\'.$sport.'\\'.$sport.'Controller');
+
+        $rows = $controller->getMarketActivites();
+
+        $this->assertCount(1, $rows);
+        $indicator = $sport === 'Football' ? $rows[0] : $rows[0]['indicators'];
+        $this->assertEqualsWithDelta(27.2443281, $indicator[$sport === 'Football' ? 'backPercent' : 'back_percent'], 0.001);
+        $this->assertSame('lay', $indicator['balance']);
+        $this->assertSame('low', $indicator['volatility']);
+        $cached = array_values(getInRedis($sport.':matches'))[0];
+        $runner = array_values(array_values($cached['markets'])[0])[0];
+        $this->assertSame(899.69, (float) $runner['backSize']);
+        $this->assertSame(1300.0, (float) $runner['laySize']);
+        $this->assertSame(2.0, (float) $runner['backOdds']);
+        $this->assertSame(2.02, (float) $runner['layOdds']);
+        $this->assertNotEmpty($runner['liquidity_history']);
+
+        foreach ($fixture['markets'] as &$runner) {
+            $runner['backSize'] = 26;
+            $runner['laySize'] = 74;
+        }
+        unset($runner);
+        $this->mergeBetfair($sport, ['456' => $fixture]);
+        $updated = $controller->getMarketActivites()[0];
+        $indicator = $sport === 'Football' ? $updated : $updated['indicators'];
+        $this->assertEqualsWithDelta(74.0, $indicator[$sport === 'Football' ? 'backPercent' : 'back_percent'], 0.001);
+        $this->assertSame('back', $indicator['balance']);
+    }
+
+    public function test_betfair_book_sequences_reject_older_and_duplicate_deltas_but_allow_snapshot_chunks(): void
+    {
+        $listener = app(ListenBetfairOdds::class);
+        $method = new ReflectionMethod($listener, 'recordRacingFeedHealth');
+        $snapshot = ['type' => 'snapshot', 'feed' => 'live', 'meta' => ['seq' => 10]];
+        $this->assertTrue($method->invoke($listener, $snapshot));
+        $this->assertTrue($method->invoke($listener, $snapshot));
+        $delta = ['type' => 'delta', 'feed' => 'live', 'meta' => ['seq' => 10, 'delta_seq' => 2]];
+        $this->assertTrue($method->invoke($listener, $delta));
+        $this->assertFalse($method->invoke($listener, $delta));
+        $this->assertFalse($method->invoke($listener, array_replace($delta, ['meta' => ['seq' => 10, 'delta_seq' => 1]])));
+        $this->assertFalse($method->invoke($listener, $snapshot));
+        $this->assertTrue($method->invoke($listener, array_replace($snapshot, ['meta' => ['seq' => 11]])));
+        $this->assertTrue($method->invoke($listener, array_replace($delta, ['feed' => 'prematch'])));
+        $this->assertTrue($method->invoke($listener, ['type' => 'update', 'feed' => 'prematch', 'meta' => ['seq' => 10]]));
+    }
+
+    public function test_market_pressure_preserves_quiet_books_until_feed_stales_and_resets_after_reconnect_or_membership_changes(): void
+    {
+        $now = microtime(true);
+        $listener = app(ListenBetfairOdds::class);
+        (new \ReflectionProperty($listener, 'connectionStartedAt'))->setValue($listener, $now - 1000);
+        $health = new ReflectionMethod($listener, 'recordRacingFeedHealth');
+        $health->invoke($listener, ['type' => 'snapshot', 'feed' => 'prematch', 'meta' => ['seq' => 1]]);
+        $buffer = new ReflectionMethod($listener, 'bufferOddsEvent');
+        $fixture = $this->betfair('Football', ['_liquidity_session' => $now - 1000, '_liquidity_feed' => 'prematch']);
+        $event = $buffer->invoke($listener, [], $fixture, $now - 960);
+        $quote = $event['markets'][0];
+        $runner = updateOddsMonitoring($quote, [], $now - 960);
+        $match = ['result_status' => 'Prematch', 'markets' => ['market' => [$runner]]];
+
+        $indicator = prepareMatchOddsMonitoring($match, true)['market_indicators']['market'];
+
+        $this->assertFalse($indicator['stale']);
+        $this->assertSame([60 => 0.0, 300 => 0.0, 900 => 0.0], $indicator['delta_windows']);
+        $health->invoke($listener, ['type' => 'stale', 'feed' => 'prematch', 'stale' => true]);
+        $indicator = prepareMatchOddsMonitoring($match, true)['market_indicators']['market'];
+        $this->assertTrue($indicator['stale']);
+        $this->assertSame('unknown', $indicator['momentum']);
+        $this->assertNull($indicator['delta']);
+
+        $quote['liquidity_session'] = $now;
+        $reconnected = updateOddsMonitoring($quote, $runner, $now);
+        $this->assertCount(1, $reconnected['liquidity_history']);
+        $recent = updateOddsMonitoring($event['markets'][0], [], $now - 10);
+        $reconnected = updateOddsMonitoring($quote, $recent, $now);
+        $this->assertCount(2, $reconnected['liquidity_history']);
+        $this->assertSame($now - 10, $reconnected['liquidity_history'][0]['timestamp']);
+        $fixture['markets'][] = array_replace($fixture['markets'][0], ['runnerId' => '12']);
+        $event = $buffer->invoke($listener, [], $fixture, $now);
+        $changed = updateOddsMonitoring($event['markets'][0], $runner, $now);
+        $this->assertCount(1, $changed['liquidity_history']);
+        $this->assertNotSame($runner['liquidity_book'], $changed['liquidity_book']);
+    }
+
+    public function test_football_lock_contention_does_not_starve_other_sports_or_discard_pending_football_updates(): void
+    {
+        $listener = app(ListenBetfairOdds::class);
+        $pending = ['live' => ['football' => $this->betfair('Football'), 'cricket' => $this->betfair('Cricket')]];
+        $originalFootball = $pending['live']['football'];
+        $cricket = Mockery::mock(CricketSyncController::class);
+        $cricket->shouldReceive('mergeBetfairWebSocketData')->once()->with(['cricket' => $pending['live']['cricket']], true)->andReturn(true);
+        $this->app->instance(CricketSyncController::class, $cricket);
+        $lock = Mockery::mock(Lock::class);
+        $lock->shouldReceive('block')->twice()->andThrow(new LockTimeoutException);
+        $store = Mockery::mock();
+        $store->shouldReceive('lock')->with('Football:matches:write-lock', 30)->twice()->andReturn($lock);
+        Cache::shouldReceive('store')->with('redis')->twice()->andReturn($store);
+        $method = new ReflectionMethod($listener, 'flushPendingChanges');
+
+        $this->assertFalse($method->invokeArgs($listener, [&$pending]));
+        $this->assertSame(['football' => $originalFootball], $pending['live']);
+        $this->assertFalse($method->invokeArgs($listener, [&$pending]));
+        $this->assertSame(['football' => $originalFootball], $pending['live']);
+        Event::assertDispatchedTimes(CricketSportsScoreUpdated::class, 1);
+    }
+
+    public function test_market_activity_page_renders_real_interest_and_rolling_window_definitions(): void
+    {
+        $customer = CustomerFactory::new()->create(['admin_free_days' => -1, 'active_session_id' => str_repeat('a', 40), 'timezone' => 'UTC']);
+        $this->actingAs($customer, 'customers')->withCookie(config('session.cookie'), $customer->active_session_id)->withCredentials();
+        $now = floor(microtime(true)) - 1;
+        $runner = [];
+        for ($offset = -920; $offset <= 0; $offset += 10) {
+            $runner = updateOddsMonitoring(['marketId' => '456', 'marketType' => 'MATCH_ODDS', 'runnerId' => '11', 'runner' => 'Porto', 'name' => 'Match Odds', 'backOdds' => 1.88, 'layOdds' => 1.90, 'backSize' => $offset <= -60 ? 60 : 26, 'laySize' => $offset <= -60 ? 40 : 74], $runner, $now + $offset);
+        }
+        storeInRedis('Football:matches', ['pressure-preview' => ['unique_key' => 'pressure-preview', 'sportsApiPro_match_id' => 123, 'betfair_match_id' => '456', 'team1' => 'Porto', 'team2' => 'Napoli', 'tournament' => 'Test League', 'timestamp' => time() + 3600, 'result_status' => 'Prematch', 'minutes_status' => 'Prematch', 'data_sync_complete' => true, 'markets' => ['456_MATCH_ODDS' => [$runner]]]], 10, false);
+
+        $response = $this->get('/football/market-activity');
+
+        $response->assertSee('Porto vs Napoli')->assertSee('+34.0 pp')->assertSee('Back ↑')->assertSee('Change in Back interest over 5 minutes, in percentage points');
+        $response->assertSee('"backPercent":74', false)->assertSee('"layPercent":26', false);
+        if ($directory = getenv('BFMARKETS_MARKET_PREVIEW_DIR')) {
+            $this->assertStringStartsWith('/private/tmp/bfmarkets-market-preview-', $directory);
+            file_put_contents($directory.'/index.html', $response->getContent());
+        }
     }
 
     #[DataProvider('teamSports')]
@@ -422,6 +639,35 @@ class SportsPipelineTest extends TestCase
         $this->assertSame($value, getInRedis($key));
         Redis::expire($key, 0);
         $this->assertNull(getInRedis($key));
+    }
+
+    public function test_reusing_a_verified_cache_snapshot_preserves_the_full_write_and_ttl(): void
+    {
+        $snapshot = ['unchanged' => ['score' => 1], 'updated' => ['score' => 0, 'markets' => ['back' => 2.0]]];
+        $updates = ['updated' => ['score' => 2, 'markets' => ['back' => 1.8]]];
+        Redis::set('snapshot-original', json_encode($snapshot));
+        Redis::set('snapshot-reused', json_encode($snapshot));
+
+        storeInRedis('snapshot-original', $updates, 3, false);
+        storeInRedis('snapshot-reused', $updates, 3, false, $snapshot);
+
+        $this->assertSame(Redis::get('snapshot-original'), Redis::get('snapshot-reused'));
+        $this->assertSame(['unchanged' => ['score' => 1], 'updated' => ['score' => 2, 'markets' => ['back' => 1.8]]], json_decode(Redis::get('snapshot-reused'), true));
+        $this->assertGreaterThan(0, Redis::ttl('snapshot-reused'));
+        $this->assertLessThanOrEqual(180, Redis::ttl('snapshot-reused'));
+    }
+
+    public function test_reusing_a_cache_snapshot_reads_newer_data_and_handles_expiry(): void
+    {
+        $old = ['unchanged' => ['score' => 0]];
+        $fresh = ['unchanged' => ['score' => 3], 'new-match' => ['score' => 1]];
+        Redis::set('snapshot-race', json_encode($fresh));
+
+        storeInRedis('snapshot-race', ['changed' => ['score' => 2]], 3, false, $old);
+
+        $this->assertSame($fresh + ['changed' => ['score' => 2]], json_decode(Redis::get('snapshot-race'), true));
+        storeInRedis('snapshot-missing', ['changed' => ['score' => 2]], 3, false, $old);
+        $this->assertSame(['changed' => ['score' => 2]], json_decode(Redis::get('snapshot-missing'), true));
     }
 
     public function test_malformed_and_missing_cache_data_is_not_converted_into_matches(): void
@@ -738,6 +984,28 @@ class SportsPipelineTest extends TestCase
         $this->assertSame(19, $confirmed['timeline']['home_goals'][1]['minute']);
         $this->assertFalse($confirmed['timeline']['home_goals'][1]['time_estimated']);
         $this->assertSame($confirmed['timeline'], json_decode(DB::table('football_timeline')->where('match_id', '123')->value('timeline'), true));
+        $historyFrame = ['type' => 'snapshot', 'channel' => 'match:123:incidents', 'data' => ['incidents' => [
+            ['incidentType' => 'period', 'text' => 'Second half', 'isLive' => true, 'homeScore' => 2, 'awayScore' => 0],
+            ['id' => 'goal-1', 'incidentType' => 'goal', 'time' => 10, 'isHome' => true, 'homeScore' => 1, 'awayScore' => 0],
+            $goalFrame['data']['incidents'][0],
+            array_replace($card, ['id' => 'replacement-home', 'rescinded' => false]),
+            array_replace($card, ['id' => 'replacement-away', 'time' => 17, 'isHome' => false, 'rescinded' => false]),
+        ], 'home' => [], 'away' => []]];
+        (new ReflectionMethod($listener, 'processSportsFrame'))->invokeArgs($listener, ['football', $config, $historyFrame, $socket, &$subscriptions]);
+        $reconciled = getInRedis('Football:matches')['known'];
+        $this->assertSame(['replacement-home'], array_column($reconciled['timeline']['home_yellow_cards'], 'id'));
+        $this->assertSame(['replacement-away'], array_column($reconciled['timeline']['away_yellow_cards'], 'id'));
+        $this->assertSame($reconciled['timeline'], json_decode(DB::table('football_timeline')->where('match_id', '123')->value('timeline'), true));
+        $this->assertSame($reconciled['timeline'], json_decode(Redis::get('Football:matches'), true)['known']['timeline']);
+        (new ReflectionMethod($listener, 'processSportsFrame'))->invokeArgs($listener, ['football', $config, $historyFrame, $socket, &$subscriptions]);
+        $this->assertSame($reconciled['timeline'], getInRedis('Football:matches')['known']['timeline']);
+        unset($reconciled['timeline']);
+        Redis::setex('Football:matches', 120, json_encode(['known' => $reconciled], JSON_THROW_ON_ERROR));
+        $rehydrated = getInRedis('Football:matches')['known']['timeline'];
+        $this->assertSame(['replacement-home'], array_column($rehydrated['home_yellow_cards'], 'id'));
+        $this->assertSame(['replacement-away'], array_column($rehydrated['away_yellow_cards'], 'id'));
+        $this->assertGreaterThan(0, Redis::ttl('Football:matches'));
+        $this->assertLessThanOrEqual(120, Redis::ttl('Football:matches'));
     }
 
     public function test_tennis_interruption_and_cricket_innings_break_do_not_invent_elapsed_time_expiry(): void
@@ -899,5 +1167,39 @@ PYTHON;
         $jobs = Bus::dispatched(CallQueuedClosure::class)->filter(static fn (CallQueuedClosure $job): bool => $job->queue === 'sports-timeline');
         $this->assertCount(1, $jobs);
         $this->assertSame('sports-realtime', $jobs->first()->connection);
+    }
+
+    public function test_restart_snapshots_and_score_only_updates_recover_missing_goal_history(): void
+    {
+        $listener = app(ListenSportsApiPro::class);
+        $config = (new ReflectionClass($listener))->getConstant('SPORTS')['football'];
+        $socket = Mockery::mock(WebsocketConnection::class);
+        $subscriptions = [];
+        foreach (['snapshot', 'update'] as $index => $type) {
+            $id = (string) (123 + $index);
+            $match = ['unique_key' => 'known', 'sportsApiPro_match_id' => $id, 'timestamp' => time() - 1800, 'current_period_start_timestamp' => time() - 1800, 'result_status' => 'Live', 'minutes_status' => '1st half', 'home_score' => $type === 'snapshot' ? 1 : 0, 'away_score' => 0, 'team1' => 'Home Alpha', 'team2' => 'Away Beta', 'markets' => []];
+            Redis::setex('Football:matches', 120, json_encode(['known' => $match], JSON_THROW_ON_ERROR));
+            $frame = ['type' => $type, 'channel' => 'match:'.$id, 'data' => ['id' => (int) $id, 'homeScore.current' => 1, 'awayScore.current' => 0, 'changes.changeTimestamp' => 20]];
+            if ($type === 'snapshot') {
+                $frame['data'] += ['status.code' => 6, 'status.type' => 'inprogress'];
+            }
+
+            (new ReflectionMethod($listener, 'processSportsFrame'))->invokeArgs($listener, ['football', $config, $frame, $socket, &$subscriptions]);
+
+            $updated = getInRedis('Football:matches')['known'];
+            $this->assertSame(1, $updated['home_score']);
+            $this->assertSame([], $updated['timeline']['home_goals']);
+            $jobs = Bus::dispatched(CallQueuedClosure::class)->filter(static fn (CallQueuedClosure $job): bool => $job->queue === 'sports-timeline');
+            $this->assertCount($index + 1, $jobs);
+            $this->assertSame('sports-realtime', $jobs->last()->connection);
+            (new ReflectionMethod($listener, 'processSportsFrame'))->invokeArgs($listener, ['football', $config, $frame, $socket, &$subscriptions]);
+            $this->assertCount($index + 1, Bus::dispatched(CallQueuedClosure::class)->filter(static fn (CallQueuedClosure $job): bool => $job->queue === 'sports-timeline'));
+
+            $incidents = ['type' => 'snapshot', 'channel' => 'match:'.$id.':incidents', 'data' => ['incidents' => [['id' => 'goal-'.$id, 'incidentType' => 'goal', 'time' => 25, 'isHome' => true, 'homeScore' => 1, 'awayScore' => 0]]]];
+            (new ReflectionMethod($listener, 'processSportsFrame'))->invokeArgs($listener, ['football', $config, $incidents, $socket, &$subscriptions]);
+            $restored = getInRedis('Football:matches')['known']['timeline'];
+            $this->assertSame([25], array_column($restored['home_goals'], 'minute'));
+            $this->assertSame($restored, json_decode(DB::table('football_timeline')->where('match_id', $id)->value('timeline'), true));
+        }
     }
 }

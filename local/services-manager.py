@@ -12,8 +12,9 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def run(args, check=True):
@@ -31,7 +32,7 @@ class Manager:
         if self.environment not in ('local', 'production'):
             raise ValueError('SERVICES_ENV must be local or production')
         self.root = Path(os.environ.get('SERVICES_ROOT', ROOT)).resolve()
-        self.config = json.loads(Path(os.environ.get('SERVICES_CONFIG', ROOT / 'config/services-manager.json')).read_text())
+        self.config = json.loads(Path(os.environ.get('SERVICES_CONFIG', Path(__file__).resolve().parent / 'services-manager.json')).read_text())
         self.config.update(self.config.get('overrides', {}).get(self.environment, {}))
         self.state = self.root / 'storage/app/service-manager'
         self.prefix = os.environ.get('SERVICES_PREFIX', self.config.get('prefix', 'bfmarkets'))
@@ -98,7 +99,12 @@ class Manager:
                 'ThrottleInterval': self.config.get('restart_delay', 10),
                 'ExitTimeOut': spec.get('stop_timeout', self.config.get('stop_timeout', 120)),
                 'StandardOutPath': str(logs / (name + '.log')), 'StandardErrorPath': str(logs / (name + '.error.log')),
-                'EnvironmentVariables': {'PATH': str(Path(self.php).parent) + ':' + os.environ.get('PATH', '/usr/bin:/bin')},
+                'EnvironmentVariables': {
+                    'PATH': str(Path(self.php).parent) + ':' + os.environ.get('PATH', '/usr/bin:/bin'),
+                    **{key: value for key, value in os.environ.items() if self.environment == 'local' and (
+                        key in ('PHP_INI_SCAN_DIR', 'PHPRC') or re.fullmatch(r'HERD_PHP_\d+_INI_SCAN_DIR', key)
+                    )},
+                },
             })
         user = os.environ.get('SERVICES_USER')
         if not user:
@@ -267,6 +273,11 @@ class Manager:
                         if not self.mac:
                             run(['systemctl', 'daemon-reload'])
                     spec['definition_hash'] = hashlib.sha256(content).hexdigest()
+                    if self.mac and self.environment == 'local':
+                        known[key] = spec
+                        temporary = registry.with_suffix('.tmp')
+                        temporary.write_text(json.dumps(known, indent=2))
+                        temporary.replace(registry)
                 elif previous.get('definition_hash'):
                     spec['definition_hash'] = previous['definition_hash']
                 elif action == 'reload' and not self.mac:
@@ -288,10 +299,21 @@ class Manager:
         temporary.replace(registry)
 
     def stop(self, spec, disable=False):
-        loaded, _ = self.inspect(spec)
+        loaded, status = self.inspect(spec)
         if self.mac:
             if loaded:
                 run(['launchctl', 'bootout', self.domain + '/' + spec['label']])
+                pid = re.search(r'\bpid=(\d+)\b', status)
+                if pid and int(pid.group(1)) > 0:
+                    deadline = time.monotonic() + spec.get('stop_timeout', self.config.get('stop_timeout', 120))
+                    while True:
+                        try:
+                            os.kill(int(pid.group(1)), 0)
+                        except ProcessLookupError:
+                            break
+                        if time.monotonic() >= deadline:
+                            raise ValueError('Managed process is still stopping; retry before starting ' + spec['name'])
+                        time.sleep(0.1)
             if disable:
                 run(['launchctl', 'disable', self.domain + '/' + spec['label']])
         elif loaded:

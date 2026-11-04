@@ -179,6 +179,7 @@ class MatchBackup
 
         return withRedisLock($cacheKey, function () use ($matchId, $reliable, $cacheKey): bool {
             $matches = getInRedis($cacheKey) ?? [];
+            $existingMatches = $matches;
             foreach ($matches as &$match) {
                 if ((string) ($match['sportsApiPro_match_id'] ?? '') !== $matchId) {
                     continue;
@@ -196,7 +197,7 @@ class MatchBackup
                     $match['internal_backup']['checks'] = (int) ($match['internal_backup']['checks'] ?? 0) + 1;
                 }
                 unset($match);
-                storeInRedis($cacheKey, $matches, 30, false);
+                storeInRedis($cacheKey, $matches, 30, false, $existingMatches);
 
                 return true;
             }
@@ -267,14 +268,18 @@ class MatchBackup
                 $tombstoneKey = $cacheKey.':cleaned';
                 Redis::zremrangebyscore($tombstoneKey, '-inf', $now);
                 $deletedKeys = array_fill_keys(Redis::zrangebyscore($tombstoneKey, $now, '+inf'), true);
-                $model::query()->where(static fn ($query) => $query->where('payload->internal_backup->since', '>', 0)->orWhere('payload->provider_lifecycle->resumed_at', '>', 0)->orWhereIn('result_status', self::LEGACY_EXPIRY_STATUSES))->whereNotIn('unique_key', array_keys($matches))->with('markets')->chunkById(100, function ($storedMatches) use (&$matches, $deletedKeys): void {
+                $model::query()->where(static fn ($query) => $query->where('payload->internal_backup->since', '>', 0)->orWhere('payload->provider_lifecycle->resumed_at', '>', 0)->orWhereIn('result_status', self::LEGACY_EXPIRY_STATUSES))->whereNotIn('unique_key', array_keys($matches))->with('markets')->chunkById(100, function ($storedMatches) use (&$matches, $deletedKeys, $sport): void {
                     foreach ($storedMatches as $stored) {
                         if (isset($matches[$stored->unique_key]) || isset($deletedKeys[$stored->unique_key])) {
                             continue;
                         }
                         $restored = array_replace($stored->getAttribute('payload') ?? [], ['unique_key' => $stored->unique_key, 'timestamp' => $stored->start_timestamp, 'result_status' => $stored->result_status, 'sportsApiPro_match_id' => $stored->sports_api_pro_match_id, 'betfair_match_id' => $stored->betfair_match_id, 'markets' => []]);
-                        foreach ($stored->markets as $market) {
-                            $restored['markets'][$market->market_id.'_'.$market->market_type][] = $market->payload;
+                        if ($sport === 'football' && self::isHidden($restored, $sport)) {
+                            unset($restored['markets']);
+                        } else {
+                            foreach ($stored->markets as $market) {
+                                $restored['markets'][$market->market_id.'_'.$market->market_type][] = $market->payload;
+                            }
                         }
                         $matches[$stored->unique_key] = $restored;
                     }

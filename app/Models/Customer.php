@@ -20,6 +20,7 @@ use Illuminate\Notifications\Notifiable;
     'country',
     'country_code',
     'device_id',
+    'timezone',
     'registration_ip',
     'registration_user_agent',
     'webgl_vendor',

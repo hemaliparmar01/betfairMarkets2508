@@ -527,6 +527,7 @@ class CustomerAuthService
                 $attributes = [
                     'name' => $data['name'], 'surname' => $data['surname'],
                     'country_code' => $country['code'], 'country' => $country['name'],
+                    'timezone' => $data['timezone'],
                 ];
                 if ($avatarPath !== null) {
                     $attributes['avatar_path'] = $avatarPath;

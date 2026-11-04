@@ -158,7 +158,6 @@
                     <div class="bg-[rgb(var(--surface))] rounded-xl p-5 border border-[rgb(var(--border))] shadow-sm">
                         <p class="font-bold text-[rgb(var(--text-main))] mb-3 text-lg">🔓 {{ __('Free Access') }}</p>
                         <ul class="space-y-2 text-[rgb(var(--text-soft))] [&_li]:flex [&_li]:items-center [&_li]:gap-2">
-                            <li>✔ {{ __('View up to 10 matches before registration') }}</li>
                             <li>✔ {{ __('Experience the platform before subscribing') }}</li>
                         </ul>
                     </div>

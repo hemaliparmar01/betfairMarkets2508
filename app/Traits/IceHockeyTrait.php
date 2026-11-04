@@ -151,7 +151,14 @@ trait IceHockeyTrait
     {
         $status = $match['result_status'] ?? 'Prematch';
         if ($status === 'Prematch') {
-            return Carbon::createFromTimestamp((int) $match['timestamp'], getCurrentUserTimezone())->format('H:i');
+            $currentTimezone = getCurrentUserTimezone();
+            if (Carbon::now($currentTimezone)->format('Y-m-d') == Carbon::parse($match['timestamp'])->timezone($currentTimezone)->format('Y-m-d')) {
+                $time = Carbon::createFromTimestamp((int) $match['timestamp'], $currentTimezone)->format('H:i');
+            } else {
+                $time = Carbon::parse($match['timestamp'])->timezone($currentTimezone)->format('d M H:i');
+            }
+
+            return $time;
         }
         if ($status === 'Finished') {
             return 'FT';
@@ -252,7 +259,7 @@ trait IceHockeyTrait
         $rows = [];
         foreach ($groups as $group) {
             foreach ($group['matches'] as $match) {
-                $raw = prepareMatchOddsMonitoring($matchesById[$match['unique_key']] ?? $match);
+                $raw = prepareMatchOddsMonitoring($matchesById[$match['unique_key']] ?? $match, true);
                 foreach ($raw['markets'] ?? [] as $key => $runners) {
                     if (request()->filled('market_name') && ($runners[array_key_first($runners)]['marketType'] ?? '') !== request()->input('market_name')) {
                         continue;
@@ -268,7 +275,7 @@ trait IceHockeyTrait
                         continue;
                     }
                     $first = $runners[array_key_first($runners)] ?? [];
-                    $rows[] = ['timestamp' => $match['timestamp'] ?? null, 'id' => $key, 'match_id' => $match['sportsApiPro_match_id'], 'team1' => $match['team1'], 'team2' => $match['team2'], 'tournament' => $group['tournament_name'], 'status' => $match['status'], 'minutes' => $match['minutes'], 'score' => $match['score'], 'marketName' => $first['name'] ?? $first['marketType'] ?? 'Market', 'marketType' => $first['marketType'] ?? '', 'runners' => array_values($runners), 'favorite' => $favorite];
+                    $rows[] = ['timestamp' => $match['timestamp'] ?? null, 'id' => $key, 'match_id' => $match['sportsApiPro_match_id'], 'team1' => $match['team1'], 'team2' => $match['team2'], 'tournament' => $group['tournament_name'], 'status' => $match['status'], 'minutes' => $match['minutes'], 'score' => $match['score'], 'marketName' => $first['name'] ?? $first['marketType'] ?? 'Market', 'marketType' => $first['marketType'] ?? '', 'runners' => array_values($runners), 'favorite' => $favorite, 'indicators' => $raw['market_indicators'][$key] ?? []];
                 }
             }
         }

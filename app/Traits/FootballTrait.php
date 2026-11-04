@@ -266,9 +266,6 @@ trait FootballTrait
             $type = request()->type;
         }
 
-        $dayStart = Carbon::now(getCurrentUserTimezone())->startOfDay();
-        $todayStart = $dayStart->timestamp;
-        $tomorrowStart = $dayStart->copy()->addDay()->timestamp;
         $matchesFilter = null;
 
         if ($type) {
@@ -309,15 +306,13 @@ trait FootballTrait
         }
 
         $leaguePriorities = [];
-        $getData = array_filter($getData, function (array $match) use ($type, $todayStart, $tomorrowStart, $matchesFilter, &$leaguePriorities): bool {
+        $getData = array_filter($getData, function (array $match) use ($type, $matchesFilter, &$leaguePriorities): bool {
             if (
                 MatchBackup::isHidden($match, 'football')
                 || ! isset($match['timestamp'])
                 || ! is_numeric($match['sportsApiPro_match_id'] ?? null)
                 || (int) $match['sportsApiPro_match_id'] <= 0
                 || ($type !== 'finished' && ($match['result_status'] ?? null) === 'Finished')
-                || (($match['result_status'] ?? null) === 'Prematch'
-                    && ((int) $match['timestamp'] < $todayStart || (int) $match['timestamp'] >= $tomorrowStart))
                 || ($matchesFilter !== null && ! $matchesFilter($match))
             ) {
                 return false;
@@ -830,8 +825,13 @@ trait FootballTrait
 
     public function calculateMinutes(?string $minute_status, int $timestamp, string $result_status, array $added_time = [], ?int $current_period_start_timestamp = null)
     {
+        $currentTimezone = getCurrentUserTimezone();
         if ($minute_status == 'Prematch' || $result_status == 'Prematch') {
-            $time = Carbon::parse($timestamp)->timezone(getCurrentUserTimezone())->format('H:i');
+            if (Carbon::now($currentTimezone)->format('Y-m-d') == Carbon::parse($timestamp)->timezone($currentTimezone)->format('Y-m-d')) {
+                $time = Carbon::parse($timestamp)->timezone($currentTimezone)->format('H:i');
+            } else {
+                $time = Carbon::parse($timestamp)->timezone($currentTimezone)->format('d M H:i');
+            }
 
             return $time;
         }
@@ -1076,7 +1076,7 @@ trait FootballTrait
 
     public function getMarketActivites()
     {
-        $getData = array_map('prepareMatchOddsMonitoring', getVisibleSportsMatches('Football:matches') ?? []);
+        $getData = array_map(static fn (array $match): array => prepareMatchOddsMonitoring($match, true), getVisibleSportsMatches('Football:matches') ?? []);
         if (request()->filled('match')) {
             $matchId = (string) request()->query('match');
             $getData = array_filter($getData, static fn (array $match): bool => (string) ($match['sportsApiPro_match_id'] ?? '') === $matchId);
@@ -1286,7 +1286,6 @@ trait FootballTrait
                 $marketType = null;
                 $marketName = null;
                 $favoritePreviousBackOdds = null;
-                $favoriteOddsDirection = 'same';
 
                 foreach ($markets as $market) {
                     if (! is_array($market)) {
@@ -1313,9 +1312,6 @@ trait FootballTrait
                         $lowestBackOdds = $backOdds;
                         $favoriteIndex = $runnerIndex;
                         $favoritePreviousBackOdds = (float) ($market['initialBackOdds'] ?? 0);
-                        $favoriteOddsDirection = $favoritePreviousBackOdds <= 1 || $backOdds === $favoritePreviousBackOdds
-                            ? 'same'
-                            : ($backOdds < $favoritePreviousBackOdds ? 'down' : 'up');
                     }
 
                     $totalBackSize += $backSize;
@@ -1332,9 +1328,6 @@ trait FootballTrait
                 if ($favoriteIndex === null) {
                     $favoriteIndex = 0;
                     $favoritePreviousBackOdds = (float) ($runners[0]['initialBack'] ?? 0);
-                    $favoriteOddsDirection = (float) ($runners[0]['back'] ?? 0) === $favoritePreviousBackOdds
-                        ? 'same'
-                        : ((float) ($runners[0]['back'] ?? 0) < $favoritePreviousBackOdds ? 'down' : 'up');
                 }
 
                 $favoriteBackOdds = (float) $runners[$favoriteIndex]['back'];
@@ -1342,18 +1335,14 @@ trait FootballTrait
                     ? (($favoritePreviousBackOdds - $favoriteBackOdds) / $favoritePreviousBackOdds) * 100
                     : 0.0;
                 $absoluteOddsChange = abs($oddsChangePercent);
-                $balance = $totalBackSize > ($totalLaySize * 1.05)
-                    ? 'back'
-                    : ($totalLaySize > ($totalBackSize * 1.05) ? 'lay' : 'balanced');
-                $momentum = match ($favoriteOddsDirection) {
-                    'down' => $absoluteOddsChange >= 10 ? 'strong_back' : 'back',
-                    'up' => $absoluteOddsChange >= 10 ? 'strong_lay' : 'lay',
-                    default => 'neutral',
-                };
+                $indicator = $data['market_indicators'][$marketKey] ?? [];
+                $balance = $indicator['balance'] ?? 'unknown';
+                $momentum = $indicator['momentum'] ?? 'unknown';
                 $volatility = $absoluteOddsChange >= 10
                     ? 'high'
                     : ($absoluteOddsChange >= 3 ? 'medium' : 'low');
-                $delta = ($oddsChangePercent > 0 ? '+' : '').number_format($oddsChangePercent, 1).'%';
+                $pressureDelta = $indicator['delta'] ?? null;
+                $delta = $pressureDelta === null ? '—' : ($pressureDelta > 0 ? '+' : '').number_format($pressureDelta, 1).' pp';
                 $displayMinutes = $isLive
                     ? $this->calculateMinutes(
                         $data['minutes_status'] ?? $data['result_status'],
@@ -1411,6 +1400,12 @@ trait FootballTrait
                     'volatility' => $volatility,
                     'totalBackSize' => $totalBackSize,
                     'totalLaySize' => $totalLaySize,
+                    'backPercent' => $indicator['back_percent'] ?? null,
+                    'layPercent' => $indicator['lay_percent'] ?? null,
+                    'deltaWindows' => $indicator['delta_windows'] ?? [],
+                    'lastMarketUpdate' => $indicator['updated_at'] ?? null,
+                    'freshUntil' => $indicator['fresh_until'] ?? null,
+                    'stale' => $indicator['stale'] ?? true,
                     'marketLiquidity' => $totalBackSize + $totalLaySize,
                     'totalLiquidity' => $eventTotalLiquidity,
                 ];

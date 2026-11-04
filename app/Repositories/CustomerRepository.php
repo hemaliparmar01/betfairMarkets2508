@@ -34,6 +34,8 @@ class CustomerRepository
 
     public function timezone(int $customerId): ?string
     {
+        return Customer::query()->where('id', $customerId)->value('timezone');
+
         return CustomerFingerprint::query()->where('customer_id', $customerId)->latest('id')->value('timezone');
     }
 

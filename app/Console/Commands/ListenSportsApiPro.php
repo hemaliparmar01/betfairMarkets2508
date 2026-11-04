@@ -497,6 +497,7 @@ class ListenSportsApiPro extends Command
                 $cancellation->throwIfRequested();
                 $updated = withRedisLock($cacheKey, function () use ($sport, $config, $cacheKey, $matchId, $restMatch): bool {
                     $matches = getInRedis($cacheKey) ?? [];
+                    $existingMatches = $matches;
                     foreach ($matches as &$match) {
                         if (($sport !== 'football' && ($match['data_sync_complete'] ?? false) !== true) || (($match['result_status'] ?? '') !== 'Live' && empty($match['internal_backup'])) || (string) ($match['sportsApiPro_match_id'] ?? '') !== (string) $matchId) {
                             continue;
@@ -508,7 +509,7 @@ class ListenSportsApiPro extends Command
                         }
                         unset($match);
                         if ($updated) {
-                            storeInRedis($cacheKey, $matches, $sport === 'football' ? 10 : 30, false);
+                            storeInRedis($cacheKey, $matches, $sport === 'football' ? 10 : 30, false, $existingMatches);
                             if ($sport !== 'football') {
                                 app($config['controller'])->persistMatches($matches);
                             }
@@ -589,6 +590,8 @@ class ListenSportsApiPro extends Command
             return;
         }
 
+        $existingMatches = $matches;
+
         if (str_starts_with($channel, 'live-scores')) {
             foreach ($this->normalizeLiveEvents($frameData) as $event) {
                 $this->updateLiveMatch($matches, $event, $channel, $frameType);
@@ -630,7 +633,7 @@ class ListenSportsApiPro extends Command
         }
         unset($match);
 
-        storeInRedis('Football:matches', $matches, 10, false);
+        storeInRedis('Football:matches', $matches, 10, false, $existingMatches);
     }
 
     private function updateLiveMatch(array &$matches, array $event, string $channel, string $frameType = 'update'): bool
@@ -763,6 +766,11 @@ class ListenSportsApiPro extends Command
             }
 
             unset($match['status_description']);
+
+            if (($frameType === 'snapshot' || ($match['home_score'] ?? null) !== $previousState['home_score'] || ($match['away_score'] ?? null) !== $previousState['away_score'])
+                && array_any(['home', 'away'], static fn (string $side): bool => count($match['timeline'][$side.'_goals'] ?? []) < (int) ($match[$side.'_score'] ?? 0))) {
+                $timelineChanged = app(FootballSyncController::class)->storeTimeline($match, frameType: 'history') || $timelineChanged;
+            }
 
             if ($match['result_status'] === 'Live' && $previousState['result_status'] === 'Prematch' && isset($match['bet365_prematch']['match_id'])) {
                 app(FootballSyncController::class)->queueBet365MatchOdds($match, (int) $match['bet365_prematch']['match_id']);
