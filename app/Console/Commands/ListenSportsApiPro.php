@@ -754,6 +754,11 @@ class ListenSportsApiPro extends Command
             } elseif ($statusCode == 100 || strtoupper((string) $statusCode) === 'FT' || $statusType === 'finished') {
                 $match['minutes_status'] = 'Finished';
                 $match['result_status'] = 'Finished';
+            } elseif ($statusType === 'inprogress') {
+                $match['result_status'] = 'Live';
+                if (($match['minutes_status'] ?? '') === 'Prematch') {
+                    $match['minutes_status'] = 'Live';
+                }
             } elseif ($statusCode !== null && ! in_array((int) $statusCode, [6, 7, 31], true)) {
                 if (! in_array($match['minutes_status'] ?? null, ['Live', 'Prematch', 'Finished', 'Half Time', '1st half', '2nd half'], true)) {
                     $match['minutes_status'] = 'Live';
@@ -768,7 +773,7 @@ class ListenSportsApiPro extends Command
             unset($match['status_description']);
 
             if (($frameType === 'snapshot' || ($match['home_score'] ?? null) !== $previousState['home_score'] || ($match['away_score'] ?? null) !== $previousState['away_score'])
-                && array_any(['home', 'away'], static fn (string $side): bool => count($match['timeline'][$side.'_goals'] ?? []) < (int) ($match[$side.'_score'] ?? 0))) {
+                && array_any(['home', 'away'], static fn (string $side): bool => count(array_filter($match['timeline'][$side.'_goals'] ?? [], static fn (array $goal): bool => ($goal['time_known'] ?? false) && ! ($goal['time_estimated'] ?? false))) < (int) ($match[$side.'_score'] ?? 0))) {
                 $timelineChanged = app(FootballSyncController::class)->storeTimeline($match, frameType: 'history') || $timelineChanged;
             }
 

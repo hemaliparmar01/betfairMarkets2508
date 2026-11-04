@@ -9,6 +9,8 @@ use App\Models\PredictionVote;
 use App\Services\MatchBackup;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 trait FootballTrait
@@ -251,7 +253,8 @@ trait FootballTrait
             abort_unless($checkAuthAndSubscription['display_odds'], 403, __('An active 7-day free trial or paid subscription is required to use smart filters.'));
         }
 
-        $getData = getInRedis('Football:matches', request()->input('type') !== 'finished') ?? [];
+        $fixtureIndex = request()->attributes->get('football_fixture_index_disabled') ? null : getInRedis('Football:matches', fixtureIndex: true);
+        $getData = $fixtureIndex['matches'] ?? getInRedis('Football:matches', readOnly: true) ?? [];
         $customerId = request()->user('customers')?->getAuthIdentifier();
         $favoriteKeys = $customerId === null ? [] : array_fill_keys(
             Favorite::query()->where('sport', 'football')->where('customer_id', $customerId)->pluck('event_key')->all(),
@@ -320,7 +323,7 @@ trait FootballTrait
 
             $tournament = (string) ($match['tournament'] ?? '');
             $country = $match['tournament_country'] ?? null;
-            $leaguePriorities[$tournament][$country ?? ''] ??= $this->footballLeaguePriority($tournament, $country);
+            $leaguePriorities[$tournament][$country ?? ''] ??= $match['_fixture_priority'] ?? $this->footballLeaguePriority($tournament, $country);
 
             return true;
         });
@@ -331,7 +334,16 @@ trait FootballTrait
         $offset = ($page - 1) * $perPage;
         $this->footballHasMore = count($getData) > ($offset + $perPage);
         $this->footballNextPage = $this->footballHasMore ? $page + 1 : null;
-        if ($offset < count($getData)) {
+        if ($fixtureIndex !== null) {
+            $ordered = [];
+            foreach ($fixtureIndex['orders'][$sortByTime ? 'time' : ($groupByCompetition ? 'competition' : 'default')] as $key) {
+                if (isset($getData[$key])) {
+                    $ordered[] = $getData[$key];
+                }
+            }
+            $getData = $ordered;
+            unset($ordered);
+        } elseif ($offset < count($getData)) {
             usort($getData, static function (array $first, array $second) use ($sortByTime, $leaguePriorities, $groupByCompetition): int {
                 $timeComparison = (int) ($first['timestamp'] ?? 0) <=> (int) ($second['timestamp'] ?? 0);
                 $priorityComparison = $leaguePriorities[$first['tournament'] ?? ''][$first['tournament_country'] ?? '']
@@ -353,8 +365,17 @@ trait FootballTrait
         )));
         $predictionCounts = [];
         $storedPredictionVotes = [];
+        $savedTimelines = collect();
 
         if ($matchIds !== []) {
+            try {
+                $savedTimelines = DB::table('football_timeline')->whereIn('match_id', $matchIds)->get(['match_id', 'timeline'])->keyBy('match_id');
+            } catch (\Throwable $exception) {
+                Log::warning('Football timeline read fallback unavailable', [
+                    'exception' => $exception::class, 'message' => $exception->getMessage(),
+                    'file' => $exception->getFile(), 'line' => $exception->getLine(),
+                ]);
+            }
             $countRows = PredictionVote::query()
                 ->select(['match_id', 'poll', 'value'])
                 ->selectRaw('COUNT(*) as total')
@@ -394,37 +415,62 @@ trait FootballTrait
             : [];
         $canBackfillTimeline = $showTimeline && $canDisplayOdds;
         $usesBetfairOdds = $canDisplayOdds && in_array($type, ['prematch_drops', 'market_shock'], true);
+        $dataVersions = [];
+        $reuse = [];
+        $selectedMatches = [];
+        if ($fixtureIndex !== null) {
+            $knownData = request()->input('_fixture_data_versions', []);
+            $knownRows = request()->input('_fixture_versions', []);
+            $knownData = is_array($knownData) && count($knownData) <= 2000 ? $knownData : [];
+            if (is_string($knownRows)) {
+                $knownRows = strlen($knownRows) <= 131072 ? json_decode($knownRows, true) : [];
+            }
+            $knownRows = is_array($knownRows) && count($knownRows) <= 2000 ? $knownRows : [];
+            $timeVersion = in_array($type, ['prematch_drops', 'market_shock'], true) ? time() : intdiv(time(), 60);
+            $context = [app()->getLocale(), getCurrentUserTimezone(), $customerId, $checkAuthAndSubscription, $type, $marketName, $timeVersion];
+            $alertVersion = $pinnacleAlerts === [] ? null : hash('xxh3', serialize($pinnacleAlerts));
+            $fetchIds = [];
+            foreach ($getData as $entry) {
+                $id = (string) $entry['sportsApiPro_match_id'];
+                $key = $entry['unique_key'];
+                $dataVersions[$id] = hash('xxh3', serialize([$context, ($entry['result_status'] ?? '') === 'Live' ? time() : null, $entry['_fixture_source_version'][$showTimeline ? 'timeline' : 'odds'],
+                    $savedTimelines->get($id)->timeline ?? null, $predictionCounts[$id] ?? [], $storedPredictionVotes[$id] ?? [], isset($favoriteKeys[$key]),
+                    $customerId === null ? null : request()->session()->get("football_predictions.{$customerId}.{$id}.1x2"), $customerId === null ? null : request()->session()->get("football_predictions.{$customerId}.{$id}.uo"),
+                    $liveOddsCache['Football:bet365:live:'.$id] ?? [], $alertVersion]));
+                $league = 'competition:'.($entry['tournament_id'] ?? ($entry['tournament_country'] ?? '').'|'.$entry['tournament']);
+                if ($type === 'by_time') {
+                    $league .= '|'.$entry['timestamp'];
+                }
+                $viewKey = hash('xxh3', serialize(['users.sports.football.footballDetails', $league, $key]));
+                $reuse[$id] = ! request()->boolean('append') && ($knownData[$key] ?? null) === $dataVersions[$id] && is_string($knownRows[$viewKey] ?? null);
+                if (! $reuse[$id]) {
+                    $fetchIds[] = $id;
+                }
+            }
+            $selectedMatches = getInRedis('Football:matches', readOnly: true, matchIds: $fetchIds, snapshot: $fixtureIndex);
+            if ($selectedMatches === null || count($selectedMatches) !== count($fetchIds)) {
+                $attempt = (int) request()->attributes->get('football_fixture_index_retry', 0);
+                request()->attributes->set('football_fixture_index_retry', $attempt + 1);
+                if ($attempt >= 1) {
+                    request()->attributes->set('football_fixture_index_disabled', true);
+                }
+                unset($fixtureIndex, $getData, $selectedMatches, $savedTimelines, $liveOddsCache, $pinnacleAlerts);
+
+                return $this->getFootballMatches();
+            }
+            $fixtureIndex = [];
+        }
         $mainArray = [];
         foreach ($getData as $data) {
-            if ($usesBetfairOdds) {
-                $data = prepareMatchOddsMonitoring($data);
+            $id = (string) $data['sportsApiPro_match_id'];
+            if ($fixtureIndex !== null && ! $reuse[$id]) {
+                $data = $selectedMatches[$data['_fixture_cache_key']];
             }
             $tournamentName = $data['tournament'];
             $leagueKey = 'competition:'.($data['tournament_id'] ?? ($data['tournament_country'] ?? '').'|'.$tournamentName);
             if ($type === 'by_time') {
                 $leagueKey .= '|'.$data['timestamp'];
             }
-            $matchId = (string) $data['sportsApiPro_match_id'];
-            $timeline = $data['timeline'] ?? [];
-            $oddsMarkets = ! $showTimeline && $canDisplayOdds
-                ? $this->footballOddsMarkets($data, $type ?? 'all', $marketName, $liveOddsCache['Football:bet365:live:'.$matchId] ?? [], $pinnacleAlerts)
-                : [];
-            if ($canBackfillTimeline && in_array($data['result_status'], ['Live', 'Finished'], true)) {
-                app(FootballSyncController::class)->storeTimeline($data, frameType: 'history');
-                $timeline = $data['timeline'];
-            }
-            $predictionVotes = [];
-
-            foreach (['1x2', 'uo'] as $poll) {
-                $sessionKey = "football_predictions.{$customerId}.{$matchId}.{$poll}";
-                $predictionVotes[$poll] = $customerId === null ? null : request()->session()->get($sessionKey);
-
-                if ($predictionVotes[$poll] === null && isset($storedPredictionVotes[$matchId][$poll])) {
-                    $predictionVotes[$poll] = $storedPredictionVotes[$matchId][$poll];
-                    request()->session()->put($sessionKey, $predictionVotes[$poll]);
-                }
-            }
-
             if (! isset($mainArray[$leagueKey])) {
                 $mainArray[$leagueKey] = [
                     'tournament_name' => $tournamentName,
@@ -437,6 +483,34 @@ trait FootballTrait
                     'matches' => [],
                 ];
             }
+            if ($reuse[$id] ?? false) {
+                $mainArray[$leagueKey]['matches'][] = ['unique_key' => $data['unique_key'], '_fixture_reuse' => true, '_fixture_data_version' => $dataVersions[$id]];
+
+                continue;
+            }
+            if ($usesBetfairOdds) {
+                $data = prepareMatchOddsMonitoring($data);
+            }
+            $matchId = (string) $data['sportsApiPro_match_id'];
+            $storedTimeline = json_decode($savedTimelines->get($matchId)->timeline ?? '[]', true) ?? [];
+            $storedTimeline = is_array($storedTimeline) ? $storedTimeline : [];
+            app(FootballSyncController::class)->storeTimeline($data, frameType: $canBackfillTimeline && in_array($data['result_status'], ['Live', 'Finished'], true) ? 'read' : 'restore', storedTimeline: $storedTimeline);
+            $timeline = $data['result_status'] === 'Prematch' ? [] : ($data['timeline'] ?? []);
+            $oddsMarkets = ! $showTimeline && $canDisplayOdds
+                ? $this->footballOddsMarkets($data, $type ?? 'all', $marketName, $liveOddsCache['Football:bet365:live:'.$matchId] ?? [], $pinnacleAlerts)
+                : [];
+            $predictionVotes = [];
+
+            foreach (['1x2', 'uo'] as $poll) {
+                $sessionKey = "football_predictions.{$customerId}.{$matchId}.{$poll}";
+                $predictionVotes[$poll] = $customerId === null ? null : request()->session()->get($sessionKey);
+
+                if ($predictionVotes[$poll] === null && isset($storedPredictionVotes[$matchId][$poll])) {
+                    $predictionVotes[$poll] = $storedPredictionVotes[$matchId][$poll];
+                    request()->session()->put($sessionKey, $predictionVotes[$poll]);
+                }
+            }
+
             $counts = ['home' => [], 'away' => []];
             foreach (['home', 'away'] as $side) {
                 foreach (['yellow_cards', 'red_cards', 'corners'] as $stat) {
@@ -454,6 +528,7 @@ trait FootballTrait
             $matchTimeline = $this->footballTimeline($data, $timeline);
             $mainArray[$leagueKey]['matches'][] = [
                 'unique_key' => $data['unique_key'],
+                '_fixture_data_version' => $dataVersions[$matchId] ?? null,
                 'is_favorite' => isset($favoriteKeys[$data['unique_key']]),
                 'team1' => $data['team1'],
                 'team2' => $data['team2'],
@@ -618,7 +693,7 @@ trait FootballTrait
         ];
     }
 
-    private function footballLeaguePriority(string $tournament, ?string $country = null): int
+    public function footballLeaguePriority(string $tournament, ?string $country = null): int
     {
         $normalize = static fn (string $name): string => strtolower((string) preg_replace('/[^a-z0-9]+/i', '', Str::ascii($name)));
         $country = $normalize($country ?? '');
@@ -757,7 +832,7 @@ trait FootballTrait
         if (isset($match['home_score'], $match['away_score'])) {
             $confirmedGoals = ['home' => (int) $match['home_score'], 'away' => (int) $match['away_score']];
             foreach ($events as $event) {
-                if ($event['kind'] !== 'goal') {
+                if ($event['kind'] !== 'goal' || ($event['source'] ?? '') === 'score') {
                     continue;
                 }
                 $side = $event['is_home'] ? 'home' : 'away';
@@ -949,7 +1024,7 @@ trait FootballTrait
         //         break;
         //     }
         // }
-        $match = collect(getVisibleSportsMatches('Football:matches') ?? [])->first(fn ($candidate) => (string) ($candidate['sportsApiPro_match_id'] ?? '') === (string) $matchId);
+        $match = array_find(getInRedis('Football:matches', matchIds: [$matchId]) ?? [], static fn (array $candidate): bool => (string) ($candidate['sportsApiPro_match_id'] ?? '') === $matchId && ! MatchBackup::isHidden($candidate, 'football'));
 
         if ($match === null) {
             $storedMatch = FootballMatch::query()

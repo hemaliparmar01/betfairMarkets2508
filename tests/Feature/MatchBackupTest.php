@@ -32,6 +32,7 @@ class MatchBackupTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        config(['services.football_fixture_index' => false]);
         Event::fake();
         $lock = Mockery::mock();
         $lock->shouldReceive('block')->andReturnUsing(static fn (int $wait, callable $callback): mixed => $callback());

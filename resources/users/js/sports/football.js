@@ -120,7 +120,8 @@ let footballPendingRequest = null;
 let footballActiveRequest = null;
 let footballPendingRealtime = false;
 let footballRealtimeTimer = null;
-const footballPendingPredictions = [];
+let footballRequestController = null;
+let footballRealtimeController = null;
 
 const updateFootballLazyLoader = (hasMore, nextPage = null) => {
     footballHasMore = Boolean(hasMore);
@@ -241,7 +242,7 @@ const closeStatisticsPanel = (restoreFocus = true) => {
     }
 };
 
-const restoreStatisticsPanel = () => {
+const restoreStatisticsPanel = async () => {
     if (openStatisticsMatchId === null) return;
     const matchId = CSS.escape(openStatisticsMatchId);
     const panel = document.querySelector(`[data-statistics-panel="${matchId}"]`);
@@ -254,6 +255,21 @@ const restoreStatisticsPanel = () => {
     button.setAttribute('aria-expanded', 'true');
     document.body.classList.add('!overflow-hidden');
     document.documentElement.classList.add('!overflow-hidden');
+    if (panel.dataset.statisticsLoaded === 'true' || panel.dataset.statisticsLoading === 'true') return;
+    panel.dataset.statisticsLoading = 'true';
+    try {
+        const response = await fetch(`/football/matches/${encodeURIComponent(openStatisticsMatchId)}/statistics`, { headers: { Accept: 'application/json' } });
+        if (!response.ok) throw new Error(`HTTP error: ${response.status}`);
+        const data = await response.json();
+        if (panel.isConnected) {
+            panel.querySelector('[data-statistics-body]').innerHTML = data.html;
+            panel.dataset.statisticsLoaded = 'true';
+        }
+    } catch (error) {
+        panel.querySelector('[data-statistics-body]').textContent = globalThis.bfTranslations?.['No data available.'] ?? 'No data available.';
+    } finally {
+        delete panel.dataset.statisticsLoading;
+    }
 };
 
 const closeQuickStatsPanel = (restoreFocus = true) => {
@@ -604,6 +620,7 @@ document.querySelectorAll('.market-dropdown').forEach((element) => {
 });
 
 const callFixtureData = async (value, options = {}) => {
+    const prediction = Boolean(value.prediction);
     const append = options.append === true;
     const preserveLoaded = options.preserveLoaded === true;
     const realtime = options.realtime === true;
@@ -613,7 +630,9 @@ const callFixtureData = async (value, options = {}) => {
         page: append ? footballPage + 1 : 1,
         per_page: preserveLoaded ? footballPage * FOOTBALL_PAGE_SIZE : FOOTBALL_PAGE_SIZE,
         append,
+        ...(!prediction && openStatisticsMatchId !== null ? { _statistics_match_id: openStatisticsMatchId } : {}),
         ...(!append && !value.prediction && options.reset !== true ? { _fixture_versions: fixtureVersions(fixtures) } : {}),
+        ...(!append && !value.prediction && options.reset !== true ? { _fixture_data_versions: Object.fromEntries(Array.from(fixtures?.querySelectorAll('[data-fixture-match-key][data-fixture-data-version]') ?? []).filter(row => row.dataset.fixtureDataVersion).map(row => [row.dataset.fixtureMatchKey, row.dataset.fixtureDataVersion])) } : {}),
     });
 
     if (options.reset === true && !append) {
@@ -621,31 +640,39 @@ const callFixtureData = async (value, options = {}) => {
         fixtures?.setAttribute('aria-busy', 'true');
     }
 
-    if (footballLoading || (footballRealtimeLoading && (realtime || value.prediction))) {
-        if (value.prediction) {
-            return new Promise((resolve) => {
-                footballPendingPredictions.push({ prediction: value.prediction, options, resolve });
-            });
-        } else if (options.reset === true) {
+    if (!prediction && (footballLoading || (footballRealtimeLoading && realtime))) {
+        if (options.reset === true) {
             footballPendingRequest = footballActiveRequest?.body === body
                 && footballActiveRequest.preserveLoaded === preserveLoaded
                 && footballActiveRequest.reset === options.reset
                 ? null : { value, options };
+            if (footballPendingRequest) {
+                footballRequestVersion++;
+                footballRequestController?.abort();
+            }
         } else if (options.realtime === true) {
             footballPendingRealtime = true;
         }
         return;
     }
 
-    clearTimeout(footballRealtimeTimer);
-    footballRealtimeTimer = null;
-    footballPendingRealtime = false;
-    if (realtime) footballRealtimeLoading = true;
-    else {
+    const controller = prediction ? null : new AbortController();
+    if (!prediction) {
+        clearTimeout(footballRealtimeTimer);
+        footballRealtimeTimer = null;
+        footballPendingRealtime = false;
+    }
+    if (realtime) {
+        footballRealtimeLoading = true;
+        footballRealtimeController = controller;
+    } else if (!prediction) {
+        if (options.reset === true) footballRealtimeController?.abort();
         footballLoading = true;
+        footballRequestController = controller;
         footballActiveRequest = { body, preserveLoaded, reset: options.reset };
     }
-    const requestVersion = realtime ? footballRequestVersion : ++footballRequestVersion;
+    const requestVersion = realtime || prediction ? footballRequestVersion : ++footballRequestVersion;
+    const requestStartedAt = Date.now();
     if (append && footballLazyLoader) {
         footballLazyLoader.querySelector('[data-lazy-loader-text]').textContent = (globalThis.bfTranslations?.["Loading matches…"] ?? "Loading matches…");
     }
@@ -660,6 +687,7 @@ const callFixtureData = async (value, options = {}) => {
                 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content'),
             },
             body,
+            ...(controller ? { signal: controller.signal } : {}),
         });
 
         if (response.status === 401) {
@@ -674,6 +702,33 @@ const callFixtureData = async (value, options = {}) => {
 
         document.querySelector('[data-football-request-error]')?.remove();
         const data = await response.json();
+        if (prediction) {
+            const result = data.prediction;
+            if (!result) throw new Error('Prediction response unavailable.');
+            const panel = document.querySelector(`[data-prediction-panel="${CSS.escape(String(result.match_id))}"]`);
+            const poll = panel?.querySelector(`[data-prediction-poll="${CSS.escape(result.poll)}"]`);
+            if (!poll) return;
+            const total = Object.values(result.counts).reduce((sum, count) => sum + Number(count), 0);
+            const highest = Math.max(0, ...Object.values(result.counts).map(Number));
+            poll.querySelector('[data-prediction-choices]')?.classList.add('hidden');
+            poll.querySelector('[data-prediction-results]')?.classList.remove('hidden');
+            poll.querySelectorAll('[data-prediction-option]').forEach(button => { button.disabled = true; });
+            poll.querySelectorAll('[data-prediction-result]').forEach(row => {
+                const count = Number(result.counts[row.dataset.predictionResult] ?? 0);
+                const percent = total > 0 ? Math.round(count / total * 100) : 0;
+                row.querySelector('[data-prediction-count]').textContent = String(count);
+                row.querySelector('[data-prediction-percent]').textContent = `${percent}%`;
+                const bar = row.querySelector('[data-prediction-bar]');
+                bar.style.width = `${Math.max(10, percent)}%`;
+                const selected = row.dataset.predictionResult === result.value;
+                const winner = !selected && count > 0 && count === highest;
+                const colors = ['from-[var(--surface-brand-80-2)]', 'to-[var(--surface-brand-70)]', 'from-[var(--surface-success-50)]', 'to-[var(--surface-success-35-2)]', 'from-[var(--surface-success-25)]', 'to-[var(--surface-success-15-2)]'];
+                colors.forEach((color, index) => bar.classList.toggle(color, index < 2 ? selected : index < 4 ? winner : !selected && !winner));
+            });
+            poll.querySelector('[data-prediction-total]').textContent = String(total);
+            panel.dataset.predictionSavedAt = String(Date.now());
+            return;
+        }
         const selected = getSelectedFilters();
         if (requestVersion !== footballRequestVersion || footballPendingRequest || selected.type !== value.type || selected.market_name !== value.market_name) {
             return;
@@ -692,6 +747,11 @@ const callFixtureData = async (value, options = {}) => {
                 if (state?.expanded) state.scrollTop = panel.scrollTop;
             });
             preserveQuickStatsPanel(incoming);
+            fixtures.querySelectorAll('[data-prediction-saved-at]').forEach(panel => {
+                if (Number(panel.dataset.predictionSavedAt) >= requestStartedAt) {
+                    incoming.querySelector(`[data-prediction-panel="${CSS.escape(panel.dataset.predictionPanel)}"]`)?.replaceWith(panel);
+                }
+            });
             updateFixtureRows(fixtures, incoming);
             footballPage = preserveLoaded ? Math.max(1, footballPage) : 1;
         }
@@ -707,6 +767,11 @@ const callFixtureData = async (value, options = {}) => {
         refreshFootballTimelineClocks();
 
     } catch (error) {
+        if (error.name === 'AbortError') return;
+        if (prediction) {
+            const panel = document.querySelector(`[data-prediction-panel="${CSS.escape(String(value.prediction.match_id))}"]`);
+            panel?.querySelector(`[data-prediction-poll="${CSS.escape(value.prediction.poll)}"]`)?.querySelectorAll('[data-prediction-option]').forEach(button => { button.disabled = false; });
+        }
         console.error((globalThis.bfTranslations?.["Request failed:"] ?? "Request failed:"), error);
         if (options.realtime !== true) {
             let notice = document.querySelector('[data-football-request-error]');
@@ -721,6 +786,7 @@ const callFixtureData = async (value, options = {}) => {
         }
         updateFootballLazyLoader(footballHasMore);
     } finally {
+        if (prediction) return;
         if (realtime) footballRealtimeLoading = false;
         else {
             footballLoading = false;
@@ -737,9 +803,6 @@ const callFixtureData = async (value, options = {}) => {
             const pending = footballPendingRequest;
             footballPendingRequest = null;
             callFixtureData(pending.value, pending.options);
-        } else if (footballPendingPredictions.length) {
-            const pending = footballPendingPredictions.shift();
-            callFixtureData({ ...getSelectedFilters(), prediction: pending.prediction }, pending.options).then(pending.resolve);
         } else if (footballPendingRealtime) {
             scheduleFootballRealtimeRefresh();
         }

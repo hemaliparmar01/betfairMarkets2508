@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Users\Football\FootballController;
 use App\Http\Controllers\Users\Football\FootballSyncController;
 use App\Services\MatchBackup;
 use Illuminate\Support\Facades\Cache;
@@ -824,114 +825,293 @@ if (! function_exists('storeInRedis')) {
      * @param  array<string, mixed>  $data
      * @param  array<string, mixed>|null  $existingData
      */
-    function storeInRedis(string $cacheKey, array $data, int $ttlMinutes = 10, bool $mergeLifecycle = true, ?array $existingData = null)
+    function storeInRedis(string $cacheKey, array $data, int $ttlMinutes = 10, bool $mergeLifecycle = true, ?array $existingData = null, bool $replace = false): void
     {
-        $cachedData = Redis::get($cacheKey);
-        if ($existingData === null || $cachedData !== json_encode($existingData)) {
-            $existingData = $cachedData ? json_decode($cachedData, true) : [];
-        }
-        unset($cachedData);
-        $mergedData = array_replace($existingData, $data);
-        if ($cacheKey === 'Football:matches') {
-            $mergedData = app(FootballSyncController::class)->mergeDuplicateMatches($mergedData);
-        }
-        $sport = MatchBackup::sportForCache($cacheKey);
-        if ($sport !== null && $mergeLifecycle) {
-            $cleaned = array_fill_keys(Redis::zrangebyscore($cacheKey.':cleaned', time(), '+inf'), true);
-            foreach ($mergedData as $matchKey => &$match) {
-                if (isset($cleaned[$matchKey])) {
-                    unset($mergedData[$matchKey]);
-
-                    continue;
-                }
-                $previous = $existingData[$matchKey] ?? [];
-                if (($previous['result_status'] ?? '') === 'Finished' && ($match['result_status'] ?? '') !== 'Finished') {
-                    $match = $previous;
-                }
-                $match = MatchBackup::merge($match, $previous, $sport);
+        if ($replace) {
+            $mergedData = $data;
+        } else {
+            $cachedData = Redis::get($cacheKey);
+            $encodedExisting = $existingData === null ? null : json_encode($existingData);
+            $reuseExisting = $encodedExisting !== null && is_string($cachedData)
+                && strncmp($cachedData, $encodedExisting, strlen($encodedExisting)) === 0
+                && trim(substr($cachedData, strlen($encodedExisting))) === '';
+            unset($encodedExisting);
+            if (! $reuseExisting) {
+                $existingData = $cachedData ? json_decode($cachedData, true) : [];
             }
-            unset($match);
-        }
-        if ($sport !== null && $sport !== 'football') {
-            $tennisCountries = null;
-            foreach ($mergedData as $matchKey => &$match) {
-                $field = in_array($sport, ['greyhounds', 'horseracing'], true) ? 'country' : 'tournament_country';
-                if ($sport === 'tennis' && (! filled($match[$field] ?? null) || in_array($match[$field], ['ATP', 'WTA', 'ITF', 'Challenger'], true)) && class_exists(ResourceBundle::class)) {
-                    if ($tennisCountries === null) {
-                        $regions = ResourceBundle::create('en', 'ICUDATA-region')?->get('Countries');
-                        $tennisCountries = $regions === null ? [] : array_change_key_case(array_flip(iterator_to_array($regions)), CASE_LOWER);
+            unset($cachedData);
+            $mergedData = array_replace($existingData, $data);
+            if ($cacheKey === 'Football:matches') {
+                $mergedData = app(FootballSyncController::class)->mergeDuplicateMatches($mergedData);
+            }
+            $sport = MatchBackup::sportForCache($cacheKey);
+            if ($sport !== null && $mergeLifecycle) {
+                $cleaned = array_fill_keys(Redis::zrangebyscore($cacheKey.':cleaned', time(), '+inf'), true);
+                foreach ($mergedData as $matchKey => &$match) {
+                    if (isset($cleaned[$matchKey])) {
+                        unset($mergedData[$matchKey]);
+
+                        continue;
                     }
-                    if ($tennisCountries !== []) {
-                        foreach (array_slice(explode(',', (string) ($match['tournament'] ?? '')), 1) as $part) {
-                            $name = trim($part);
-                            $name = ['USA' => 'United States', 'UK' => 'United Kingdom'][$name] ?? $name;
-                            $code = $tennisCountries[strtolower($name)] ?? null;
-                            if ($code !== null) {
-                                $match[$field] = Locale::getDisplayRegion('und_'.$code, 'en');
-                                break;
+                    $previous = $existingData[$matchKey] ?? [];
+                    if (($previous['result_status'] ?? '') === 'Finished' && ($match['result_status'] ?? '') !== 'Finished') {
+                        $match = $previous;
+                    }
+                    $match = MatchBackup::merge($match, $previous, $sport);
+                }
+                unset($match);
+            }
+            if ($sport !== null && $sport !== 'football') {
+                $tennisCountries = null;
+                foreach ($mergedData as $matchKey => &$match) {
+                    $field = in_array($sport, ['greyhounds', 'horseracing'], true) ? 'country' : 'tournament_country';
+                    if ($sport === 'tennis' && (! filled($match[$field] ?? null) || in_array($match[$field], ['ATP', 'WTA', 'ITF', 'Challenger'], true)) && class_exists(ResourceBundle::class)) {
+                        if ($tennisCountries === null) {
+                            $regions = ResourceBundle::create('en', 'ICUDATA-region')?->get('Countries');
+                            $tennisCountries = $regions === null ? [] : array_change_key_case(array_flip(iterator_to_array($regions)), CASE_LOWER);
+                        }
+                        if ($tennisCountries !== []) {
+                            foreach (array_slice(explode(',', (string) ($match['tournament'] ?? '')), 1) as $part) {
+                                $name = trim($part);
+                                $name = ['USA' => 'United States', 'UK' => 'United Kingdom'][$name] ?? $name;
+                                $code = $tennisCountries[strtolower($name)] ?? null;
+                                if ($code !== null) {
+                                    $match[$field] = Locale::getDisplayRegion('und_'.$code, 'en');
+                                    break;
+                                }
+                            }
+                        }
+                        if (in_array($match[$field] ?? null, ['ATP', 'WTA', 'ITF', 'Challenger'], true)) {
+                            unset($match[$field]);
+                        }
+                    }
+                    $country = array_find([$match[$field] ?? null, $match['country'] ?? null, $match['country_code'] ?? null, $match['countryCode'] ?? null, $existingData[$matchKey][$field] ?? null, $existingData[$matchKey]['country'] ?? null], static fn (mixed $value): bool => (is_array($value) || (is_string($value) && trim($value) !== '')) && ($sport !== 'tennis' || ! in_array($value, ['ATP', 'WTA', 'ITF', 'Challenger'], true)));
+                    if (is_array($country)) {
+                        $country = $country['name'] ?? $country['code'] ?? $country['alpha2'] ?? null;
+                    }
+                    if (is_string($country) && trim($country) !== '') {
+                        $country = trim($country);
+                        if (preg_match('/^[a-z]{2}$/i', $country) && class_exists(Locale::class)) {
+                            $country = Locale::getDisplayRegion('und_'.strtoupper($country), 'en');
+                        }
+                        $match[$field] = $country;
+                    }
+                }
+                unset($match);
+            }
+            if ($cacheKey === 'Football:matches') {
+                $timelineController = app(FootballSyncController::class);
+                $savedTimelines = collect();
+                try {
+                    $matchIds = array_values(array_filter(array_column($mergedData, 'sportsApiPro_match_id'), static fn (mixed $id): bool => is_scalar($id) && preg_match('/^[1-9][0-9]*$/', (string) $id)));
+                    if ($matchIds !== []) {
+                        $savedTimelines = DB::table('football_timeline')->whereIn('match_id', $matchIds)->get(['match_id', 'timeline'])->keyBy('match_id');
+                    }
+                } catch (Throwable $exception) {
+                    Log::warning('Football timeline cache fallback unavailable', [
+                        'exception' => $exception::class,
+                        'message' => $exception->getMessage(),
+                        'file' => $exception->getFile(),
+                        'line' => $exception->getLine(),
+                    ]);
+                }
+                foreach ($mergedData as $matchKey => &$match) {
+                    $saved = $savedTimelines->get((string) ($match['sportsApiPro_match_id'] ?? ''));
+                    $timelineController->storeTimeline($match, frameType: 'normalize', previous: $existingData[$matchKey] ?? [], storedTimeline: json_decode($saved->timeline ?? '[]', true) ?? []);
+                }
+                unset($match);
+            }
+            unset($existingData, $data, $previous, $cleaned, $savedTimelines, $matchIds, $saved);
+        }
+        if ($cacheKey === 'Football:matches' && config('services.football_fixture_index')) {
+            $index = ['format' => 3, 'matches' => [], 'positions' => [], 'ids' => [], 'orders' => []];
+            $fields = array_flip(['unique_key', 'sportsApiPro_match_id', 'betfair_match_id', 'timestamp', 'result_status', 'minutes_status', 'current_period_start_timestamp', 'added_time', 'tournament', 'tournament_country', 'tournament_id', 'tournament_logo', 'country_id', 'internal_backup', 'provider_lifecycle', 'pinnacle_drop_triggered', 'pinnacle_market_shock_detected_at']);
+            $visibleFields = array_flip(['unique_key', 'team1', 'team2', 'home_team_id', 'away_team_id', 'home_team_logo', 'away_team_logo', 'betfair_match_id', 'sportsApiPro_match_id', 'timestamp', 'result_status', 'minutes_status', 'current_period_start_timestamp', 'added_time', 'home_score', 'away_score', 'timeline', 'live_stats', 'live_stats_meta', 'statistics_periods', 'prematch_statistics', 'statistics_requests', 'predictions']);
+            $controller = app(FootballController::class);
+            $index['priority_version'] = hash('xxh3', serialize((new ReflectionClass($controller))->getConstant('LEAGUE_PRIORITY')));
+            $previousIndex = getInRedis($cacheKey, fixtureIndex: true) ?? [];
+            $isList = array_is_list($mergedData);
+            $serialized = $isList ? '[' : '{';
+            $sortFields = [];
+            $number = 0;
+            $canonical = true;
+            foreach ($mergedData as $matchKey => $match) {
+                $serialized .= ($number++ > 0 ? ',' : '').($isList ? '' : json_encode((string) $matchKey).':');
+                $json = json_encode($match, JSON_THROW_ON_ERROR);
+                $index['positions'][$matchKey] = [strlen($serialized), strlen($json)];
+                $serialized .= $json;
+                $rowVersion = hash('xxh3', $json);
+                if (($previousIndex['matches'][$matchKey]['_fixture_source_version']['odds'] ?? null) === $rowVersion) {
+                    $entry = $previousIndex['matches'][$matchKey];
+                } else {
+                    $entry = array_intersect_key($match, $fields);
+                    $entry['_fixture_cache_key'] = $matchKey;
+                    $entry['_fixture_priority'] = $controller->footballLeaguePriority((string) ($match['tournament'] ?? ''), $match['tournament_country'] ?? null);
+                    $entry['_fixture_source_version'] = ['odds' => $rowVersion, 'timeline' => hash('xxh3', json_encode(array_intersect_key($match, $visibleFields)))];
+                    $entry['home_score'] = $match['home_score'] ?? null;
+                    $entry['away_score'] = $match['away_score'] ?? null;
+                    $entry['bet365_prematch'] = array_intersect_key($match['bet365_prematch'] ?? [], array_flip(['favorite_side', 'favorite_odds']));
+                    $entry['markets'] = [];
+                    if (($match['result_status'] ?? '') === 'Prematch') {
+                        $entry['pinnacle_drop_triggered'] = ($controller->footballFilterPredicate('prematch_drops'))($match);
+                        $entry['pinnacle_market_shock_detected_at'] = (int) ($match['pinnacle_market_shock_detected_at'] ?? 0);
+                        foreach ($match['markets'] ?? [] as $runners) {
+                            foreach ($runners as $runner) {
+                                if ((int) ($runner['market_shock_detected_at'] ?? 0) > $entry['pinnacle_market_shock_detected_at'] && hasMeaningfulOpeningOdds($runner)) {
+                                    $entry['pinnacle_market_shock_detected_at'] = (int) $runner['market_shock_detected_at'];
+                                }
                             }
                         }
                     }
-                    if (in_array($match[$field] ?? null, ['ATP', 'WTA', 'ITF', 'Challenger'], true)) {
-                        unset($match[$field]);
-                    }
                 }
-                $country = array_find([$match[$field] ?? null, $match['country'] ?? null, $match['country_code'] ?? null, $match['countryCode'] ?? null, $existingData[$matchKey][$field] ?? null, $existingData[$matchKey]['country'] ?? null], static fn (mixed $value): bool => (is_array($value) || (is_string($value) && trim($value) !== '')) && ($sport !== 'tennis' || ! in_array($value, ['ATP', 'WTA', 'ITF', 'Challenger'], true)));
-                if (is_array($country)) {
-                    $country = $country['name'] ?? $country['code'] ?? $country['alpha2'] ?? null;
+                $index['matches'][$matchKey] = $entry;
+                $id = (string) ($match['sportsApiPro_match_id'] ?? '');
+                if (ctype_digit($id) && (int) $id > 0) {
+                    $canonical = $canonical && ! isset($index['ids'][$id]);
+                    $index['ids'][$id] = $matchKey;
                 }
-                if (is_string($country) && trim($country) !== '') {
-                    $country = trim($country);
-                    if (preg_match('/^[a-z]{2}$/i', $country) && class_exists(Locale::class)) {
-                        $country = Locale::getDisplayRegion('und_'.strtoupper($country), 'en');
-                    }
-                    $match[$field] = $country;
+                $sortFields[$matchKey] = [$entry['_fixture_priority'], $entry['timestamp'] ?? 0, $entry['tournament_id'] ?? null, $entry['tournament_country'] ?? null, $entry['tournament'] ?? ''];
+            }
+            $serialized .= $isList ? ']' : '}';
+            $index['length'] = strlen($serialized);
+            $index['content_version'] = hash('xxh3', $serialized);
+            if (($previousIndex['content_version'] ?? null) === $index['content_version']) {
+                $extended = Redis::eval('if redis.call("GETRANGE", KEYS[1], -66, -1) == ARGV[1] then redis.call("EXPIRE", KEYS[1], ARGV[2]); redis.call("EXPIRE", KEYS[2], ARGV[2]); return 1 end; return 0', 2, $cacheKey, $cacheKey.':fixtures', $previousIndex['marker'], $ttlMinutes * 60);
+                if ($extended) {
+                    return;
                 }
             }
-            unset($match);
+            $index['sort_version'] = hash('xxh3', serialize($sortFields));
+            if (($previousIndex['sort_version'] ?? null) === $index['sort_version'] && is_array($previousIndex['orders'] ?? null) && count($previousIndex['orders']) === 3) {
+                $index['orders'] = $previousIndex['orders'];
+            } else {
+                foreach (['competition', 'default', 'time'] as $mode) {
+                    $ordered = $index['matches'];
+                    uasort($ordered, static function (array $first, array $second) use ($mode): int {
+                        $time = (int) ($first['timestamp'] ?? 0) <=> (int) ($second['timestamp'] ?? 0);
+                        $priority = $first['_fixture_priority'] <=> $second['_fixture_priority'];
+                        $competition = $mode === 'competition' && $priority === 0
+                            ? strcmp((string) ($first['tournament_id'] ?? ($first['tournament_country'] ?? '').'|'.($first['tournament'] ?? '')), (string) ($second['tournament_id'] ?? ($second['tournament_country'] ?? '').'|'.($second['tournament'] ?? ''))) : 0;
+
+                        return $mode === 'time' ? ($time ?: $priority) : ($priority ?: $competition ?: $time);
+                    });
+                    $index['orders'][$mode] = array_keys($ordered);
+                }
+            }
+            // JSON whitespace binds the byte index to its payload without changing decoded data.
+            $index['marker'] = "\n".strtr(str_pad(decbin(hexdec(substr(hash('sha256', json_encode($index, JSON_THROW_ON_ERROR)), 0, 15))), 64, '0', STR_PAD_LEFT), '01', " \t")."\n";
+            $serialized .= $index['marker'];
+            Redis::eval('redis.call("SET", KEYS[1], ARGV[1], "EX", ARGV[3]); if ARGV[2] ~= "" then redis.call("SET", KEYS[2], ARGV[2], "EX", ARGV[3]) else redis.call("DEL", KEYS[2]) end; return 1', 2, $cacheKey, $cacheKey.':fixtures', $serialized, $canonical ? json_encode($index, JSON_THROW_ON_ERROR) : '', $ttlMinutes * 60);
+        } else {
+            if ($replace) {
+                Redis::setex($cacheKey, $ttlMinutes * 60, json_encode($mergedData));
+            } else {
+                Redis::set($cacheKey, json_encode($mergedData));
+                Redis::expire($cacheKey, $ttlMinutes * 60);
+            }
         }
-        if ($cacheKey === 'Football:matches') {
-            $timelineController = app(FootballSyncController::class);
-            $savedTimelines = collect();
-            try {
-                $matchIds = array_values(array_filter(array_column($mergedData, 'sportsApiPro_match_id'), static fn (mixed $id): bool => is_scalar($id) && preg_match('/^[1-9][0-9]*$/', (string) $id)));
-                if ($matchIds !== []) {
-                    $savedTimelines = DB::table('football_timeline')->whereIn('match_id', $matchIds)->get(['match_id', 'timeline'])->keyBy('match_id');
-                }
-            } catch (Throwable $exception) {
-                Log::warning('Football timeline cache fallback unavailable', [
-                    'exception' => $exception::class,
-                    'message' => $exception->getMessage(),
-                    'file' => $exception->getFile(),
-                    'line' => $exception->getLine(),
-                ]);
-            }
-            foreach ($mergedData as $matchKey => &$match) {
-                $saved = $savedTimelines->get((string) ($match['sportsApiPro_match_id'] ?? ''));
-                $timelineController->storeTimeline($match, frameType: 'normalize', previous: $existingData[$matchKey] ?? [], storedTimeline: json_decode($saved->timeline ?? '[]', true) ?? []);
-            }
-            unset($match);
-        }
-        unset($existingData, $data, $previous, $cleaned, $savedTimelines, $matchIds, $saved);
-        Redis::set($cacheKey, json_encode($mergedData));
-        Redis::expire($cacheKey, $ttlMinutes * 60);
     }
 }
 
 if (! function_exists('getInRedis')) {
-    function getInRedis(string $cacheKey, bool $restoreVisibleFootballTimelines = false): mixed
+    /**
+     * Read selected Football rows from the current JSON snapshot when available.
+     *
+     * @param  array<int, int|string>|null  $matchIds
+     * @param  array<string, mixed>|null  $snapshot
+     */
+    function getInRedis(string $cacheKey, bool $restoreVisibleFootballTimelines = false, bool $readOnly = false, ?array $matchIds = null, bool $fixtureIndex = false, ?array $snapshot = null): mixed
     {
-        $cachedData = Redis::get($cacheKey);
+        if ($cacheKey === 'Football:matches' && ($fixtureIndex || $matchIds !== null)) {
+            $index = $snapshot;
+            if ($index === null && config('services.football_fixture_index')) {
+                $index = json_decode(Redis::get($cacheKey.':fixtures') ?? '[]', true);
+            }
+            $metadata = is_array($index) ? $index : [];
+            unset($metadata['marker']);
+            $marker = "\n".strtr(str_pad(decbin(hexdec(substr(hash('sha256', json_encode($metadata)), 0, 15))), 64, '0', STR_PAD_LEFT), '01', " \t")."\n";
+            $valid = is_array($index) && ($index['format'] ?? null) === 3
+                && is_array($index['matches'] ?? null) && is_array($index['orders'] ?? null)
+                && ($index['priority_version'] ?? null) === hash('xxh3', serialize((new ReflectionClass(FootballController::class))->getConstant('LEAGUE_PRIORITY')))
+                && is_string($index['marker'] ?? null) && strlen($index['marker']) === 66
+                && $index['marker'] === $marker
+                && Redis::getrange($cacheKey, -66, -1) === $index['marker'];
+            if ($valid) {
+                foreach (['competition', 'default', 'time'] as $mode) {
+                    $order = $index['orders'][$mode] ?? [];
+                    if (! is_array($order) || count($order) !== count($index['matches']) || array_diff_key($index['matches'], array_flip($order)) !== []) {
+                        $valid = false;
+                        break;
+                    }
+                }
+            }
+            if ($fixtureIndex) {
+                return $valid ? $index : null;
+            }
+            if (array_any($matchIds, static fn (mixed $id): bool => ! is_scalar($id) || ! ctype_digit((string) $id) || (int) $id <= 0)) {
+                $valid = false;
+            }
+            if ($valid) {
+                $arguments = [$index['marker'], (int) $index['length'] + 66];
+                $keys = [];
+                foreach ($matchIds as $id) {
+                    $key = $index['ids'][(string) $id] ?? null;
+                    if ($key !== null && ! isset($keys[$key])) {
+                        [$offset, $length] = $index['positions'][$key] ?? [-1, 0];
+                        if (! is_int($offset) || ! is_int($length) || $offset < 0 || $length < 2 || $offset + $length > $index['length']) {
+                            $valid = false;
+                            break;
+                        }
+                        $keys[$key] = true;
+                        $arguments[] = $offset;
+                        $arguments[] = $offset + $length - 1;
+                    }
+                }
+                $rows = $valid ? Redis::eval('if redis.call("GETRANGE", KEYS[1], -66, -1) ~= ARGV[1] or redis.call("STRLEN", KEYS[1]) ~= tonumber(ARGV[2]) then return false end; local rows = {}; for i = 3, #ARGV, 2 do rows[#rows + 1] = redis.call("GETRANGE", KEYS[1], tonumber(ARGV[i]), tonumber(ARGV[i + 1])) end; return rows', 1, $cacheKey, ...$arguments) : false;
+                if (is_array($rows) && count($rows) === count($keys)) {
+                    $matches = [];
+                    foreach (array_keys($keys) as $position => $key) {
+                        $row = json_decode($rows[$position], true);
+                        if (! is_array($row) || ! isset($index['ids'][(string) ($row['sportsApiPro_match_id'] ?? '')])) {
+                            $valid = false;
+                            break;
+                        }
+                        $matches[$key] = $row;
+                    }
+                    if ($valid) {
+                        if ($readOnly) {
+                            return $matches;
+                        }
+                        $selectedMatches = $matches;
+                    }
+                }
+            }
+            if ($snapshot !== null && ! isset($selectedMatches)) {
+                return null;
+            }
+        }
+        $cachedData = isset($selectedMatches) ? null : Redis::get($cacheKey);
 
-        $matches = $cachedData === null ? null : json_decode($cachedData, true);
+        $matches = $selectedMatches ?? ($cachedData === null ? null : json_decode($cachedData, true));
         if ($cacheKey === 'Football:matches' && is_array($matches) && $matches !== []) {
             try {
                 $controller = app(FootballSyncController::class);
+                if ($readOnly) {
+                    unset($cachedData);
+
+                    $matches = $controller->mergeDuplicateMatches($matches);
+                    if ($matchIds !== null) {
+                        $ids = array_fill_keys(array_map('strval', $matchIds), true);
+                        $matches = array_filter($matches, static fn (array $match): bool => isset($ids[(string) ($match['sportsApiPro_match_id'] ?? '')]));
+                    }
+
+                    return $matches;
+                }
                 $originalMatches = $matches;
                 $matches = $controller->mergeDuplicateMatches($matches);
                 $changed = $matches !== $originalMatches;
                 unset($originalMatches);
-                $matchIds = [];
+                $timelineIds = [];
                 $matchKeys = [];
                 foreach ($matches as $matchKey => $match) {
                     if ($restoreVisibleFootballTimelines && (($match['result_status'] ?? '') === 'Finished' || MatchBackup::isHidden($match, 'football'))) {
@@ -939,11 +1119,11 @@ if (! function_exists('getInRedis')) {
                     }
                     $matchId = $match['sportsApiPro_match_id'] ?? null;
                     if (is_scalar($matchId) && preg_match('/^[1-9][0-9]*$/', (string) $matchId)) {
-                        $matchIds[] = $matchId;
+                        $timelineIds[] = $matchId;
                         $matchKeys[] = $matchKey;
                     }
                 }
-                $savedTimelines = $matchIds === [] ? collect() : DB::table('football_timeline')->whereIn('match_id', $matchIds)->get(['match_id', 'timeline'])->keyBy('match_id');
+                $savedTimelines = $timelineIds === [] ? collect() : DB::table('football_timeline')->whereIn('match_id', $timelineIds)->get(['match_id', 'timeline'])->keyBy('match_id');
                 foreach ($matchKeys as $matchKey) {
                     $match = &$matches[$matchKey];
                     $saved = $savedTimelines->get((string) ($match['sportsApiPro_match_id'] ?? ''));
@@ -954,8 +1134,8 @@ if (! function_exists('getInRedis')) {
                     }
                 }
                 unset($match);
-                unset($savedTimelines, $matchIds, $matchKeys, $timeline, $saved);
-                if ($changed) {
+                unset($savedTimelines, $timelineIds, $matchKeys, $timeline, $saved);
+                if ($changed && ! isset($selectedMatches)) {
                     Redis::eval('if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("SET", KEYS[1], ARGV[2], "KEEPTTL") end return 0', 1, $cacheKey, $cachedData, json_encode($matches));
                 }
             } catch (Throwable $exception) {
@@ -966,6 +1146,11 @@ if (! function_exists('getInRedis')) {
                     'line' => $exception->getLine(),
                 ]);
             }
+        }
+
+        if ($matchIds !== null && is_array($matches)) {
+            $ids = array_fill_keys(array_map('strval', $matchIds), true);
+            $matches = array_filter($matches, static fn (array $match): bool => isset($ids[(string) ($match['sportsApiPro_match_id'] ?? '')]));
         }
 
         return $matches;

@@ -335,9 +335,16 @@ class MatchBackup
                 }
                 unset($match, $previous, $updates, $payload);
                 if ($matches !== []) {
-                    Redis::setex($cacheKey, 1800, json_encode($matches, JSON_THROW_ON_ERROR));
+                    if ($sport === 'football') {
+                        storeInRedis($cacheKey, $matches, 30, false, replace: true);
+                    } else {
+                        Redis::setex($cacheKey, 1800, json_encode($matches, JSON_THROW_ON_ERROR));
+                    }
                 } else {
                     Redis::del($cacheKey);
+                    if ($sport === 'football' && config('services.football_fixture_index')) {
+                        Redis::del($cacheKey.':fixtures');
+                    }
                 }
 
                 return $changes;

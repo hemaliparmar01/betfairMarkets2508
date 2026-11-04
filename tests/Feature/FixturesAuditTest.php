@@ -27,6 +27,12 @@ use Tests\TestCase;
 
 class FixturesAuditTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        config(['services.football_fixture_index' => false]);
+    }
+
     public function test_market_pressure_uses_resting_order_interest_and_rolling_percentage_points(): void
     {
         $now = floor(microtime(true)) - 1;
@@ -168,6 +174,17 @@ class FixturesAuditTest extends TestCase
         $result = getInRedis('Football:matches');
 
         $this->assertSame($matches, $result);
+    }
+
+    public function test_read_only_fixture_cache_access_never_restores_or_writes_timelines(): void
+    {
+        $matches = ['match' => ['sportsApiPro_match_id' => '123', 'timeline' => ['home_goals' => []]]];
+        Redis::shouldReceive('get')->once()->with('Football:matches')->andReturn(json_encode($matches));
+        Redis::shouldReceive('eval')->never();
+        Redis::shouldReceive('set')->never();
+        DB::shouldReceive('table')->never();
+
+        $this->assertSame($matches, getInRedis('Football:matches', readOnly: true));
     }
 
     public function test_timeline_cache_fallback_preserves_the_cache_write_and_logs_the_actual_error(): void
@@ -654,15 +671,9 @@ class FixturesAuditTest extends TestCase
         Redis::shouldReceive('get')->andReturnUsing(static function (string $key) use (&$cache): ?string {
             return $cache[$key] ?? null;
         });
-        Redis::shouldReceive('set')->andReturnUsing(static function (string $key, string $value) use (&$cache): void {
-            $cache[$key] = $value;
-        });
-        Redis::shouldReceive('expire')->andReturn(true);
-        Redis::shouldReceive('zrangebyscore')->andReturn([]);
-        $lock = \Mockery::mock();
-        $lock->shouldReceive('block')->andReturnUsing(static fn (int $seconds, callable $callback): mixed => $callback());
-        Cache::shouldReceive('store')->with('redis')->andReturnSelf();
-        Cache::shouldReceive('lock')->andReturn($lock);
+        Redis::shouldReceive('set')->never();
+        Redis::shouldReceive('expire')->never();
+        Cache::shouldReceive('lock')->never();
         $controller = \Mockery::mock(FootballController::class)->makePartial();
         $controller->shouldReceive('getFootballMatches')->andReturn([]);
         $customer = new Customer(['trial_ends_at' => now()->addDay()]);
@@ -684,10 +695,17 @@ class FixturesAuditTest extends TestCase
         }
         $this->app['auth']->guard('customers')->setUser($customer);
         $requestFor($customer, 'invalid');
-        $controller->filterFootball();
+        try {
+            $controller->filterFootball();
+            $this->fail('Invalid prediction should fail.');
+        } catch (HttpException $error) {
+            $this->assertSame(422, $error->getStatusCode());
+        }
         $this->assertSame(0, PredictionVote::query()->count());
         $requestFor($customer);
-        $controller->filterFootball();
+        $response = $controller->filterFootball()->getData(true);
+        $this->assertSame(['match_id' => '123', 'poll' => '1x2', 'value' => '1', 'counts' => [1 => 1]], $response['prediction']);
+        $this->assertArrayNotHasKey('html', $response);
         $this->assertSame(1, PredictionVote::query()->count());
         $session->flush();
         $requestFor($customer, '2');
@@ -970,7 +988,9 @@ class FixturesAuditTest extends TestCase
 
         $sync->storeTimeline($match);
 
-        $this->assertSame([], $match['timeline']['home_goals']);
+        $this->assertCount(1, $match['timeline']['home_goals']);
+        $this->assertSame('score', $match['timeline']['home_goals'][0]['source']);
+        $this->assertFalse($match['timeline']['home_goals'][0]['time_known']);
         $this->assertSame([], $match['timeline']['away_goals']);
         $this->assertTrue($this->timeline($match)['goals_pending']);
         $saved = json_decode(DB::table('football_timeline')->value('timeline'), true);
@@ -978,7 +998,8 @@ class FixturesAuditTest extends TestCase
         unset($match['timeline']);
         $sync->storeTimeline($match, frameType: 'restore');
         $this->assertSame($saved, $match['timeline']);
-        $this->assertSame([], $this->timeline($match)['events']);
+        $this->assertNull($this->timeline($match)['events'][0]['left']);
+        $this->assertSame('', $this->timeline($match)['events'][0]['minute_label']);
 
         $legacyTimeline = $saved;
         $legacyTimeline['home_goals'] = [['id' => 'score-home-goal-1', 'minute' => 30, 'added_time' => 0, 'seconds' => 1800, 'time_known' => true, 'time_estimated' => true, 'source' => 'score', 'home_score' => 1, 'away_score' => 0]];
@@ -1033,13 +1054,15 @@ class FixturesAuditTest extends TestCase
         $lateClock = array_replace($match, ['sportsApiPro_match_id' => '126', 'home_score' => 1, 'away_score' => 0, 'timeline' => []]);
         unset($lateClock['current_period_start_timestamp']);
         $sync->storeTimeline($lateClock);
-        $this->assertSame([], $lateClock['timeline']['home_goals']);
+        $this->assertCount(1, $lateClock['timeline']['home_goals']);
+        $this->assertFalse($lateClock['timeline']['home_goals'][0]['time_known']);
         $lateClock['current_period_start_timestamp'] = time() - 1200;
         $sync->storeTimeline($lateClock);
-        $this->assertSame([], $lateClock['timeline']['home_goals']);
+        $this->assertSame([0], array_column($lateClock['timeline']['home_goals'], 'minute'));
         $countsOnly = array_replace($lateClock, ['sportsApiPro_match_id' => '127', 'home_score' => 2, 'timeline' => ['reported_counts' => ['home_goals' => 2]]]);
         $sync->storeTimeline($countsOnly);
-        $this->assertSame([], $countsOnly['timeline']['home_goals']);
+        $this->assertCount(2, $countsOnly['timeline']['home_goals']);
+        $this->assertSame([false, false], array_column($countsOnly['timeline']['home_goals'], 'time_known'));
     }
 
     public function test_goal_markers_preserve_provider_team_and_render_before_score_updates(): void

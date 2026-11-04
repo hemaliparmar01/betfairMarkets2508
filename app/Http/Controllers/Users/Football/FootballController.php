@@ -224,7 +224,7 @@ class FootballController extends Controller
     public function statistics(string $matchId): JsonResponse
     {
         abort_unless(checkAuthAndSubscription()['display_odds'], 403, __('An active 7-day free trial or paid subscription is required to view statistics.'));
-        $match = array_find(getVisibleSportsMatches('Football:matches'), static fn (array $match): bool => (string) ($match['sportsApiPro_match_id'] ?? '') === $matchId);
+        $match = array_find(getInRedis('Football:matches', readOnly: true, matchIds: [$matchId]) ?? [], static fn (array $match): bool => (string) ($match['sportsApiPro_match_id'] ?? '') === $matchId && ! MatchBackup::isHidden($match, 'football'));
         abort_if($match === null, 404);
         $event = array_replace($match, [
             'status' => $match['result_status'],
@@ -245,79 +245,34 @@ class FootballController extends Controller
             $matchId = $prediction['match_id'] ?? null;
             $poll = $prediction['poll'] ?? null;
             $value = $prediction['value'] ?? null;
-            $allowedValues = [
-                '1x2' => ['1', 'X', '2'],
-                'uo' => ['UNDER', 'OVER'],
-            ];
+            $allowedValues = ['1x2' => ['1', 'X', '2'], 'uo' => ['UNDER', 'OVER']];
+            abort_unless(is_scalar($matchId) && ctype_digit((string) $matchId) && (int) $matchId > 0
+                && is_string($poll) && isset($allowedValues[$poll]) && in_array($value, $allowedValues[$poll], true), 422);
+            $matchId = (string) $matchId;
             $sessionKey = "football_predictions.{$customerId}.{$matchId}.{$poll}";
-
-            if ($matchId !== null && isset($allowedValues[$poll]) && in_array($value, $allowedValues[$poll], true) && ! request()->session()->has($sessionKey)) {
-                withRedisLock('Football:matches', function () use ($customerId, $matchId, $poll, $sessionKey, $value): void {
-                    $matches = getInRedis('Football:matches') ?? [];
-                    $matchKey = null;
-
-                    foreach ($matches as $key => $match) {
-                        if (
-                            MatchBackup::isHidden($match, 'football')
-                            || ($match['sportsApiPro_match_id'] ?? null) != $matchId
-                            || ($match['result_status'] ?? null) !== 'Prematch'
-                        ) {
-                            continue;
-                        }
-
-                        $matchKey = $key;
-                        break;
-                    }
-
-                    if ($matchKey === null) {
-                        return;
-                    }
-
-                    $ownerQuery = PredictionVote::query()
-                        ->where('customer_id', $customerId)
-                        ->where('sport', 'football')
-                        ->where('match_id', (string) $matchId)
-                        ->where('poll', $poll);
-
-                    $storedValue = $ownerQuery->value('value');
-
-                    if ($storedValue !== null) {
-                        request()->session()->put($sessionKey, $storedValue);
-
-                        return;
-                    }
-
-                    $voteKey = hash('sha256', implode('|', [
-                        'user',
-                        $customerId,
-                        'football',
-                        $matchId,
-                        $poll,
-                    ]));
-                    $now = now();
-                    $inserted = PredictionVote::query()->insertOrIgnore([
-                        'vote_key' => $voteKey,
-                        'customer_id' => $customerId,
-                        'sport' => 'football',
-                        'match_id' => (string) $matchId,
-                        'poll' => $poll,
-                        'value' => $value,
-                        'created_at' => $now,
-                        'updated_at' => $now,
-                    ]);
-
-                    if ($inserted > 0) {
-                        $matches[$matchKey]['predictions'][$poll][$value] = (int) ($matches[$matchKey]['predictions'][$poll][$value] ?? 0) + 1;
-                        storeInRedis('Football:matches', $matches, 10);
-                        request()->session()->put($sessionKey, $value);
-                    } else {
-                        $storedValue = $ownerQuery->value('value');
-                        if ($storedValue !== null) {
-                            request()->session()->put($sessionKey, $storedValue);
-                        }
-                    }
-                });
+            $ownerQuery = PredictionVote::query()->where('customer_id', $customerId)->where('sport', 'football')
+                ->where('match_id', $matchId)->where('poll', $poll);
+            $storedValue = $ownerQuery->value('value');
+            if ($storedValue === null) {
+                $match = array_find(getInRedis('Football:matches', readOnly: true, matchIds: [$matchId]) ?? [], static fn (array $match): bool => (string) ($match['sportsApiPro_match_id'] ?? '') === $matchId
+                    && ! MatchBackup::isHidden($match, 'football') && ($match['result_status'] ?? '') === 'Prematch');
+                abort_unless($match !== null, 422, __('Predictions are only available before the match starts.'));
+                unset($match);
+                $now = now();
+                PredictionVote::query()->insertOrIgnore([
+                    'vote_key' => hash('sha256', implode('|', ['user', $customerId, 'football', $matchId, $poll])),
+                    'customer_id' => $customerId, 'sport' => 'football', 'match_id' => $matchId,
+                    'poll' => $poll, 'value' => $value, 'created_at' => $now, 'updated_at' => $now,
+                ]);
+                $storedValue = $ownerQuery->value('value');
+                abort_if($storedValue === null, 503, __('Please try again.'));
             }
+            request()->session()->put($sessionKey, $storedValue);
+            $counts = PredictionVote::query()->select('value')->selectRaw('COUNT(*) as total')
+                ->where('sport', 'football')->where('match_id', $matchId)->where('poll', $poll)->groupBy('value')
+                ->pluck('total', 'value')->map(static fn (mixed $count): int => (int) $count)->all();
+
+            return response()->json(['prediction' => ['match_id' => $matchId, 'poll' => $poll, 'value' => $storedValue, 'counts' => $counts]]);
         }
 
         return $this->websocketFootball(request()->boolean('append'));

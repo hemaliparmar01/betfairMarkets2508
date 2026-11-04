@@ -120,7 +120,7 @@ class AppServiceProvider extends ServiceProvider
             foreach ($groups as $groupKey => &$group) {
                 foreach ($group['matches'] as $index => &$match) {
                     $key = hash('xxh3', serialize([$view->name(), $groupKey, $match['unique_key'] ?? $match['sportsApiPro_match_id'] ?? $match['betfair_match_id'] ?? $index]));
-                    $version = hash('xxh3', serialize([$context, $match]));
+                    $version = ($match['_fixture_reuse'] ?? false) && isset($known[$key]) ? $known[$key] : hash('xxh3', serialize([$context, $match]));
                     $match['_fixture_key'] = $key;
                     $match['_fixture_version'] = $version;
                     $match['_fixture_reuse'] = ! request()->boolean('append') && ($known[$key] ?? null) === $version;

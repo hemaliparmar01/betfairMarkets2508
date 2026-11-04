@@ -1,6 +1,7 @@
 <?php
 
 return [
+    'football_fixture_index' => (bool) env('FOOTBALL_FIXTURE_INDEX', true),
     'paypal' => [
         'base_url' => env('PAYPAL_BASE_URL', env('PAYPAL_MODE', 'sandbox') === 'live' ? 'https://api-m.paypal.com' : 'https://api-m.sandbox.paypal.com'),
         'client_id' => env('PAYPAL_CLIENT_ID'),

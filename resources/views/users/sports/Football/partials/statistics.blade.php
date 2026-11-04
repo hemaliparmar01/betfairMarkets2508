@@ -1,4 +1,5 @@
 <div id="statistics-{{ $event['sportsApiPro_match_id'] }}" data-statistics-panel="{{ $event['sportsApiPro_match_id'] }}"
+    data-statistics-loaded="{{ (string) request()->input('_statistics_match_id') === (string) $event['sportsApiPro_match_id'] ? 'true' : 'false' }}"
     role="dialog" aria-modal="true" aria-labelledby="statistics-title-{{ $event['sportsApiPro_match_id'] }}" tabindex="-1"
     class="fixed inset-0 z-[80] hidden overflow-hidden bg-slate-950/60 p-3 backdrop-blur-sm sm:p-6">
     <div class="relative mx-auto my-4 w-full max-w-[850px] max-h-[calc(100dvh-3.5rem)] overflow-x-hidden overflow-y-auto overscroll-contain rounded-2xl sm:max-h-[calc(100dvh-7rem)] border border-[var(--border-neutral-5-6)] bg-[var(--surface-slate-50)] shadow-2xl dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--bg))] sm:my-8">
@@ -8,7 +9,11 @@
             <button type="button" data-close-statistics aria-label="{{ __('Close statistics') }}" class="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full bg-[rgb(var(--surface))]/15 hover:bg-[rgb(var(--surface))]/25"><i class="fas fa-times" aria-hidden="true"></i></button>
         </header>
         <div class="p-5" data-statistics-body>
-            @include('users.sports.football.partials.statisticsContent', ['event' => $event])
+            @if ((string) request()->input('_statistics_match_id') === (string) $event['sportsApiPro_match_id'])
+                @include('users.sports.football.partials.statisticsContent', ['event' => $event])
+            @else
+                <p class="text-sm text-[var(--text-slate-500)]">{{ __('Loading statistics…') }}</p>
+            @endif
         </div>
     </div>
 </div>

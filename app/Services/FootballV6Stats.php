@@ -86,7 +86,7 @@ class FootballV6Stats
 
     public function pollMatch(string $matchId): void
     {
-        $match = array_find(getInRedis('Football:matches') ?? [], fn (array $match): bool => (string) ($match['sportsApiPro_match_id'] ?? '') === $matchId && $this->isLive($match));
+        $match = array_find(getInRedis('Football:matches', matchIds: [$matchId]) ?? [], fn (array $match): bool => (string) ($match['sportsApiPro_match_id'] ?? '') === $matchId && $this->isLive($match));
         if ($match === null || ($match['v6_stats']['next_poll_at'] ?? 0) > time()) {
             return;
         }

@@ -385,3 +385,117 @@ test('all sports refresh immediately on the first event while retaining their ex
         assert.equal(timers.length, 1, sport);
     }
 });
+
+test('prediction submits independently of fixture loading, updates only its poll, and enables retry after failure', async () => {
+    const calls = [];
+    const buttons = [{ disabled: true }, { disabled: true }];
+    const counts = {};
+    const rows = ['1', 'X', '2'].map(value => ({
+        dataset: { predictionResult: value },
+        querySelector(selector) {
+            if (!counts[value]) counts[value] = {};
+            if (!counts[value][selector]) counts[value][selector] = { textContent: '', style: {}, classList: { toggle() {} } };
+            return counts[value][selector];
+        },
+    }));
+    const hidden = new Set();
+    const total = { textContent: '' };
+    const poll = {
+        querySelector: selector => selector === '[data-prediction-total]' ? total : { classList: { add: () => hidden.add(selector), remove: () => hidden.delete(selector) } },
+        querySelectorAll: selector => selector === '[data-prediction-option]' ? buttons : rows,
+    };
+    const panel = { dataset: {}, querySelector: () => poll };
+    const fixtures = { before() {} };
+    let fail = false;
+    const context = vm.createContext({ URL, CSS: { escape: value => value }, console: { error() {} },
+        window: { location: { origin: 'https://example.test' } },
+        document: {
+            querySelector: selector => selector === '.fixtures-container' ? fixtures : selector.includes('csrf-token') ? { getAttribute: () => 'token' } : selector.includes('data-prediction-panel') ? panel : null,
+            createElement: () => ({ dataset: {}, setAttribute() {} }),
+        },
+        fetch: async (url, options) => { calls.push({ url, options }); return fail
+            ? { ok: false, status: 503, json: async () => ({ message: 'Retry' }) }
+            : { ok: true, json: async () => ({ prediction: { match_id: '123', poll: '1x2', value: '1', counts: { 1: 2, 2: 1 } } }) }; },
+    });
+    vm.runInContext('let footballLoading=true, footballRealtimeLoading=true, footballPage=3, FOOTBALL_PAGE_SIZE=20, footballRequestVersion=4, openStatisticsMatchId=null; const getSelectedFilters=()=>({type:"all"});', context);
+    vm.runInContext(source.slice(source.indexOf('const callFixtureData ='), source.indexOf('const scheduleFootballRealtimeRefresh =')), context);
+    const request = { type: 'all', prediction: { match_id: '123', poll: '1x2', value: '1' } };
+    context.request = request;
+    await vm.runInContext('callFixtureData(request)', context);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].options.signal, undefined);
+    assert.equal(total.textContent, '3');
+    assert.equal(counts['1']['[data-prediction-percent]'].textContent, '67%');
+    assert.equal(counts['2']['[data-prediction-count]'].textContent, '1');
+    assert.equal(vm.runInContext('footballLoading && footballRealtimeLoading', context), true);
+    assert.ok(Number(panel.dataset.predictionSavedAt) > 0);
+    fail = true;
+    await vm.runInContext('callFixtureData(request)', context);
+    assert.equal(buttons.every(button => !button.disabled), true);
+    assert.equal(calls.length, 2);
+});
+
+test('filter switching aborts obsolete display requests and renders only the latest selected filter', async () => {
+    const calls = [];
+    const renders = [];
+    const savedPrediction = { dataset: { predictionPanel: '123', predictionSavedAt: String(Date.now() + 1000) } };
+    let retainedPrediction;
+    const fixtures = { classList: { add() {}, remove() {} }, setAttribute() {}, removeAttribute() {}, querySelectorAll: selector => selector === '[data-prediction-saved-at]' ? [savedPrediction] : [] };
+    const incoming = { querySelector: selector => selector.includes('data-prediction-panel') ? { replaceWith: panel => { retainedPrediction = panel; } } : null };
+    const context = vm.createContext({ URL, AbortController, DOMException, CSS: { escape: value => value }, console,
+        window: { location: { origin: 'https://example.test' } },
+        document: {
+            querySelector: selector => selector === '.fixtures-container' ? fixtures : selector.includes('csrf-token') ? { getAttribute: () => 'token' } : null,
+            createElement: () => ({ content: incoming }),
+        }, clearTimeout() {},
+        fetch: (url, options) => new Promise((resolve, reject) => {
+            calls.push({ options, resolve });
+            options.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+        }),
+        updateFixtureRows: () => renders.push('render'), preserveQuickStatsPanel() {}, scheduleGoalHighlights() {}, updateFootballLazyLoader() {},
+        restoreLiveStatsPanel() {}, restorePredictionPanel() {}, restoreQuickStatsPanel() {}, restoreStatisticsPanel() {}, restoreFootballTimeline() {}, refreshFootballTimelineClocks() {},
+    });
+    vm.runInContext(`let footballLoading=false, footballRealtimeLoading=false, footballPage=1, FOOTBALL_PAGE_SIZE=20,
+        footballRequestVersion=0, footballPendingRequest=null, footballActiveRequest=null, footballPendingRealtime=false,
+        footballRealtimeTimer=null, footballRequestController=null, footballRealtimeController=null, footballLazyLoader=null,
+        openStatisticsMatchId=null, footballLiveSnapshotReceived=false, selected='all'; const getSelectedFilters=()=>({type:selected});`, context);
+    vm.runInContext(source.slice(source.indexOf('const callFixtureData ='), source.indexOf('const scheduleFootballRealtimeRefresh =')), context);
+    const first = vm.runInContext('callFixtureData({type:"all"}, {reset:true})', context);
+    vm.runInContext('selected="live"; callFixtureData({type:"live"}, {reset:true})', context);
+    await first;
+    await new Promise(setImmediate);
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].options.signal.aborted, true);
+    assert.equal(JSON.parse(calls[1].options.body).type, 'live');
+    calls[1].resolve({ ok: true, json: async () => ({ html: '<div></div>', has_more: false }) });
+    await new Promise(setImmediate);
+    assert.equal(renders.length, 1);
+    assert.equal(retainedPrediction, savedPrediction);
+    assert.equal(vm.runInContext('footballLoading', context), false);
+});
+
+test('statistics content loads once on opening and reuses the existing internal cache-backed endpoint', async () => {
+    let calls = 0;
+    let finish;
+    const body = { innerHTML: '' };
+    const panel = { dataset: {}, isConnected: true, classList: { remove() {} }, querySelector: () => body };
+    const button = { disabled: false, setAttribute() {} };
+    const context = vm.createContext({ CSS: { escape: value => value },
+        document: {
+            body: { classList: { add() {} } }, documentElement: { classList: { add() {} } },
+            querySelector: selector => selector.includes('data-statistics-panel') ? panel : button,
+        },
+        fetch: (url) => { calls++; assert.equal(url, '/football/matches/123/statistics'); return new Promise(resolve => { finish = resolve; }); },
+    });
+    vm.runInContext('let openStatisticsMatchId="123";', context);
+    vm.runInContext(source.slice(source.indexOf('const restoreStatisticsPanel ='), source.indexOf('const closeQuickStatsPanel =')), context);
+    const first = vm.runInContext('restoreStatisticsPanel()', context);
+    await vm.runInContext('restoreStatisticsPanel()', context);
+    assert.equal(calls, 1);
+    finish({ ok: true, json: async () => ({ html: '<div data-statistics-content>Recorded data</div>' }) });
+    await first;
+    await vm.runInContext('restoreStatisticsPanel()', context);
+    assert.equal(calls, 1);
+    assert.match(body.innerHTML, /Recorded data/);
+    assert.equal(panel.dataset.statisticsLoaded, 'true');
+});
