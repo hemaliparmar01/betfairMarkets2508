@@ -204,7 +204,7 @@ class FootballController extends Controller
                         $currentFixture = $rows ? reset($rows) : null;
                         if ($currentFixture !== null && (string) ($currentFixture['betfair_match_id'] ?? '') === (string) $matchedFixture['betfair_match_id']
                             && ($currentFixture['result_status'] ?? null) === $status) {
-                            $matchedFixture = $currentFixture;
+                            $matchedFixture = array_replace($currentFixture, ['unique_key' => $matchedFixture['unique_key']]);
                         }
                         $resolvedEvents[$resolutionKey]['fixture'] = $matchedFixture;
                         $resolvedEvents[$resolutionKey]['snapshot_checked'] = true;
@@ -228,7 +228,7 @@ class FootballController extends Controller
                     $period === 0 && preg_match('/^(total|totals|o\/u)/', $section) === 1 && is_numeric($line) && fmod((float) $line, 1.0) === 0.5 => 'OVER_UNDER_'.(int) round((float) $line * 10),
                     $period === 0 && in_array($section, ['both teams to score', 'btts'], true) => 'BOTH_TEAMS_TO_SCORE',
                     $period === 0 && in_array($section, ['draw no bet', 'dnb'], true) => 'DRAW_NO_BET',
-                    $period === 0 && in_array($section, ['spread', 'spreads', 'asian handicap'], true) && is_numeric($line) => 'ASIAN_HANDICAP',
+                    ($period === 0 || ($sport === 'soccer' && $period === 1)) && in_array($section, ['spread', 'spreads', 'asian handicap'], true) && is_numeric($line) => 'ASIAN_HANDICAP',
                     default => null,
                 };
                 if ($sport !== 'soccer') {
@@ -245,40 +245,57 @@ class FootballController extends Controller
                     $matchedHome = $alert['bf_home'] = (string) $matchedFixture['team1'];
                     $matchedAway = $alert['bf_away'] = (string) $matchedFixture['team2'];
                     $markets = $matchedFixture['markets'] ?? null;
-                    if ($markets === null && $marketType !== null) {
-                        $marketKey = $resolutionKey.'|'.$marketType;
-                        $marketSnapshots[$marketKey] ??= DB::table($sportTable.'_markets')
-                            ->where($sportTable.'_match_unique_key', $matchedFixture['unique_key'])
-                            ->where('market_type', $marketType)
-                            ->get(['market_id', 'payload'])->groupBy('market_id')
-                            ->map(static fn ($rows): array => $rows->map(static fn (object $row): array => json_decode($row->payload, true) ?? [])->all())
-                            ->all();
-                        $markets = $marketSnapshots[$marketKey];
-                    }
-                    foreach ($markets ?? [] as $marketRunners) {
-                        if ($marketType === null || ($marketRunners[array_key_first($marketRunners)]['marketType'] ?? null) !== $marketType) {
-                            continue;
+                    $isHandicap = in_array($marketType, ['ASIAN_HANDICAP', 'HANDICAP'], true);
+                    $homeHandicap = isset($alert['point']) && in_array($outcome, ['away', '2'], true) ? -(float) $line : (float) $line;
+                    $homeName = $isHandicap ? $normalizeName($matchedHome) : '';
+                    $awayName = $isHandicap ? $normalizeName($matchedAway) : '';
+                    foreach ([false, true] as $useDatabase) {
+                        if ($marketType === null) {
+                            break;
                         }
-                        $marketSelections = array_values($marketRunners);
-                        if ($marketType === 'HANDICAP' && ! preg_match('/\bgames?\b/i', (string) ($marketSelections[0]['name'] ?? ''))) {
-                            continue;
+                        if ($useDatabase) {
+                            if ($runners !== [] || empty($matchedFixture['unique_key'])
+                                || ($markets !== null && ($marketType !== 'ASIAN_HANDICAP' || $status !== 'Prematch' || $sportsmeldKey === ''))) {
+                                break;
+                            }
+                            $marketKey = $resolutionKey.'|'.$marketType;
+                            $marketSnapshots[$marketKey] ??= DB::table($sportTable.'_markets')
+                                ->where($sportTable.'_match_unique_key', $matchedFixture['unique_key'])
+                                ->where('market_type', $marketType)
+                                ->get(['market_id', 'payload'])->groupBy('market_id')
+                                ->map(static fn ($rows): array => $rows->map(static fn (object $row): array => json_decode($row->payload, true) ?? [])->all())
+                                ->all();
+                            $markets = $marketSnapshots[$marketKey];
                         }
-                        if (in_array($marketType, ['ASIAN_HANDICAP', 'HANDICAP'], true)) {
-                            $homeHandicap = isset($alert['point']) && in_array($outcome, ['away', '2'], true)
-                                ? -(float) $line
-                                : (float) $line;
-                            $marketSelections = array_values(array_filter($marketSelections, static function (array $runner) use ($homeHandicap, $matchedHome, $matchedAway, $normalizeName): bool {
-                                $name = $normalizeName((string) ($runner['runner'] ?? ''));
-                                $expected = match ($name) {
-                                    $normalizeName($matchedHome) => $homeHandicap,
-                                    $normalizeName($matchedAway) => -$homeHandicap,
-                                    default => null,
-                                };
-
-                                return $expected !== null && is_numeric($runner['handicap'] ?? null) && (float) $runner['handicap'] === $expected;
-                            }));
+                        foreach ($markets ?? [] as $marketRunners) {
+                            $first = $marketRunners[array_key_first($marketRunners)] ?? [];
+                            if (($first['marketType'] ?? null) !== $marketType) {
+                                continue;
+                            }
+                            $marketLabel = (string) ($first['name'] ?? '');
+                            if ($marketType === 'HANDICAP' && ! preg_match('/\bgames?\b/i', $marketLabel)) {
+                                continue;
+                            }
+                            if ($marketType === 'ASIAN_HANDICAP') {
+                                $firstHalf = preg_match('/\b(?:first|1st)[ -]+half\b|\bhalf[ -]*time\b/i', $marketLabel) === 1;
+                                if ($firstHalf !== ($period === 1) || preg_match('/\b(?:second|2nd)[ -]+half\b/i', $marketLabel)) {
+                                    continue;
+                                }
+                            }
+                            foreach ($marketRunners as $runner) {
+                                if ($isHandicap) {
+                                    $expected = match ($normalizeName((string) ($runner['runner'] ?? ''))) {
+                                        $homeName => $homeHandicap,
+                                        $awayName => -$homeHandicap,
+                                        default => null,
+                                    };
+                                    if ($expected === null || ! is_numeric($runner['handicap'] ?? null) || (float) $runner['handicap'] !== $expected) {
+                                        continue;
+                                    }
+                                }
+                                $runners[] = $runner;
+                            }
                         }
-                        array_push($runners, ...$marketSelections);
                     }
                 }
                 $matchesOutcome = static function (array $runner, string $selection) use ($matchedHome, $matchedAway, $normalizeName, $matchingController): bool {
@@ -301,7 +318,7 @@ class FootballController extends Controller
                     'away', '2' => $alert['away'],
                     default => $alert['outcome'] ?? null,
                 };
-                if ($selectedRunner !== null) {
+                if ($selectedRunner !== null && ! in_array($selectedRunner['market_status'] ?? 'OPEN', ['SUSPENDED', 'CLOSED'], true)) {
                     $alert['bf_selection'] = $selectedRunner['runner'] ?? null;
                     $alert['bf_back'] = (float) ($selectedRunner['currentBackOdds'] ?? $selectedRunner['backOdds'] ?? 0) > 1 ? (float) ($selectedRunner['currentBackOdds'] ?? $selectedRunner['backOdds']) : null;
                     $alert['bf_lay'] = (float) ($selectedRunner['layOdds'] ?? 0) > 1 ? (float) $selectedRunner['layOdds'] : null;
@@ -320,7 +337,7 @@ class FootballController extends Controller
                     foreach ($pinnaclePrices as $side => $pinnaclePrice) {
                         $sideRunners = array_values(array_filter($runners, static fn (array $runner): bool => $matchesOutcome($runner, $side)));
                         $runner = count($sideRunners) === 1 ? $sideRunners[0] : null;
-                        $alert['full_market'][] = ['outcome' => ucfirst($side), 'to_price' => (float) $pinnaclePrice, 'nvp' => strtolower($side) === $outcome ? ($alert['nvp'] ?? null) : (count($pinnaclePrices) > 1 && (float) ($alert['nvp'] ?? 0) > 0 ? (float) $pinnaclePrice * $impliedTotal : null), 'bf_back' => $runner['currentBackOdds'] ?? $runner['backOdds'] ?? null];
+                        $alert['full_market'][] = ['outcome' => ucfirst($side), 'to_price' => (float) $pinnaclePrice, 'nvp' => strtolower($side) === $outcome ? ($alert['nvp'] ?? null) : (count($pinnaclePrices) > 1 && (float) ($alert['nvp'] ?? 0) > 0 ? (float) $pinnaclePrice * $impliedTotal : null), 'bf_back' => in_array($runner['market_status'] ?? 'OPEN', ['SUSPENDED', 'CLOSED'], true) ? null : ($runner['currentBackOdds'] ?? $runner['backOdds'] ?? null)];
                     }
                 } else {
                     $alert['full_market'][] = ['outcome' => $alert['outcome'] ?? '', 'to_price' => $alert['to_price'] ?? null, 'nvp' => $alert['nvp'] ?? null, 'bf_back' => $alert['bf_back']];

@@ -386,6 +386,7 @@
     @endpush
 @else
 @php
+    $marketRowsOnly ??= request()->expectsJson();
     $raceActivity = in_array($marketActivitySport, ['greyhounds', 'horseracing'], true);
     if ($marketActivitySport !== 'football') {
         $icons = ['cricket' => '🏏', 'icehockey' => '🏒', 'americanfootball' => '🏈', 'baseball' => '⚾', 'basketball' => '🏀', 'tennis' => '🎾', 'greyhounds' => '🐕', 'horseracing' => '🏇'];
@@ -509,6 +510,21 @@
         }
         foreach ($marketActivites as $event) {
             $marketTags[$event['market']] = ['label' => $event['marketLabel'], 'cls' => 'mo'];
+        }
+        if ($marketActivitySport !== 'greyhounds' && (! $marketRowsOnly || request()->boolean('_market_rows'))) {
+            $marketRowVersions = [];
+            $locale = app()->getLocale();
+            foreach ($marketActivites as $event) {
+                $marketRowVersions[$event['id']] = hash('xxh3', serialize([$locale, $marketTags[$event['market']], $event]));
+            }
+            if ($marketRowsOnly && count($marketRowVersions) === count($marketActivites)) {
+                $marketRowOrder = array_column($marketActivites, 'id');
+                $known = request()->query('_market_versions', '');
+                $known = is_string($known) && strlen($known) <= 4096 ? json_decode($known, true) : null;
+                if (is_array($known) && count($known) <= 100) {
+                    $marketActivites = array_values(array_filter($marketActivites, static fn (array $event): bool => ($known[$event['id']] ?? null) !== $marketRowVersions[$event['id']]));
+                }
+            }
         }
     }
 @endphp
@@ -709,6 +725,10 @@
                     @unless ($compactMarketRows ?? false)
                     <script type="application/json" data-market-server-time>{{ time() }}</script>
                     <script type="application/json" data-market-events>@json($marketActivites)</script>
+                    @if ($marketRowsOnly && isset($marketRowOrder, $marketRowVersions))
+                        <script type="application/json" data-market-order>@json($marketRowOrder)</script>
+                        <script type="application/json" data-market-versions>@json((object) $marketRowVersions)</script>
+                    @endif
                     @endunless
                 @endfragment
     @unless ($marketRowsOnly ?? false)
@@ -719,12 +739,9 @@
                 data-market-lazy-loader
                 data-has-more="{{ $hasMore ? 'true' : 'false' }}"
                 data-next-page="{{ $nextPage }}"
+                @if (! $hasMore) hidden @endif
             >
-                @if ($marketActivitySport === 'football')
-                    <button type="button" data-market-loader-text>↓ {{ __('Scroll for more matches') }} ↓</button>
-                @else
-                    <span data-market-loader-text>↓ {{ __('Scroll for more matches') }} ↓</span>
-                @endif
+                <button type="button" data-market-loader-text>↓ {{ __('Scroll for more matches') }} ↓</button>
             </div>
         </div>
 
@@ -1029,7 +1046,7 @@
                 let marketHasMore = marketLazyLoader?.dataset.hasMore === 'true';
                 let marketNextPage = Number(marketLazyLoader?.dataset.nextPage || 2);
                 let marketLoadedPages = 1;
-                const footballMarketActivity = @json($marketActivitySport === 'football');
+                const compactMarketActivity = @json($marketActivitySport !== 'greyhounds');
                 let marketRowVersions = @json((object) ($marketRowVersions ?? []));
                 let marketRequest = null;
                 let marketObserver = null;
@@ -1037,18 +1054,16 @@
 
                 function updateMarketLoader(hasMore, nextPage) {
                     const previousPage = marketNextPage;
-                    marketNextPage = Number(footballMarketActivity ? nextPage : (nextPage || marketNextPage));
-                    marketHasMore = Boolean(hasMore) && (!footballMarketActivity || Number.isSafeInteger(marketNextPage) && marketNextPage > 1);
+                    marketNextPage = Number(nextPage);
+                    marketHasMore = Boolean(hasMore) && Number.isSafeInteger(marketNextPage) && marketNextPage > 1;
                     if (!marketLazyLoader) return;
                     marketLazyLoader.classList.toggle('hidden', !marketHasMore);
                     marketLazyLoader.dataset.hasMore = marketHasMore ? 'true' : 'false';
-                    if (footballMarketActivity) {
-                        marketLazyLoader.hidden = !marketHasMore;
-                        marketLazyLoader.dataset.nextPage = marketHasMore ? String(marketNextPage) : '';
-                        if (marketObserver && previousPage !== marketNextPage) {
-                            marketObserver.unobserve(marketLazyLoader);
-                            if (marketHasMore) marketObserver.observe(marketLazyLoader);
-                        }
+                    marketLazyLoader.hidden = !marketHasMore;
+                    marketLazyLoader.dataset.nextPage = marketHasMore ? String(marketNextPage) : '';
+                    if (marketObserver && previousPage !== marketNextPage) {
+                        marketObserver.unobserve(marketLazyLoader);
+                        if (marketHasMore) marketObserver.observe(marketLazyLoader);
                     }
                     marketLazyLoader.querySelector('[data-market-loader-text]').textContent = (globalThis.bfTranslations?.["↓ Scroll for more matches ↓"] ?? "↓ Scroll for more matches ↓");
                 }
@@ -1061,12 +1076,20 @@
                     const body = template.content.querySelector('tbody');
                     const serverTime = body.querySelector('[data-market-server-time]');
                     const embeddedEvents = body.querySelector('[data-market-events]');
+                    const embeddedOrder = body.querySelector('[data-market-order]');
+                    const embeddedVersions = body.querySelector('[data-market-versions]');
+                    const order = embeddedOrder ? JSON.parse(embeddedOrder.textContent) : payload.order;
+                    const versions = embeddedVersions ? JSON.parse(embeddedVersions.textContent) : payload.versions;
+                    embeddedOrder?.remove();
+                    embeddedVersions?.remove();
                     serverClockOffset = Number(payload.server_time ?? serverTime?.textContent) * 1000 - Date.now();
                     const data = embeddedEvents ? JSON.parse(embeddedEvents.textContent) : payload.data;
                     serverTime?.remove();
                     embeddedEvents?.remove();
-                    if (payload.versions) {
-                        marketRowVersions = append ? { ...marketRowVersions, ...payload.versions } : payload.versions;
+                    if (versions) {
+                        marketRowVersions = append ? { ...marketRowVersions, ...versions } : versions;
+                    } else if (!append) {
+                        marketRowVersions = {};
                     }
                     if (append) {
                         eventsBody.querySelector('[data-market-empty]')?.remove();
@@ -1076,7 +1099,7 @@
                         eventsBody.append(...body.children);
                         events.push(...data);
                     } else {
-                        replaceMarketActivityRows(data, body, flashChanges, payload.order);
+                        replaceMarketActivityRows(data, body, flashChanges, order);
                     }
                     applyStartFilter();
                     scheduleAvailability();
@@ -1142,7 +1165,7 @@
                         const scrollContainer = detailWasExpanded ? detailContent : detailPanel;
                         const scrollTop = scrollContainer.scrollTop;
                         const termsOpen = !document.getElementById('termsSection')?.classList.contains('collapsed');
-                        if (!footballMarketActivity || (incomingEvents.has(String(selectedEventId)) && JSON.stringify(previousEvents.get(String(selectedEventId))) !== JSON.stringify(incomingEvents.get(String(selectedEventId))))) openDetail(selectedEventId);
+                        if (!order || (incomingEvents.has(String(selectedEventId)) && JSON.stringify(previousEvents.get(String(selectedEventId))) !== JSON.stringify(incomingEvents.get(String(selectedEventId))))) openDetail(selectedEventId);
                         if (detailWasExpanded && !terminal.classList.contains('panel-expanded')) toggleExpand();
                         if (termsOpen) document.getElementById('termsSection')?.classList.remove('collapsed');
                         scrollContainer.scrollTop = scrollTop;
@@ -1165,7 +1188,7 @@
                     url.searchParams.set('per_page', perPage);
                     url.searchParams.set('type', activeFootballFilter);
                     url.searchParams.set('market_name', activeMarketFilter);
-                    if (footballMarketActivity) {
+                    if (compactMarketActivity) {
                         url.searchParams.set('_market_rows', '1');
                         url.searchParams.delete('_market_versions');
                     }
@@ -1188,10 +1211,10 @@
                     try {
                         const loadedRowCount = reset ? 20 : Math.max(20, marketLoadedPages * 20);
                         const url = marketActivityUrl(1, loadedRowCount);
-                        if (footballMarketActivity && !reset && Object.keys(marketRowVersions).length <= 100) {
+                        if (compactMarketActivity && !reset && Object.keys(marketRowVersions).length <= 100) {
                             url.searchParams.set('_market_versions', JSON.stringify(marketRowVersions));
                         }
-                        marketRequest = footballMarketActivity ? new AbortController() : null;
+                        marketRequest = new AbortController();
                         const response = await fetch(url, {
                             headers: { 'Accept': 'application/json' },
                             signal: marketRequest?.signal,
@@ -1213,7 +1236,7 @@
                         const pendingBounds = marketLoadPending && marketHasMore && !resetPending && !document.hidden
                             ? marketLazyLoader.getBoundingClientRect() : null;
                         marketLoadPending = false;
-                        if (pendingBounds && pendingBounds.top <= window.innerHeight + 200 && pendingBounds.bottom >= -200) {
+                        if (!resetPending && pendingBounds && pendingBounds.top <= window.innerHeight + 200 && pendingBounds.bottom >= -200) {
                             loadMoreMarketActivity();
                         } else if (refreshPending && !document.hidden) {
                             const reset = resetPending; refreshPending = false; resetPending = false;
@@ -1225,7 +1248,7 @@
                 async function loadMoreMarketActivity() {
                     if (!marketHasMore) return;
                     if (marketLoading) {
-                        if (footballMarketActivity && marketLoading === 'refresh') marketLoadPending = true;
+                        if (marketLoading === 'refresh') marketLoadPending = true;
                         return;
                     }
 
@@ -1233,7 +1256,7 @@
                     marketLazyLoader.querySelector('[data-market-loader-text]').textContent = (globalThis.bfTranslations?.["Loading matches…"] ?? "Loading matches…");
 
                     try {
-                        marketRequest = footballMarketActivity ? new AbortController() : null;
+                        marketRequest = new AbortController();
                         const response = await fetch(marketActivityUrl(marketNextPage), {
                             headers: { 'Accept': 'application/json' },
                             signal: marketRequest?.signal,
@@ -1280,9 +1303,7 @@
                         if (entries[0]?.isIntersecting) loadMoreMarketActivity();
                     }, { rootMargin: '200px 0px' });
                     marketObserver.observe(marketLazyLoader);
-                    if (footballMarketActivity) {
-                        marketLazyLoader.querySelector('[data-market-loader-text]').addEventListener('click', loadMoreMarketActivity);
-                    }
+                    marketLazyLoader.querySelector('[data-market-loader-text]').addEventListener('click', loadMoreMarketActivity);
                 }
 
                 eventsBody.addEventListener('animationend', event => {
@@ -1297,8 +1318,7 @@
                     reloadMarketActivity(false, flashChanges);
                 }
                 let marketRealtimeRefreshTimer = null;
-                const marketReadyTarget = footballMarketActivity ? document : window;
-                marketReadyTarget.addEventListener(footballMarketActivity ? 'DOMContentLoaded' : 'load', function() {
+                document.addEventListener('DOMContentLoaded', function() {
                     @if ($raceActivity)
                     racingFeedMonitor = window.watchRacingFeed(document.getElementById('eventsWrap').parentElement, () => {
                         if (marketRealtimeRefreshTimer !== null) return;

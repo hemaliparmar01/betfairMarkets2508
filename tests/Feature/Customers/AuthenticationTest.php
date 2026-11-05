@@ -46,10 +46,14 @@ class AuthenticationTest extends TestCase
         $this->get('/forgot-password')->assertOk()->assertSee('Send reset link');
     }
 
-    public function test_registration_and_verification_use_existing_customer_schema(): void
+    #[TestWith(['GE', 'Asia/Tbilisi'])]
+    #[TestWith(['IN', 'Asia/Kolkata'])]
+    public function test_registration_and_verification_use_existing_customer_schema(string $countryCode, string $timezone): void
     {
-        $this->post('/register', $this->registration())->assertSessionHasNoErrors()->assertRedirect(route('customers.verification'));
+        $this->post('/register', array_replace($this->registration(), ['country_code' => $countryCode]))
+            ->assertSessionHasNoErrors()->assertRedirect(route('customers.verification'));
         $customer = Customer::query()->sole();
+        $this->assertDatabaseHas('customers', ['id' => $customer->id, 'timezone' => $timezone]);
         $this->assertFalse($customer->is_verified);
         $this->assertTrue(Hash::check('Secret@123', $customer->password));
         $this->assertSame('newcustomer@example.com', $this->messages[0]['recipient']);

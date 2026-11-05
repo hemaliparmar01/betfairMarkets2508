@@ -53,6 +53,7 @@
         </script>
     @endif
 @elseif ($checkAuthAndSubscription['is_authenticated'] === false || $checkAuthAndSubscription['has_active_subscription'] === false)
+    @php $showHomepageIntro = request()->routeIs('football.home') && $checkAuthAndSubscription['is_authenticated'] === false; @endphp
     <!DOCTYPE html>
     <html>
 
@@ -66,9 +67,20 @@
     @endif
 
     <body class="m-0 p-0">
-        <div id="subscriptionModal" class="fixed inset-0 z-50 flex items-end justify-center overflow-hidden bg-black/60">
-            <div class="relative max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-x-hidden overflow-y-auto overscroll-contain rounded-lg bg-white p-6 text-[#0b2a40] shadow-xl dark:bg-[#1a2a38] dark:text-[#e8edf2]">
-                <button type="button" data-close-subscription class="absolute cursor-pointer top-4 right-4 text-[#5b7c99] hover:text-[#0b2a40] dark:text-[#b0c8dd] dark:hover:text-[#e8edf2] text-xl font-bold">
+        <div id="subscriptionModal" @if ($showHomepageIntro) data-homepage-intro @endif
+            @class([
+                'fixed inset-0 z-50 flex bg-black/60',
+                'flex-col items-center overflow-x-hidden overflow-y-auto overscroll-contain backdrop-blur-xs motion-safe:transition-opacity motion-safe:duration-300 motion-safe:starting:opacity-0' => $showHomepageIntro,
+                'items-end justify-center overflow-hidden' => ! $showHomepageIntro,
+            ])>
+            @if ($showHomepageIntro)
+                <div class="flex w-full max-w-7xl flex-1 flex-col justify-center gap-4 px-6 pt-24 pb-8 text-center sm:px-10 sm:pt-20">
+                    <h1 class="text-[clamp(1.75rem,5vw,4.25rem)] leading-tight font-bold text-balance text-white text-shadow-md">{{ __('Active Sports Exchange Markets') }}</h1>
+                    <p class="text-[clamp(1rem,2.65vw,2.25rem)] leading-snug text-balance text-gray-100 text-shadow-md">{{ __('Real-time Pinnacle odds drops and comparison with Betfair odds') }}</p>
+                </div>
+            @endif
+            <div class="relative z-10 max-h-[calc(100dvh-2rem)] w-full max-w-md shrink-0 overflow-x-hidden overflow-y-auto overscroll-contain rounded-lg bg-white p-6 text-[#0b2a40] shadow-xl dark:bg-[#1a2a38] dark:text-[#e8edf2]">
+                <button type="button" data-close-subscription aria-label="{{ __('Close') }}" class="absolute cursor-pointer top-4 right-4 text-[#5b7c99] hover:text-[#0b2a40] dark:text-[#b0c8dd] dark:hover:text-[#e8edf2] text-xl font-bold">
                     &times;
                 </button>
                 <div class="mx-auto mb-4 h-1.5 w-12 rounded-full bg-[#d4e0ec] dark:bg-[#3a5568]"></div>
@@ -114,12 +126,29 @@
                 const modal = document.getElementById('subscriptionModal');
                 document.body.classList.add('!overflow-hidden');
                 document.documentElement.classList.add('!overflow-hidden');
-                modal.querySelector('[data-close-subscription]').addEventListener('click', () => {
+                const closeModal = () => {
                     modal.remove();
                     if (!document.querySelector('dialog[open], #subscriptionModal, [aria-modal="true"]:not(.hidden), .panel-expanded')) {
                         document.body.classList.remove('!overflow-hidden');
                         document.documentElement.classList.remove('!overflow-hidden');
                     }
+                };
+                if (!modal.hasAttribute('data-homepage-intro')) {
+                    modal.querySelector('[data-close-subscription]').addEventListener('click', closeModal);
+                    return;
+                }
+
+                modal.addEventListener('click', async (event) => {
+                    const closeButton = event.target.closest('[data-close-subscription]');
+                    const link = event.target.closest('a[href]');
+                    if (!closeButton && (!link || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey)) return;
+                    event.preventDefault();
+                    if (modal.inert) return;
+                    modal.inert = true;
+                    modal.classList.add('opacity-0');
+                    await Promise.allSettled(modal.getAnimations().map(animation => animation.finished));
+                    closeModal();
+                    if (link) window.location.assign(link.href);
                 });
             })();
         </script>

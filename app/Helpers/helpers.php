@@ -728,10 +728,7 @@ if (! function_exists('queueSportsSynchronization')) {
                 $retrying = false;
                 try {
                     app($controller)->{$method}();
-                } catch (LockTimeoutException $exception) {
-                    if ($controller !== FootballSyncController::class) {
-                        throw $exception;
-                    }
+                } catch (LockTimeoutException) {
                     $job->release(2);
                     $retrying = true;
                 } finally {
@@ -836,7 +833,7 @@ if (! function_exists('getSportsApiProImage')) {
                         }
 
                         return $updated;
-                    }, $sport === 'football' ? 0 : 2);
+                    }, 0);
                     if ($updated === null) {
                         $job->release(2);
                         $retrying = true;
@@ -874,13 +871,35 @@ if (! function_exists('storeInRedis')) {
      *
      * @param  array<string, mixed>  $data
      * @param  array<string, mixed>|null  $existingData
+     * @param  array<string, mixed>|null  $fixtureSnapshot  A validated fixture index for updates to existing rows.
      */
-    function storeInRedis(string $cacheKey, array $data, int $ttlMinutes = 10, bool $mergeLifecycle = true, ?array $existingData = null, bool $replace = false): void
+    function storeInRedis(string $cacheKey, array $data, int $ttlMinutes = 10, bool $mergeLifecycle = true, ?array $existingData = null, bool $replace = false, ?array $fixtureSnapshot = null): void
     {
-        if ($replace) {
-            $mergedData = $data;
-        } else {
+        $football = $cacheKey === 'Football:matches';
+        $indexed = $football && config('services.football_fixture_index');
+        $cachedData = null;
+        $stream = false;
+        if ($indexed && is_array($fixtureSnapshot['positions'] ?? null)
+            && array_all($data, static fn (array $row, string|int $key): bool => isset($fixtureSnapshot['positions'][$key])
+                && ($row['sportsApiPro_match_id'] ?? null) === ($fixtureSnapshot['matches'][$key]['sportsApiPro_match_id'] ?? null))) {
             $cachedData = Redis::get($cacheKey);
+            $stream = is_string($cachedData) && strlen($cachedData) === $fixtureSnapshot['length'] + 66
+                && substr($cachedData, -66) === $fixtureSnapshot['marker'];
+        }
+        if ($replace && ! $stream) {
+            if ($fixtureSnapshot === null) {
+                $mergedData = $data;
+            } else {
+                $mergedData = json_decode(($cachedData ?? Redis::get($cacheKey)) ?? '[]', true) ?? [];
+                foreach ($data as $key => $row) {
+                    if (isset($mergedData[$key]) && ($mergedData[$key]['sportsApiPro_match_id'] ?? null) === ($row['sportsApiPro_match_id'] ?? null)) {
+                        $mergedData[$key] = $row;
+                    }
+                }
+                unset($cachedData, $row);
+            }
+        } elseif (! $stream) {
+            $cachedData ??= Redis::get($cacheKey);
             $encodedExisting = $existingData === null ? null : json_encode($existingData);
             $reuseExisting = $encodedExisting !== null && is_string($cachedData)
                 && strncmp($cachedData, $encodedExisting, strlen($encodedExisting)) === 0
@@ -891,7 +910,7 @@ if (! function_exists('storeInRedis')) {
             }
             unset($cachedData);
             $mergedData = array_replace($existingData, $data);
-            if ($cacheKey === 'Football:matches') {
+            if ($football) {
                 $mergedData = app(FootballSyncController::class)->mergeDuplicateMatches($mergedData);
             }
             $sport = MatchBackup::sportForCache($cacheKey);
@@ -949,43 +968,71 @@ if (! function_exists('storeInRedis')) {
                 }
                 unset($match);
             }
-            if ($cacheKey === 'Football:matches') {
-                $timelineController = app(FootballSyncController::class);
-                $savedTimelines = collect();
-                try {
-                    $matchIds = array_values(array_filter(array_column($mergedData, 'sportsApiPro_match_id'), static fn (mixed $id): bool => is_scalar($id) && preg_match('/^[1-9][0-9]*$/', (string) $id)));
-                    if ($matchIds !== []) {
-                        $savedTimelines = DB::table('football_timeline')->whereIn('match_id', $matchIds)->get(['match_id', 'timeline'])->keyBy('match_id');
-                    }
-                } catch (Throwable $exception) {
-                    Log::warning('Football timeline cache fallback unavailable', [
-                        'exception' => $exception::class,
-                        'message' => $exception->getMessage(),
-                        'file' => $exception->getFile(),
-                        'line' => $exception->getLine(),
-                    ]);
+        }
+        $streamedRows = $stream ? $fixtureSnapshot['positions'] : [];
+        if ($stream && ! $replace && $mergeLifecycle) {
+            $streamedRows = array_diff_key($streamedRows, array_fill_keys(Redis::zrangebyscore($cacheKey.':cleaned', time(), '+inf'), true));
+        }
+        if ($football && ! $replace) {
+            $timelineController = app(FootballSyncController::class);
+            $savedTimelines = collect();
+            try {
+                $matchIds = array_values(array_filter(array_column($stream ? array_intersect_key($fixtureSnapshot['matches'], $streamedRows) : $mergedData, 'sportsApiPro_match_id'), static fn (mixed $id): bool => is_scalar($id) && preg_match('/^[1-9][0-9]*$/', (string) $id)));
+                if ($matchIds !== []) {
+                    $savedTimelines = DB::table('football_timeline')->whereIn('match_id', $matchIds)->get(['match_id', 'timeline'])->keyBy('match_id');
                 }
+            } catch (Throwable $exception) {
+                Log::warning('Football timeline cache fallback unavailable', [
+                    'exception' => $exception::class,
+                    'message' => $exception->getMessage(),
+                    'file' => $exception->getFile(),
+                    'line' => $exception->getLine(),
+                ]);
+            }
+            if (! $stream) {
                 foreach ($mergedData as $matchKey => &$match) {
                     $saved = $savedTimelines->get((string) ($match['sportsApiPro_match_id'] ?? ''));
                     $timelineController->storeTimeline($match, frameType: 'normalize', previous: $existingData[$matchKey] ?? [], storedTimeline: json_decode($saved->timeline ?? '[]', true) ?? []);
                 }
-                unset($match);
+                unset($match, $savedTimelines);
             }
-            unset($existingData, $data, $previous, $cleaned, $savedTimelines, $matchIds, $saved);
         }
-        if ($cacheKey === 'Football:matches' && config('services.football_fixture_index')) {
+        unset($existingData, $previous, $cleaned, $matchIds, $saved);
+        if (! $stream) {
+            unset($data);
+        }
+        if ($indexed) {
             $index = ['format' => 3, 'market_activity' => 1, 'statistics_schedule' => 1, 'matches' => [], 'positions' => [], 'ids' => [], 'orders' => []];
             $fields = array_flip(['unique_key', 'sportsApiPro_match_id', 'betfair_match_id', 'timestamp', 'result_status', 'minutes_status', 'current_period_start_timestamp', 'added_time', 'tournament', 'tournament_country', 'tournament_id', 'tournament_logo', 'country_id', 'internal_backup', 'provider_lifecycle', 'pinnacle_drop_triggered', 'pinnacle_market_shock_detected_at']);
             $visibleFields = array_flip(['unique_key', 'team1', 'team2', 'home_team_id', 'away_team_id', 'home_team_logo', 'away_team_logo', 'betfair_match_id', 'sportsApiPro_match_id', 'timestamp', 'result_status', 'minutes_status', 'current_period_start_timestamp', 'added_time', 'home_score', 'away_score', 'timeline', 'live_stats', 'live_stats_meta', 'statistics_periods', 'prematch_statistics', 'statistics_requests', 'predictions']);
             $controller = app(FootballController::class);
             $index['priority_version'] = hash('xxh3', serialize((new ReflectionClass($controller))->getConstant('LEAGUE_PRIORITY')));
-            $previousIndex = getInRedis($cacheKey, fixtureIndex: true) ?? [];
-            $isList = array_is_list($mergedData);
+            $previousIndex = $stream ? $fixtureSnapshot : (getInRedis($cacheKey, fixtureIndex: true) ?? []);
+            $rows = $stream ? $streamedRows : $mergedData;
+            unset($mergedData, $streamedRows);
+            $isList = array_is_list($rows);
             $serialized = $isList ? '[' : '{';
             $sortFields = [];
             $number = 0;
             $canonical = true;
-            foreach ($mergedData as $matchKey => $match) {
+            foreach ($rows as $matchKey => &$row) {
+                if ($stream) {
+                    [$offset, $length] = $row;
+                    $previous = json_decode(substr($cachedData, $offset, $length), true, flags: JSON_THROW_ON_ERROR);
+                    $match = $data[$matchKey] ?? $previous;
+                    if (! $replace) {
+                        if ($mergeLifecycle) {
+                            if (($previous['result_status'] ?? '') === 'Finished' && ($match['result_status'] ?? '') !== 'Finished') {
+                                $match = $previous;
+                            }
+                            $match = MatchBackup::merge($match, $previous, 'football');
+                        }
+                        $saved = $savedTimelines->get((string) ($match['sportsApiPro_match_id'] ?? ''));
+                        $timelineController->storeTimeline($match, frameType: 'normalize', previous: $previous, storedTimeline: json_decode($saved->timeline ?? '[]', true) ?? []);
+                    }
+                } else {
+                    $match = $row;
+                }
                 $serialized .= ($number++ > 0 ? ',' : '').($isList ? '' : json_encode((string) $matchKey).':');
                 $json = json_encode($match, JSON_THROW_ON_ERROR);
                 $index['positions'][$matchKey] = [strlen($serialized), strlen($json)];
@@ -1029,7 +1076,9 @@ if (! function_exists('storeInRedis')) {
                     $index['ids'][$id] = $matchKey;
                 }
                 $sortFields[$matchKey] = [$entry['_fixture_priority'], $entry['timestamp'] ?? 0, $entry['tournament_id'] ?? null, $entry['tournament_country'] ?? null, $entry['tournament'] ?? ''];
+                unset($rows[$matchKey], $match, $previous);
             }
+            unset($row, $rows, $cachedData, $data, $savedTimelines, $json);
             $serialized .= $isList ? ']' : '}';
             $index['length'] = strlen($serialized);
             $index['content_version'] = hash('xxh3', $serialized);

@@ -24,6 +24,7 @@ use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Locale;
+use Symfony\Component\HttpFoundation\AcceptHeader;
 use Symfony\Component\HttpFoundation\Response;
 use ValueError;
 
@@ -377,6 +378,7 @@ class CustomerAuthService
                 'mobile_code' => $country['calling_code'],
                 'country' => $country['name'],
                 'country_code' => $country['code'],
+                'timezone' => $country['timezone'],
                 'device_id' => $data['device_id'] ?? (string) Str::uuid(),
                 'registration_ip' => $request->ip(),
                 'registration_user_agent' => $request->userAgent(),
@@ -736,6 +738,26 @@ class CustomerAuthService
             }
         }
 
-        return $next($request);
+        [$sport, $action] = array_pad(explode('.', (string) $request->route()?->getName(), 2), 2, null);
+        if (! in_array($sport, ['tennis', 'cricket', 'basketball', 'icehockey', 'americanfootball', 'baseball', 'greyhounds', 'horseracing'], true)
+            || ! in_array($action, ['home', 'market-activity', 'matches.show', 'filter-'.$sport, 'websocket-'.$sport], true)) {
+            return $next($request);
+        }
+
+        $response = $next($request);
+
+        if ($response->isSuccessful() && ! $response->headers->has('Content-Encoding') && is_string($body = $response->getContent()) && strlen($body) >= 1024) {
+            $response->setVary('Accept-Encoding', false);
+            if (function_exists('gzencode') && AcceptHeader::fromString($request->header('Accept-Encoding', ''))->get('gzip')?->getQuality() > 0) {
+                $compressed = gzencode($body, 1);
+                if ($compressed !== false && strlen($compressed) < strlen($body)) {
+                    $response->setContent($compressed);
+                    $response->headers->set('Content-Encoding', 'gzip');
+                    $response->headers->remove('Content-Length');
+                }
+            }
+        }
+
+        return $response;
     }
 }

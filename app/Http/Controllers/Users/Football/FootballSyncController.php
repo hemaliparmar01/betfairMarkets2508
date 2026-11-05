@@ -532,26 +532,42 @@ class FootballSyncController extends Controller
                             $owner = $pending->owner();
                             dispatch(static function (CallQueuedClosure $job) use ($matchId, $onlyIncidents, $key, $owner, $needsHistory, $repairTimeline): void {
                                 $retrying = false;
+                                $writeTimeline = static function (?string $channel, array $payload, ?float $requestedAt = null) use ($matchId): void {
+                                    withRedisLock('Football:matches', static function () use ($matchId, $channel, $payload, $requestedAt): void {
+                                        $index = getInRedis('Football:matches', fixtureIndex: true);
+                                        $matches = $index === null ? null : getInRedis('Football:matches', readOnly: $channel === null, matchIds: [$matchId], snapshot: $index);
+                                        $existingMatches = null;
+                                        if ($matches === null) {
+                                            $index = null;
+                                            $matches = getInRedis('Football:matches', readOnly: $channel === null) ?? [];
+                                            $existingMatches = $matches;
+                                        }
+
+                                        $found = false;
+                                        foreach ($matches as &$cachedMatch) {
+                                            if ((string) ($cachedMatch['sportsApiPro_match_id'] ?? '') !== $matchId) {
+                                                continue;
+                                            }
+                                            if ($channel === null) {
+                                                app(self::class)->storeTimeline($cachedMatch, frameType: 'repair', previous: ['timeline' => $payload]);
+                                            } else {
+                                                app(self::class)->storeTimeline($cachedMatch, $channel, $payload, 'snapshot', $requestedAt);
+                                            }
+                                            $found = true;
+                                        }
+                                        unset($cachedMatch);
+
+                                        if ($found || $channel !== null) {
+                                            storeInRedis('Football:matches', $matches, 10, false, $existingMatches, fixtureSnapshot: $index);
+                                        } else {
+                                            $uncachedMatch = ['sportsApiPro_match_id' => $matchId];
+                                            app(self::class)->storeTimeline($uncachedMatch, frameType: 'repair', previous: ['timeline' => $payload]);
+                                        }
+                                    }, 30);
+                                };
                                 try {
                                     if ($repairTimeline !== null) {
-                                        withRedisLock('Football:matches', static function () use ($matchId, $repairTimeline): void {
-                                            $matches = getInRedis('Football:matches', readOnly: true) ?? [];
-                                            $existingMatches = $matches;
-                                            $found = false;
-                                            foreach ($matches as &$cachedMatch) {
-                                                if ((string) ($cachedMatch['sportsApiPro_match_id'] ?? '') === $matchId) {
-                                                    app(self::class)->storeTimeline($cachedMatch, frameType: 'repair', previous: ['timeline' => $repairTimeline]);
-                                                    $found = true;
-                                                }
-                                            }
-                                            unset($cachedMatch);
-                                            if ($found) {
-                                                storeInRedis('Football:matches', $matches, 10, false, $existingMatches);
-                                            } else {
-                                                $uncachedMatch = ['sportsApiPro_match_id' => $matchId];
-                                                app(self::class)->storeTimeline($uncachedMatch, frameType: 'repair', previous: ['timeline' => $repairTimeline]);
-                                            }
-                                        }, 30);
+                                        $writeTimeline(null, $repairTimeline);
                                     }
                                     foreach (! $needsHistory ? [] : ($onlyIncidents ? ['/incidents'] : ['', '/incidents', '/odds']) as $suffix) {
                                         if ($suffix === '/odds') {
@@ -575,17 +591,7 @@ class FootballSyncController extends Controller
 
                                             continue;
                                         }
-                                        withRedisLock('Football:matches', static function () use ($matchId, $suffix, $payload, $requestedAt): void {
-                                            $matches = getInRedis('Football:matches') ?? [];
-                                            $existingMatches = $matches;
-                                            foreach ($matches as &$cachedMatch) {
-                                                if ((string) ($cachedMatch['sportsApiPro_match_id'] ?? '') === $matchId) {
-                                                    app(self::class)->storeTimeline($cachedMatch, 'match:'.$matchId.($suffix === '' ? '' : ':incidents'), $payload, 'snapshot', $requestedAt);
-                                                }
-                                            }
-                                            unset($cachedMatch);
-                                            storeInRedis('Football:matches', $matches, 10, false, $existingMatches);
-                                        }, 30);
+                                        $writeTimeline('match:'.$matchId.($suffix === '' ? '' : ':incidents'), $payload, $requestedAt);
                                     }
                                     Event::dispatch(new FootballSportsScoreUpdated);
                                 } catch (LockTimeoutException) {
@@ -1262,7 +1268,12 @@ class FootballSyncController extends Controller
             }
 
             $updatedMatch = withRedisLock('Football:matches', function () use ($matchId, $responses, $attempts): ?array {
-                $matches = json_decode(Redis::get('Football:matches') ?? '[]', true) ?? [];
+                $index = getInRedis('Football:matches', fixtureIndex: true);
+                $matches = $index === null ? null : getInRedis('Football:matches', readOnly: true, matchIds: [$matchId], snapshot: $index);
+                if ($matches === null) {
+                    $index = null;
+                    $matches = json_decode(Redis::get('Football:matches') ?? '[]', true) ?? [];
+                }
                 $key = array_find_key($matches, static fn (array $match): bool => (string) ($match['sportsApiPro_match_id'] ?? '') === $matchId && ! MatchBackup::isHidden($match, 'football'));
                 if ($key === null) {
                     return null;
@@ -1275,7 +1286,7 @@ class FootballSyncController extends Controller
                     }
                 }
                 $matches[$key]['statistics_requests'] = array_replace($matches[$key]['statistics_requests'] ?? [], $attempts);
-                storeInRedis('Football:matches', $matches, 10, false, replace: true);
+                storeInRedis('Football:matches', $matches, 10, false, replace: true, fixtureSnapshot: $index);
 
                 return $matches[$key];
             });
@@ -1326,8 +1337,14 @@ class FootballSyncController extends Controller
             }
         }
         $changed = withRedisLock('Football:matches', static function () use ($matchId, $v6Id, $stats, $requestedAt, $dictionaryVersion): array {
-            $matches = getInRedis('Football:matches') ?? [];
-            $existingMatches = $matches;
+            $index = getInRedis('Football:matches', fixtureIndex: true);
+            $matches = $index === null ? null : getInRedis('Football:matches', matchIds: [$matchId], snapshot: $index);
+            $existingMatches = null;
+            if ($matches === null) {
+                $index = null;
+                $matches = getInRedis('Football:matches') ?? [];
+                $existingMatches = $matches;
+            }
             $persist = [];
             $updated = false;
             $liveStats = app(FootballV6Stats::class);
@@ -1363,7 +1380,7 @@ class FootballSyncController extends Controller
             }
             unset($match);
             if ($updated) {
-                storeInRedis('Football:matches', $matches, 30, true, $existingMatches);
+                storeInRedis('Football:matches', $matches, 30, true, $existingMatches, fixtureSnapshot: $index);
             }
 
             return $persist;

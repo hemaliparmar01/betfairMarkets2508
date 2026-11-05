@@ -13,11 +13,12 @@ class ProcessMatchBackups extends Command
 {
     public function handle(MatchBackup $backups): int
     {
+        $scheduled = (bool) $this->option('scheduled');
         foreach (array_keys($backups::SPORTS) as $sport) {
-            if ($this->option('scheduled') && (int) now()->format('i') % 5 !== 0 && ! in_array($sport, ['horseracing', 'greyhounds'], true)) {
+            if ($scheduled && (int) now()->format('i') % 5 !== 0 && ! in_array($sport, ['horseracing', 'greyhounds'], true)) {
                 continue;
             }
-            $this->line($sport.': '.$backups->process($sport).' lifecycle changes');
+            $this->line($sport.': '.$backups->process($sport, deferIfBusy: $scheduled).' lifecycle changes');
         }
 
         return self::SUCCESS;

@@ -388,14 +388,24 @@ class TennisSyncController extends Controller
 
             return $event;
         }, $events);
-        $events = array_values(array_filter($events, function (array $event) use ($isLive, $existingMatches): bool {
+        $firstMatchById = [];
+        $firstLinkedMatchById = [];
+        foreach ($existingMatches as $key => $match) {
+            $providerId = (string) ($match['sportsApiPro_match_id'] ?? '');
+            $firstMatchById[$providerId] ??= $key;
+            if (isset($match['betfair_match_id'])) {
+                $firstLinkedMatchById[$providerId] ??= $key;
+            }
+        }
+        $events = array_values(array_filter($events, function (array $event) use ($isLive, $existingMatches, $firstMatchById): bool {
             $timestamp = (int) ($event['startTimestamp'] ?? 0);
             $home = $event['homeTeam']['name'] ?? '';
             $away = $event['awayTeam']['name'] ?? '';
             if ($timestamp <= 0 || $home === '' || $away === '') {
                 return false;
             }
-            $known = array_find($existingMatches, static fn (array $match): bool => (string) ($match['sportsApiPro_match_id'] ?? '') === (string) ($event['id'] ?? $event['eventId'] ?? ''));
+            $knownKey = $firstMatchById[(string) ($event['id'] ?? $event['eventId'] ?? '')] ?? null;
+            $known = $knownKey === null ? null : $existingMatches[$knownKey];
             if (($known['result_status'] ?? null) === 'Finished') {
                 return false;
             }
@@ -415,7 +425,8 @@ class TennisSyncController extends Controller
         }
         $sportsImages = [];
         foreach ($events as $event) {
-            $imageMatch = array_find($existingMatches, static fn (array $match): bool => (string) ($match['sportsApiPro_match_id'] ?? '') === (string) ($event['id'] ?? $event['eventId'] ?? '') && isset($match['betfair_match_id']));
+            $linkedKey = $firstLinkedMatchById[(string) ($event['id'] ?? $event['eventId'] ?? '')] ?? null;
+            $imageMatch = $linkedKey === null ? null : $existingMatches[$linkedKey];
             $imageMatchKey = $imageMatch['unique_key'] ?? $this->checkIfRecordExistsOnAnotherApi(
                 $this->generateUniqueKey($event['homeTeam']['name'], $event['awayTeam']['name'], (int) $event['startTimestamp']),
                 $event['homeTeam']['name'], $event['awayTeam']['name'], (int) $event['startTimestamp'], $existingMatches,
@@ -495,7 +506,7 @@ class TennisSyncController extends Controller
         }, 30);
     }
 
-    public function mergeBetfairWebSocketData(array $events, bool $isLive): bool
+    public function mergeBetfairWebSocketData(array $events, bool $isLive, bool $deferIfBusy = false): ?bool
     {
         if ($events === []) {
             return false;
@@ -505,9 +516,9 @@ class TennisSyncController extends Controller
             $after = $this->readBetFairData(['liveMap' => $events], 'Tennis:matches', $isLive, 30, $before);
 
             return array_filter($after, static fn (array $match, string $key): bool => $match != ($before[$key] ?? null), ARRAY_FILTER_USE_BOTH);
-        }, 5);
+        }, $deferIfBusy ? 0 : 5);
 
-        return $matches !== [];
+        return $matches === null ? null : $matches !== [];
     }
 
     public function applySportsApiEvent(array &$match, array $event, string $channel): bool
@@ -659,22 +670,36 @@ class TennisSyncController extends Controller
     }
 
     /** @param list<array{id: string, version: int, status: string, current_set: int, home: array, away: array}>|null $scoreUpdates */
-    public function mergeSportsWebSocketData(string $channel, array $frameData, ?array &$scoreUpdates = null, ?int $sourceTimestamp = null): bool
+    public function mergeSportsWebSocketData(string $channel, array $frameData, ?array &$scoreUpdates = null, ?int $sourceTimestamp = null, ?array $cachedMatches = null): bool
     {
         $scoreUpdates = [];
         $sourceTimestamp = $sourceTimestamp === null ? null : ($sourceTimestamp < 100000000000 ? $sourceTimestamp * 1000 : $sourceTimestamp);
-        $matches = getInRedis('Tennis:matches') ?? [];
+        $matches = $cachedMatches ?? getInRedis('Tennis:matches') ?? [];
+        unset($cachedMatches);
         $events = str_starts_with($channel, 'live-scores')
             ? (isset($frameData['id']) || isset($frameData['eventId']) ? [$frameData] : ($frameData['events'] ?? (array_is_list($frameData) ? $frameData : [])))
             : [$frameData];
         preg_match('/^match:(\d+)/', $channel, $channelMatch);
+        $useEventIndex = count($events) > 1;
+        $keysByEvent = [];
+        if ($useEventIndex) {
+            foreach ($matches as $key => $match) {
+                if (($match['result_status'] ?? null) !== 'Finished') {
+                    $keysByEvent[(string) ($match['sportsApiPro_match_id'] ?? '')][] = $key;
+                }
+            }
+        }
         $changed = [];
         foreach ($events as $event) {
             $eventId = $event['id'] ?? $event['eventId'] ?? ($channelMatch[1] ?? null);
-            foreach ($matches as $key => &$match) {
-                if (($match['result_status'] ?? null) === 'Finished' || (string) ($match['sportsApiPro_match_id'] ?? '') !== (string) $eventId) {
+            $keys = $useEventIndex
+                ? ($keysByEvent[(string) $eventId] ?? [])
+                : [array_find_key($matches, static fn (array $match): bool => ($match['result_status'] ?? null) !== 'Finished' && (string) ($match['sportsApiPro_match_id'] ?? '') === (string) $eventId)];
+            foreach ($keys as $key) {
+                if ($key === null || ($matches[$key]['result_status'] ?? null) === 'Finished') {
                     continue;
                 }
+                $match = &$matches[$key];
                 $before = $match;
                 if (str_ends_with($channel, ':stats')) {
                     $statistics = $event['statistics'] ?? $event;

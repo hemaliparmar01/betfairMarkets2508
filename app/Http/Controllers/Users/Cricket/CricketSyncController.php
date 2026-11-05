@@ -367,14 +367,20 @@ class CricketSyncController extends Controller
             return [];
         }
         $existingMatches = getInRedis($cacheKey) ?? [];
-        $events = array_values(array_filter($events, function (array $event) use ($isLive, $existingMatches): bool {
+        $firstMatchById = [];
+        foreach ($existingMatches as $key => $match) {
+            $providerId = (string) ($match['sportsApiPro_match_id'] ?? '');
+            $firstMatchById[$providerId] ??= $key;
+        }
+        $events = array_values(array_filter($events, function (array $event) use ($isLive, $existingMatches, $firstMatchById): bool {
             $timestamp = (int) ($event['startTimestamp'] ?? 0);
             $home = $event['homeTeam']['name'] ?? '';
             $away = $event['awayTeam']['name'] ?? '';
             if ($timestamp <= 0 || $home === '' || $away === '') {
                 return false;
             }
-            $known = array_find($existingMatches, static fn (array $match): bool => (string) ($match['sportsApiPro_match_id'] ?? '') === (string) ($event['id'] ?? $event['eventId'] ?? ''));
+            $knownKey = $firstMatchById[(string) ($event['id'] ?? $event['eventId'] ?? '')] ?? null;
+            $known = $knownKey === null ? null : $existingMatches[$knownKey];
             if (($known['result_status'] ?? null) === 'Finished') {
                 return false;
             }
@@ -464,7 +470,7 @@ class CricketSyncController extends Controller
         }, 30);
     }
 
-    public function mergeBetfairWebSocketData(array $events, bool $isLive): bool
+    public function mergeBetfairWebSocketData(array $events, bool $isLive, bool $deferIfBusy = false): ?bool
     {
         if ($events === []) {
             return false;
@@ -474,9 +480,9 @@ class CricketSyncController extends Controller
             $after = $this->readBetFairData(['liveMap' => $events], 'Cricket:matches', $isLive, 30, $before);
 
             return array_filter($after, static fn (array $match, string $key): bool => $match != ($before[$key] ?? null), ARRAY_FILTER_USE_BOTH);
-        }, 5);
+        }, $deferIfBusy ? 0 : 5);
 
-        return $matches !== [];
+        return $matches === null ? null : $matches !== [];
     }
 
     public function applySportsApiEvent(array &$match, array $event, string $channel): bool
@@ -602,20 +608,34 @@ class CricketSyncController extends Controller
         return $match !== $before;
     }
 
-    public function mergeSportsWebSocketData(string $channel, array $frameData): bool
+    public function mergeSportsWebSocketData(string $channel, array $frameData, ?array $cachedMatches = null): bool
     {
-        $matches = getInRedis('Cricket:matches') ?? [];
+        $matches = $cachedMatches ?? getInRedis('Cricket:matches') ?? [];
+        unset($cachedMatches);
         $events = str_starts_with($channel, 'live-scores')
             ? (isset($frameData['id']) || isset($frameData['eventId']) ? [$frameData] : ($frameData['events'] ?? (array_is_list($frameData) ? $frameData : [])))
             : [$frameData];
         preg_match('/^match:(\d+)/', $channel, $channelMatch);
+        $useEventIndex = count($events) > 1;
+        $keysByEvent = [];
+        if ($useEventIndex) {
+            foreach ($matches as $key => $match) {
+                if (($match['result_status'] ?? null) !== 'Finished') {
+                    $keysByEvent[(string) ($match['sportsApiPro_match_id'] ?? '')][] = $key;
+                }
+            }
+        }
         $changed = [];
         foreach ($events as $event) {
             $eventId = $event['id'] ?? $event['eventId'] ?? ($channelMatch[1] ?? null);
-            foreach ($matches as $key => &$match) {
-                if (($match['result_status'] ?? null) === 'Finished' || (string) ($match['sportsApiPro_match_id'] ?? '') !== (string) $eventId) {
+            $keys = $useEventIndex
+                ? ($keysByEvent[(string) $eventId] ?? [])
+                : [array_find_key($matches, static fn (array $match): bool => ($match['result_status'] ?? null) !== 'Finished' && (string) ($match['sportsApiPro_match_id'] ?? '') === (string) $eventId)];
+            foreach ($keys as $key) {
+                if ($key === null || ($matches[$key]['result_status'] ?? null) === 'Finished') {
                     continue;
                 }
+                $match = &$matches[$key];
                 $before = $match;
                 if (str_ends_with($channel, ':stats')) {
                     $statistics = $event['statistics'] ?? $event;

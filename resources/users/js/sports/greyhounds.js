@@ -41,6 +41,8 @@ if (dashboard) {
     let loading = false;
     let refreshPending = false;
     let pendingAction = null;
+    let readRequest = null;
+    let appendPending = false;
     let refreshTimer = null;
     let lastRefreshStartedAt = null;
     let availabilityTimer = null;
@@ -72,12 +74,30 @@ if (dashboard) {
             content()?.classList.add('fixtures-loading');
             content()?.setAttribute('aria-busy', 'true');
         }
-        if (loading) { if (reset || prediction) pendingAction = { reset, prediction }; else if (!append) refreshPending = true; return; }
+        if (loading) {
+            if (reset || prediction) {
+                pendingAction = { reset: reset || pendingAction?.reset === true, prediction: prediction ?? pendingAction?.prediction ?? null };
+                if (reset) appendPending = false;
+                else if (loading === 'append') appendPending = true;
+                readRequest?.abort();
+            } else if (append) {
+                appendPending = true;
+            } else {
+                refreshPending = true;
+            }
+            return;
+        }
         if (document.visibilityState !== 'visible' && !reset && !prediction) { refreshPending = true; return; }
-        if (append && loader()?.dataset.hasMore !== 'true') return;
-        loading = true;
+        const page = append ? Number(loader()?.dataset.nextPage) : 1;
+        if (append && (loader()?.dataset.hasMore !== 'true' || !Number.isSafeInteger(page) || page < 2)) return;
+        if (!append && refreshTimer !== null) {
+            window.clearTimeout(refreshTimer);
+            refreshTimer = null;
+            refreshPending = false;
+        }
+        loading = append ? 'append' : 'refresh';
         lastRefreshStartedAt = Date.now();
-        const page = append ? Number(loader().dataset.nextPage) : 1;
+        readRequest = prediction ? null : new AbortController();
         const perPage = append || reset ? 20 : loadedPages * 20;
         const params = { type: selectedFilter, page, per_page: perPage, append };
         if (prediction) params.prediction = prediction;
@@ -87,13 +107,14 @@ if (dashboard) {
         if (text) text.textContent = (globalThis.bfTranslations?.["Loading races…"] ?? "Loading races…");
         try {
             const url = new URL(dashboard.dataset.sourceUrl, window.location.origin);
-            const options = { headers: { Accept: 'application/json', 'X-CSRF-TOKEN': csrf, 'X-Requested-With': 'XMLHttpRequest' }, cache: 'no-store' };
+            const options = { headers: { Accept: 'application/json', 'X-CSRF-TOKEN': csrf, 'X-Requested-With': 'XMLHttpRequest' }, cache: 'no-store', signal: readRequest?.signal };
             if (dashboard.dataset.sourceMethod === 'POST') { options.method = 'POST'; options.headers['Content-Type'] = 'application/json'; options.body = JSON.stringify(params); }
             else Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value === true ? '1' : value === false ? '0' : typeof value === 'object' ? JSON.stringify(value) : String(value)));
             const response = await fetch(url, options);
             if (response.status === 401) { window.location.assign(dashboard.dataset.loginUrl); return; }
             if (!response.ok) throw new Error((globalThis.bfTranslations?.["Unable to load races. Please try again."] ?? "Unable to load races. Please try again."));
             const result = await response.json();
+            if (readRequest?.signal.aborted) return;
             feedMonitor.update(result.feed);
             hideOddsTooltip();
             const target = content();
@@ -130,15 +151,21 @@ if (dashboard) {
                 }
             });
             loader().dataset.hasMore = result.has_more ? 'true' : 'false';
+            const previousNextPage = loader().dataset.nextPage;
             loader().dataset.nextPage = result.has_more ? String(loadedPages + 1) : '';
             loader().classList.toggle('hidden', !result.has_more);
+            loader().hidden = !result.has_more;
+            if (previousNextPage !== loader().dataset.nextPage) {
+                paginationObserver.unobserve(loader());
+                if (result.has_more) paginationObserver.observe(loader());
+            }
             dashboard.querySelector('[data-greyhounds-error]')?.remove();
             scheduleAvailability();
             if (activeModal) {
                 const opened = activeModal;
                 const visibleRow = [...dashboard.querySelectorAll('[data-match-id]')].find((row) => row.dataset.matchId === opened.matchId);
                 if (!visibleRow) {
-                    const detailResponse = await fetch(opened.row.dataset.greyhoundsMatchUrl, {headers: {Accept: 'application/json'}, cache: 'no-store'});
+                    const detailResponse = await fetch(opened.row.dataset.greyhoundsMatchUrl, {headers: {Accept: 'application/json'}, cache: 'no-store', signal: readRequest?.signal});
                     if (detailResponse.ok) {
                         const detail = await detailResponse.json();
                         opened.row.dataset.greyhoundsMarket = JSON.stringify(detail.market);
@@ -147,14 +174,29 @@ if (dashboard) {
                 }
                 if (activeModal === opened) renderModal();
             }
-        } catch (error) { feedMonitor.failed(); showError(error.message); }
-        finally {
+        } catch (error) {
+            if (error.name !== 'AbortError') {
+                feedMonitor.failed();
+                showError(error.message);
+                if (prediction && activeModal?.action === 'prediction') renderModal();
+            }
+        } finally {
+            readRequest = null;
             loading = false;
             content()?.classList.remove('fixtures-loading');
             content()?.removeAttribute('aria-busy');
             const text = loader()?.querySelector('[data-lazy-loader-text]');
             if (text) text.textContent = (globalThis.bfTranslations?.["↓ Scroll for more races ↓"] ?? "↓ Scroll for more races ↓");
-            if (pendingAction) { const action = pendingAction; pendingAction = null; load(action); } else if (refreshPending && document.visibilityState === 'visible') { refreshPending = false; scheduleRefresh(); }
+            const pendingBounds = appendPending && !pendingAction && loader()?.dataset.hasMore === 'true' && !document.hidden
+                ? loader().getBoundingClientRect() : null;
+            if (!pendingAction) appendPending = false;
+            if (pendingAction) {
+                const action = pendingAction; pendingAction = null; load(action);
+            } else if (pendingBounds && pendingBounds.top <= window.innerHeight + 100 && pendingBounds.bottom >= -100) {
+                load({ append: true });
+            } else if (refreshPending && document.visibilityState === 'visible') {
+                refreshPending = false; scheduleRefresh();
+            }
         }
     }
     function closeModal() {
@@ -261,7 +303,8 @@ if (dashboard) {
         finally { button.disabled = false; }
     });
     document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeModal(); });
-    new IntersectionObserver((entries) => { if (entries.some((entry) => entry.isIntersecting)) load({ append: true }); }, { rootMargin: '100px' }).observe(loader());
+    const paginationObserver = new IntersectionObserver((entries) => { if (entries.some((entry) => entry.isIntersecting)) load({ append: true }); }, { rootMargin: '100px' });
+    paginationObserver.observe(loader());
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') scheduleRefresh(); });
     function scheduleAvailability() {
         clearTimeout(availabilityTimer);

@@ -27,14 +27,12 @@ trait HorseRacingTrait
 
         $customerId = request()->user('customers')?->getAuthIdentifier();
         $favorites = $customerId === null ? [] : array_fill_keys(Favorite::query()->where('sport', 'horseracing')->where('customer_id', $customerId)->pluck('event_key')->all(), true);
-        $today = Carbon::now(getCurrentUserTimezone())->toDateString();
+        $timezone = getCurrentUserTimezone();
+        $today = Carbon::now($timezone)->toDateString();
         $type = request()->input('type', 'all');
-        $matches = array_map(
-            fn (array $race): array => prepareMatchOddsMonitoring($race, true),
-            array_filter(getVisibleSportsMatches('HorseRacing:matches') ?? [], static fn (array $race): bool => ($race['result_status'] ?? '') !== 'Finished')
-        );
-        $matches = array_values(array_filter($matches, static function (array $race) use ($today, $type, $favorites): bool {
-            if (($race['result_status'] ?? '') === 'Finished' || ($race['data_sync_complete'] ?? false) !== true || Carbon::createFromTimestamp((int) $race['timestamp'], getCurrentUserTimezone())->toDateString() !== $today) {
+        $matches = getVisibleSportsMatches('HorseRacing:matches');
+        $matches = array_values(array_filter($matches, static function (array $race) use ($today, $timezone, $type, $favorites): bool {
+            if (($race['result_status'] ?? '') === 'Finished' || ($race['data_sync_complete'] ?? false) !== true || Carbon::createFromTimestamp((int) $race['timestamp'], $timezone)->toDateString() !== $today) {
                 return false;
             }
 
@@ -43,10 +41,13 @@ trait HorseRacingTrait
                 'upcoming' => $race['result_status'] === 'Prematch',
                 'finished' => $race['result_status'] === 'Finished',
                 'favorites' => isset($favorites[$race['unique_key']]),
-                'prematch_drops', 'market_shock' => $race['result_status'] === 'Prematch' && array_any($race['markets'] ?? [], static fn (array $runners): bool => array_any($runners, static fn (array $runner): bool => $type === 'prematch_drops' ? ($runner['prematch_drop_triggered'] ?? false) : (int) ($runner['market_shock_detected_at'] ?? 0) >= time() - 1200)),
+                'prematch_drops', 'market_shock' => $race['result_status'] === 'Prematch' && array_any($race['markets'] ?? [], static fn (array $runners): bool => array_any($runners, static fn (array $runner): bool => hasMeaningfulOpeningOdds($runner) && ($type === 'prematch_drops' ? ($runner['prematch_drop_triggered'] ?? false) : (int) ($runner['market_shock_detected_at'] ?? 0) >= time() - 1200))),
                 default => true,
             };
         }));
+        if ($type !== 'by_time') {
+            $matches = array_map(static fn (array $race): array => prepareMatchOddsMonitoring($race, true), $matches);
+        }
         usort($matches, static function (array $first, array $second) use ($type): int {
             if ($type === 'by_time') {
                 return $first['timestamp'] <=> $second['timestamp'];
@@ -73,6 +74,9 @@ trait HorseRacingTrait
         $groups = [];
         $preparedMatches = [];
         foreach ($matches as $match) {
+            if ($type === 'by_time') {
+                $match = prepareMatchOddsMonitoring($match, true);
+            }
             $match['id'] = (string) $match['betfair_match_id'];
             $match['status'] = $match['result_status'];
             $match['minutes'] = $this->calculateMinutes($match);
@@ -116,7 +120,7 @@ trait HorseRacingTrait
     public function getHorseRacingMatchDetail(string $matchId): ?array
     {
         // $match = array_find(getVisibleSportsMatches('HorseRacing:matches') ?? [], static fn (array $race): bool => (string) $race['betfair_match_id'] === $matchId);
-        $match = collect(getVisibleSportsMatches('HorseRacing:matches') ?? [])->first(static fn (array $race): bool => (string) ($race['betfair_match_id'] ?? '') === $matchId);
+        $match = array_find(getInRedis('HorseRacing:matches') ?? [], static fn (array $candidate): bool => (string) ($candidate['betfair_match_id'] ?? '') === $matchId && ! MatchBackup::isHidden($candidate, 'horseracing'));
         if ($match === null) {
             $stored = HorseRacingMatch::query()->with('markets')->where('betfair_match_id', $matchId)->first();
             if ($stored === null) {

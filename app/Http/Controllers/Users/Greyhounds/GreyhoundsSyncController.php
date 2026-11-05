@@ -40,7 +40,7 @@ class GreyhoundsSyncController extends Controller
         return getInRedis('Greyhounds:matches') ?? [];
     }
 
-    public function mergeBetfairWebSocketData(array $events, bool $isLive = false, bool $isSnapshot = false): bool
+    public function mergeBetfairWebSocketData(array $events, bool $isLive = false, bool $isSnapshot = false, bool $deferIfBusy = false): ?bool
     {
         return withRedisLock('Greyhounds:matches', function () use ($events, $isSnapshot): bool {
             $matches = getInRedis('Greyhounds:matches') ?? [];
@@ -203,7 +203,7 @@ class GreyhoundsSyncController extends Controller
             }
 
             return $changed !== [];
-        }, 5);
+        }, $deferIfBusy ? 0 : 5);
     }
 
     private function storeMatchesInDatabase(array $matches): void

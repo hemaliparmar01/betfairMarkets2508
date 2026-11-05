@@ -560,7 +560,10 @@ class FixturesAuditTest extends TestCase
         $detectedAt = time() - 300;
         $data = [
             '1' => array_replace($base, ['minutes_status' => 'Half Time']),
-            '2' => array_replace($base, ['unique_key' => '2', 'sportsApiPro_match_id' => '2']),
+            '2' => array_replace($base, ['unique_key' => '2', 'sportsApiPro_match_id' => '2', 'markets' => ['m' => [
+                array_replace($runner, ['liquidity_feed' => 'live']),
+                array_replace($runner, ['runner' => 'Away', 'liquidity_feed' => 'prematch']),
+            ]]]),
             '3' => array_replace($base, ['unique_key' => '3', 'sportsApiPro_match_id' => '3', 'away_score' => 1, 'bet365_prematch' => ['favorite_odds' => 1.8, 'favorite_side' => 'home']]),
             '4' => array_replace($base, ['unique_key' => '4', 'sportsApiPro_match_id' => '4', 'bet365_prematch' => ['favorite_odds' => 1.87, 'favorite_side' => 'home']]),
             '5' => array_replace($base, ['unique_key' => '5', 'sportsApiPro_match_id' => '5', 'timestamp' => time() + 120, 'result_status' => 'Prematch', 'markets' => ['m' => [$runner]]]),
@@ -587,6 +590,14 @@ class FixturesAuditTest extends TestCase
             }
             sort($ids);
             $this->assertSame($expected, $ids, $filter);
+            if ($filter === '00_70') {
+                $html = view('users.sports.football.footballDetails', ['data' => $groups, 'append' => false])->render();
+                $this->assertSame(1, substr_count($html, 'data-football-odds-source="Betfair"'));
+                $this->assertSame(1, substr_count($html, '>Odds unavailable</span>'));
+                $markets = array_column(array_merge(...array_column($groups, 'matches')), 'odds_markets', 'sportsApiPro_match_id');
+                $this->assertSame(['Home'], array_column($markets['2'][0]['runners'], 'runner'));
+                $this->assertSame([1.8], array_column($markets['2'][0]['runners'], 'currentBackOdds'));
+            }
             if (in_array($filter, ['fav_losing', 'fav_not_winning', 'prematch_drops', 'market_shock'], true)) {
                 foreach (['filterFootball', 'websocketFootball'] as $method) {
                     $response = app(FootballController::class)->{$method}()->getData(true);
@@ -1261,19 +1272,29 @@ class FixturesAuditTest extends TestCase
             'team2' => 'Liverpool', 'result_status' => 'Prematch', 'start_timestamp' => $start,
             'data_sync_complete' => true, 'tournament' => 'Premier League', 'payload' => '{}',
         ]);
-        foreach ([['wrong', -3.75, 1.4], ['exact', -4.0, 2.15]] as [$id, $handicap, $odds]) {
+        foreach ([
+            ['wrong', -3.75, 1.4, 'Asian Handicap'],
+            ['exact', -4.0, 2.15, 'Asian Handicap'],
+            ['first-half', -4.0, 2.35, 'First Half Asian Handicap'],
+            ['second-half', -4.0, 1.6, 'Second Half Asian Handicap'],
+        ] as [$id, $handicap, $odds, $marketName]) {
             DB::table('football_markets')->insert([
                 'selection_key' => $id, 'football_match_unique_key' => 'fixture', 'market_id' => $id,
                 'market_type' => 'ASIAN_HANDICAP', 'payload' => json_encode([
-                    'marketType' => 'ASIAN_HANDICAP', 'runner' => 'Liverpool', 'handicap' => $handicap, 'currentBackOdds' => $odds,
+                    'marketType' => 'ASIAN_HANDICAP', 'name' => $marketName, 'runner' => 'Liverpool', 'handicap' => $handicap, 'currentBackOdds' => $odds,
                 ]),
             ]);
         }
-        Redis::shouldReceive('get')->with('Pinnacle:drops')->andReturn(json_encode(['alerts' => [[
+        $alert = [
             'id' => 100, 'sport' => 'soccer', 'home' => 'Man Utd', 'away' => 'Liverpool FC', 'starts' => $start,
             'league' => 'Premier League', 'sect' => 'spread', 'outcome' => 'away', 'hdp' => 4,
             'period' => 0, 'from_price' => 2.1, 'to_price' => 1.85,
-        ]]]));
+        ];
+        Redis::shouldReceive('get')->with('Pinnacle:drops')->andReturn(json_encode(['alerts' => [
+            $alert,
+            array_replace($alert, ['period' => 1, 'point' => -4]),
+            array_replace($alert, ['period' => 1, 'hdp' => 3.75]),
+        ]]));
         Http::preventStrayRequests();
         Http::fake(['https://sportsmeld.arbitragex.pro/api/match' => fn ($request) => Http::response([
             'details' => [['name' => $request['names'][0], 'match' => true, 'ambiguous' => false]],
@@ -1283,13 +1304,21 @@ class FixturesAuditTest extends TestCase
             ->assertJsonPath('data.0.home', 'Man Utd')
             ->assertJsonPath('data.0.bf_home', 'Manchester United')
             ->assertJsonPath('data.0.bf_selection', 'Liverpool')
-            ->assertJsonPath('data.0.bf_back', 2.15);
+            ->assertJsonPath('data.0.bf_back', 2.15)
+            ->assertJsonPath('data.1.bf_back', 2.35)
+            ->assertJsonPath('data.2.bf_back', null);
         $this->assertDatabaseHas('pinnacle_betfair_events', ['sport' => 'soccer', 'pinnacle_event_id' => '100', 'betfair_event_id' => '900']);
 
         DB::table('football_markets')->where('market_id', 'exact')->update(['payload' => json_encode([
             'marketType' => 'ASIAN_HANDICAP', 'runner' => 'Liverpool', 'handicap' => -4, 'currentBackOdds' => 2.2,
         ])]);
-        $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonPath('data.0.bf_back', 2.2);
+        DB::table('football_markets')->where('market_id', 'first-half')->update(['payload' => json_encode([
+            'marketType' => 'ASIAN_HANDICAP', 'name' => 'First Half Asian Handicap', 'runner' => 'Liverpool', 'handicap' => -4,
+            'currentBackOdds' => 2.35, 'market_status' => 'SUSPENDED',
+        ])]);
+        $this->getJson(route('football.pinnacle-odds'))->assertOk()
+            ->assertJsonPath('data.0.bf_back', 2.2)
+            ->assertJsonPath('data.1.bf_back', null);
         Http::assertSentCount(2);
     }
 

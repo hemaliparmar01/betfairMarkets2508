@@ -660,6 +660,41 @@ trait FootballTrait
             $market = array_find($liveOdds['markets'] ?? [], static fn (array $market): bool => (int) ($market['market_id'] ?? 0) === 1
                 && in_array(strtolower((string) ($market['period'] ?? 'full-time')), ['full-time', 'full time'], true));
             if ($market === null) {
+                if (empty($match['betfair_match_id']) || in_array($match['market_status'] ?? 'OPEN', ['SUSPENDED', 'CLOSED'], true)) {
+                    return [];
+                }
+
+                $matchOdds = [];
+                foreach ($match['markets'] ?? [] as $marketRunners) {
+                    if (($marketRunners[array_key_first($marketRunners)]['marketType'] ?? null) !== 'MATCH_ODDS') {
+                        continue;
+                    }
+                    if ($matchOdds !== [] || array_any($marketRunners, static fn (array $runner): bool => in_array($runner['market_status'] ?? 'OPEN', ['SUSPENDED', 'CLOSED'], true))) {
+                        return [];
+                    }
+                    $matchOdds = $marketRunners;
+                }
+
+                foreach ($matchOdds as $runner) {
+                    $feed = $runner['liquidity_feed'] ?? null;
+                    $quoteTime = (float) ($runner['odds_history_processed_at'] ?? $runner['liquidity_updated_at'] ?? 0);
+                    if ($feed !== 'live' && ($feed !== null || $quoteTime < (int) ($match['timestamp'] ?? PHP_INT_MAX))) {
+                        continue;
+                    }
+                    $odds = $this->footballOddsRunner(
+                        (string) ($runner['runner'] ?? ''),
+                        $runner['currentBackOdds'] ?? $runner['backOdds'] ?? null,
+                        hasMeaningfulOpeningOdds($runner) ? $runner['initialBackOdds'] : null,
+                    );
+                    if ($odds['runner'] !== '' && $odds['currentBackOdds'] !== null) {
+                        $runners[] = $odds;
+                    }
+                }
+
+                if ($runners !== []) {
+                    return [['source' => 'Betfair', 'label' => 'Live · Match Odds / 1X2', 'runners' => $runners]];
+                }
+
                 return [];
             }
             $choices = array_column($market['choices'] ?? [], null, 'name');

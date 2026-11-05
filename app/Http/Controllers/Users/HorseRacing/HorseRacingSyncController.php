@@ -40,7 +40,7 @@ class HorseRacingSyncController extends Controller
         return getInRedis('HorseRacing:matches') ?? [];
     }
 
-    public function mergeBetfairWebSocketData(array $events, bool $isLive = false, bool $isSnapshot = false): bool
+    public function mergeBetfairWebSocketData(array $events, bool $isLive = false, bool $isSnapshot = false, bool $deferIfBusy = false): ?bool
     {
         return withRedisLock('HorseRacing:matches', function () use ($events, $isSnapshot): bool {
             $matches = getInRedis('HorseRacing:matches') ?? [];
@@ -203,7 +203,7 @@ class HorseRacingSyncController extends Controller
             }
 
             return $changed !== [];
-        }, 5);
+        }, $deferIfBusy ? 0 : 5);
     }
 
     public function syncSportsApiProPrematchData(): array

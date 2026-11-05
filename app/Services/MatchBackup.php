@@ -256,12 +256,13 @@ class MatchBackup
     }
 
     /** One scheduled pass; canonical rows remain available to existing listeners. */
-    public function process(string $sport): int
+    public function process(string $sport, bool $deferIfBusy = false): int
     {
         [$prefix] = self::SPORTS[$sport];
         $cacheKey = $prefix.':matches';
         $model = 'App\\Models\\'.$prefix.'Match';
-        $changed = withRedisLock($cacheKey, function () use ($sport, $prefix, $model, $cacheKey): int {
+        $deferIfBusy = $deferIfBusy || $sport === 'football';
+        $changed = withRedisLock($cacheKey, function () use ($sport, $prefix, $model, $cacheKey, $deferIfBusy): int {
             $process = function () use ($sport, $model, $cacheKey): int {
                 $matches = getInRedis($cacheKey) ?? [];
                 $now = time();
@@ -351,8 +352,8 @@ class MatchBackup
             };
             $lock = Cache::store('redis')->lock($prefix.':database-write-lock', 120);
 
-            return $sport === 'football' ? ($lock->get($process) ?: 0) : $lock->block(10, $process);
-        }, $sport === 'football' ? 0 : 5) ?? 0;
+            return $deferIfBusy ? ($lock->get($process) ?: 0) : $lock->block(10, $process);
+        }, $deferIfBusy ? 0 : 5) ?? 0;
         if ($changed > 0) {
             $event = 'App\\Events\\'.$prefix.'SportsScoreUpdated';
             event(new $event);

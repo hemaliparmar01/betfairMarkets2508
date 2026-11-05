@@ -118,6 +118,7 @@ class FootballV6Stats
                 return;
             }
             $v6Id = $this->resolveFixtureId($match, $fixtures);
+            unset($fixtures, $match);
             if (! is_string($v6Id) || preg_match('/^[a-zA-Z0-9_-]{1,64}$/', $v6Id) !== 1) {
                 $this->saveMapping($matchId, null, 300);
 
@@ -272,7 +273,12 @@ class FootballV6Stats
     private function savePollingStates(array $states, bool $deferIfBusy = false): bool
     {
         return withRedisLock('Football:matches', function () use ($states): bool {
-            $matches = getInRedis('Football:matches') ?? [];
+            $index = getInRedis('Football:matches', fixtureIndex: true);
+            $matches = $index === null ? null : getInRedis('Football:matches', matchIds: array_keys($states), snapshot: $index);
+            if ($matches === null) {
+                $index = null;
+                $matches = getInRedis('Football:matches') ?? [];
+            }
             $changed = false;
             foreach ($matches as &$match) {
                 $state = $states[(string) ($match['sportsApiPro_match_id'] ?? '')] ?? null;
@@ -290,7 +296,7 @@ class FootballV6Stats
             }
             unset($match);
             if ($changed) {
-                storeInRedis('Football:matches', $matches, 30);
+                storeInRedis('Football:matches', $matches, 30, fixtureSnapshot: $index);
             }
 
             return $changed;
