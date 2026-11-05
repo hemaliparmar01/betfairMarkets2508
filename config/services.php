@@ -31,6 +31,10 @@ return [
         'sender' => env('INFOBIP_SENDER', 'BFMarkets'),
     ],
 
+    'sportsmeld' => [
+        'key' => env('SPORTMEID'),
+    ],
+
     'pinnodds' => [
         'key' => env('PINACLE_ODDS_KEY'),
         'url' => 'https://pinnodds.com',

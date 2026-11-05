@@ -16,6 +16,7 @@ use Illuminate\Queue\CallQueuedClosure;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Facades\Schedule;
@@ -1223,6 +1224,7 @@ class FixturesAuditTest extends TestCase
 
     public function test_pinnacle_uses_shared_team_similarity_and_keeps_ambiguous_matches_unmatched(): void
     {
+        config(['services.sportsmeld.key' => null]);
         $this->withoutMiddleware(CustomerAuthService::class);
         $this->app['auth']->guard('customers')->setUser(new Customer(['trial_ends_at' => now()->addDay()]));
         app()->instance(FootballSyncController::class, $this->sync());
@@ -1242,6 +1244,53 @@ class FixturesAuditTest extends TestCase
         $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonPath('data.0.bf_back', null);
         $matches = [array_replace($match, ['timestamp' => $start + 7200])];
         $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonPath('data.0.bf_back', null);
+    }
+
+    public function test_pinnacle_persists_sportsmeld_event_matches_and_reads_the_latest_exact_handicap(): void
+    {
+        config(['services.sportsmeld.key' => 'test-key']);
+        $this->withoutMiddleware(CustomerAuthService::class);
+        $this->app['auth']->guard('customers')->setUser(new Customer(['trial_ends_at' => now()->addDay()]));
+        (require database_path('migrations/2026_10_01_000003_create_football_matches_table.php'))->up();
+        (require database_path('migrations/2026_10_01_000004_create_football_markets_table.php'))->up();
+        (require database_path('migrations/2026_11_05_070607_create_pinnacle_betfair_events_table.php'))->up();
+
+        $start = time() + 3600;
+        DB::table('football_matches')->insert([
+            'unique_key' => 'fixture', 'betfair_match_id' => '900', 'team1' => 'Manchester United',
+            'team2' => 'Liverpool', 'result_status' => 'Prematch', 'start_timestamp' => $start,
+            'data_sync_complete' => true, 'tournament' => 'Premier League', 'payload' => '{}',
+        ]);
+        foreach ([['wrong', -3.75, 1.4], ['exact', -4.0, 2.15]] as [$id, $handicap, $odds]) {
+            DB::table('football_markets')->insert([
+                'selection_key' => $id, 'football_match_unique_key' => 'fixture', 'market_id' => $id,
+                'market_type' => 'ASIAN_HANDICAP', 'payload' => json_encode([
+                    'marketType' => 'ASIAN_HANDICAP', 'runner' => 'Liverpool', 'handicap' => $handicap, 'currentBackOdds' => $odds,
+                ]),
+            ]);
+        }
+        Redis::shouldReceive('get')->with('Pinnacle:drops')->andReturn(json_encode(['alerts' => [[
+            'id' => 100, 'sport' => 'soccer', 'home' => 'Man Utd', 'away' => 'Liverpool FC', 'starts' => $start,
+            'league' => 'Premier League', 'sect' => 'spread', 'outcome' => 'away', 'hdp' => 4,
+            'period' => 0, 'from_price' => 2.1, 'to_price' => 1.85,
+        ]]]));
+        Http::preventStrayRequests();
+        Http::fake(['https://sportsmeld.arbitragex.pro/api/match' => fn ($request) => Http::response([
+            'details' => [['name' => $request['names'][0], 'match' => true, 'ambiguous' => false]],
+        ])]);
+
+        $this->getJson(route('football.pinnacle-odds'))->assertOk()
+            ->assertJsonPath('data.0.home', 'Man Utd')
+            ->assertJsonPath('data.0.bf_home', 'Manchester United')
+            ->assertJsonPath('data.0.bf_selection', 'Liverpool')
+            ->assertJsonPath('data.0.bf_back', 2.15);
+        $this->assertDatabaseHas('pinnacle_betfair_events', ['sport' => 'soccer', 'pinnacle_event_id' => '100', 'betfair_event_id' => '900']);
+
+        DB::table('football_markets')->where('market_id', 'exact')->update(['payload' => json_encode([
+            'marketType' => 'ASIAN_HANDICAP', 'runner' => 'Liverpool', 'handicap' => -4, 'currentBackOdds' => 2.2,
+        ])]);
+        $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonPath('data.0.bf_back', 2.2);
+        Http::assertSentCount(2);
     }
 
     public function test_missing_card_times_trigger_repair_even_with_complete_goals_and_finalized_history(): void
