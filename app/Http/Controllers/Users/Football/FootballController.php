@@ -9,6 +9,7 @@ use App\Traits\FootballTrait;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -28,7 +29,7 @@ class FootballController extends Controller
         return view('users.sports.football.football', compact('data', 'hasMore', 'nextPage'));
     }
 
-    public function marketActivity(): View|JsonResponse
+    public function marketActivity(): View|JsonResponse|Response
     {
         $checkAuthAndSubscription = checkAuthAndSubscription();
         if (! $checkAuthAndSubscription['display_odds']) {
@@ -83,7 +84,7 @@ class FootballController extends Controller
             $pinnacleEvents = array_column($pinnacleAlerts, null, 'id');
             $remainingLookups = 1;
             $legacyFootballMatches = $sportsmeldKey === '' && isset($eventIds['soccer']) ? (getInRedis('Football:matches', readOnly: true) ?? []) : [];
-            $footballIndex = $sportsmeldKey !== '' && isset($eventIds['soccer']) ? getInRedis('Football:matches', fixtureIndex: true) : null;
+            $footballIndex = $sportsmeldKey !== '' && isset($eventIds['soccer']) ? getInRedis('Football:matches', fixtureIndex: true, marketActivityIndex: true) : null;
 
             foreach ($pinnacleAlerts as &$alert) {
                 $alert['bf_back'] = $alert['bf_lay'] = $alert['bf_back_size'] = $alert['bf_lay_size'] = null;
@@ -342,17 +343,50 @@ class FootballController extends Controller
         $marketActivites = $this->getMarketActivites();
         $hasMore = $this->marketActivityHasMore;
         $nextPage = $this->marketActivityNextPage;
-
-        if (request()->expectsJson()) {
-            return response()->json([
-                'data' => $marketActivites,
-                'html' => view('users.sports.football.marketActivity', compact('marketActivites', 'hasMore', 'nextPage'))->fragment('footballMarketRows'),
-                'has_more' => $hasMore,
-                'next_page' => $nextPage,
-            ]);
+        $marketRowsOnly = request()->expectsJson();
+        $compactMarketRows = $marketRowsOnly && request()->boolean('_market_rows');
+        $acceptsGzip = function_exists('gzencode') && AcceptHeader::fromString(request()->header('Accept-Encoding', ''))->get('gzip')?->getQuality() > 0;
+        $marketRowVersions = [];
+        if (! $marketRowsOnly || $compactMarketRows) {
+            $locale = app()->getLocale();
+            foreach ($marketActivites as $event) {
+                $marketRowVersions[$event['id']] = hash('xxh3', serialize([$locale, $event]));
+            }
         }
 
-        return view('users.sports.football.marketActivity', compact('marketActivites', 'hasMore', 'nextPage'));
+        if ($marketRowsOnly) {
+            $marketRowOrder = null;
+            if ($compactMarketRows) {
+                $marketRowOrder = array_column($marketActivites, 'id');
+                $known = request()->query('_market_versions', '');
+                $known = is_string($known) && strlen($known) <= 4096 ? json_decode($known, true) : null;
+                if (count($marketRowVersions) !== count($marketRowOrder)) {
+                    $marketRowOrder = null;
+                } elseif (is_array($known) && count($known) <= 100) {
+                    $marketActivites = array_values(array_filter($marketActivites, static fn (array $event): bool => ($known[$event['id']] ?? null) !== $marketRowVersions[$event['id']]));
+                }
+            }
+            $response = response()->json([
+                'data' => $marketActivites,
+                'html' => view('users.sports.football.marketActivity', compact('marketActivites', 'hasMore', 'nextPage', 'checkAuthAndSubscription', 'marketRowsOnly', 'compactMarketRows', 'marketRowOrder'))->fragment('footballMarketRows'),
+                'has_more' => $hasMore,
+                'next_page' => $nextPage,
+            ] + ($compactMarketRows ? ['order' => $marketRowOrder, 'versions' => (object) $marketRowVersions, 'server_time' => time()] : []));
+            if (! $compactMarketRows) {
+                return $response;
+            }
+            $response->headers->set('Cache-Control', 'private, no-store');
+        } else {
+            $response = response()->view('users.sports.football.marketActivity', compact('marketActivites', 'hasMore', 'nextPage', 'checkAuthAndSubscription', 'marketRowVersions'));
+        }
+
+        $response->setVary('Accept-Encoding', false);
+        if ($acceptsGzip && strlen($response->getContent()) >= 1024) {
+            $response->setContent(gzencode($response->getContent(), 1));
+            $response->headers->set('Content-Encoding', 'gzip');
+        }
+
+        return $response;
     }
 
     public function matchDetail(string $matchId)

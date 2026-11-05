@@ -173,7 +173,7 @@ class MatchBackup
     }
 
     /** Count existing REST reconciliation attempts, never issue another API call. */
-    public function recordRecheck(string $sport, string $matchId, ?bool $reliable): bool
+    public function recordRecheck(string $sport, string $matchId, ?bool $reliable, ?callable $pause = null): bool
     {
         $cacheKey = self::SPORTS[$sport][0].':matches';
 
@@ -204,7 +204,7 @@ class MatchBackup
             unset($match);
 
             return false;
-        });
+        }, pause: $pause);
     }
 
     public function transition(array $match, string $sport, int $now): array
@@ -262,7 +262,7 @@ class MatchBackup
         $cacheKey = $prefix.':matches';
         $model = 'App\\Models\\'.$prefix.'Match';
         $changed = withRedisLock($cacheKey, function () use ($sport, $prefix, $model, $cacheKey): int {
-            return Cache::store('redis')->lock($prefix.':database-write-lock', 120)->block(10, function () use ($sport, $model, $cacheKey): int {
+            $process = function () use ($sport, $model, $cacheKey): int {
                 $matches = getInRedis($cacheKey) ?? [];
                 $now = time();
                 $tombstoneKey = $cacheKey.':cleaned';
@@ -348,8 +348,11 @@ class MatchBackup
                 }
 
                 return $changes;
-            });
-        }, 5);
+            };
+            $lock = Cache::store('redis')->lock($prefix.':database-write-lock', 120);
+
+            return $sport === 'football' ? ($lock->get($process) ?: 0) : $lock->block(10, $process);
+        }, $sport === 'football' ? 0 : 5) ?? 0;
         if ($changed > 0) {
             $event = 'App\\Events\\'.$prefix.'SportsScoreUpdated';
             event(new $event);

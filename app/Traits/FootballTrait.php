@@ -1151,22 +1151,30 @@ trait FootballTrait
 
     public function getMarketActivites()
     {
-        $getData = array_map(static fn (array $match): array => prepareMatchOddsMonitoring($match, true), getVisibleSportsMatches('Football:matches') ?? []);
+        $index = request()->attributes->get('market_activity_legacy') ? null : getInRedis('Football:matches', fixtureIndex: true, marketActivityIndex: true);
+        if (($index['market_activity'] ?? null) !== 1) {
+            $index = null;
+        }
+        $getData = $index['matches'] ?? getInRedis('Football:matches', readOnly: true) ?? [];
         if (request()->filled('match')) {
             $matchId = (string) request()->query('match');
-            $getData = array_filter($getData, static fn (array $match): bool => (string) ($match['sportsApiPro_match_id'] ?? '') === $matchId);
+            if (isset($index['ids'][$matchId])) {
+                $key = $index['ids'][$matchId];
+                $getData = [$key => $getData[$key]];
+            } else {
+                $getData = array_filter($getData, static fn (array $match): bool => (string) ($match['sportsApiPro_match_id'] ?? '') === $matchId);
+            }
         }
-        $mainArray = [];
         $now = time();
         $type = request()->input('type', 'all');
 
         switch ($type) {
             case 'live':
-                $getData = array_values(array_filter($getData, static fn (array $match): bool => ($match['result_status'] ?? null) === 'Live'));
+                $getData = array_filter($getData, static fn (array $match): bool => ($match['result_status'] ?? null) === 'Live');
                 break;
 
             case 'upcoming':
-                $getData = array_values(array_filter($getData, static fn (array $match): bool => ($match['result_status'] ?? null) === 'Prematch'));
+                $getData = array_filter($getData, static fn (array $match): bool => ($match['result_status'] ?? null) === 'Prematch');
                 break;
 
             case 'favorites':
@@ -1175,14 +1183,14 @@ trait FootballTrait
                     Favorite::query()->where('sport', 'football')->where('customer_id', $customerId)->pluck('event_key')->all(),
                     true
                 );
-                $getData = array_values(array_filter(
+                $getData = array_filter(
                     $getData,
                     static fn (array $match): bool => isset($favoriteKeys[$match['unique_key'] ?? ''])
-                ));
+                );
                 break;
 
             case 'ht00':
-                $getData = array_values(array_filter($getData, static function (array $match): bool {
+                $getData = array_filter($getData, static function (array $match): bool {
                     $minuteStatus = strtolower(trim((string) ($match['minutes_status'] ?? '')));
 
                     return ($match['result_status'] ?? null) === 'Live'
@@ -1190,11 +1198,11 @@ trait FootballTrait
                             && isset($match['home_score'], $match['away_score'])
                         && (int) ($match['home_score'] ?? 0) === 0
                         && (int) ($match['away_score'] ?? 0) === 0;
-                }));
+                });
                 break;
 
             case '00_70':
-                $getData = array_values(array_filter($getData, function (array $match): bool {
+                $getData = array_filter($getData, function (array $match): bool {
                     if (
                         ($match['result_status'] ?? null) !== 'Live'
                         || ! isset($match['home_score'], $match['away_score'])
@@ -1213,12 +1221,12 @@ trait FootballTrait
                     );
 
                     return is_numeric($minute) ? (int) $minute >= 70 : str_starts_with((string) $minute, '90+');
-                }));
+                });
                 break;
 
             case 'fav_losing':
             case 'fav_not_winning':
-                $getData = array_values(array_filter($getData, function (array $match) use ($type): bool {
+                $getData = array_filter($getData, function (array $match) use ($type): bool {
                     $favoriteOdds = (float) ($match['bet365_prematch']['favorite_odds'] ?? 0);
                     $maximumOdds = $type === 'fav_losing' ? 2.10 : 1.87;
 
@@ -1270,84 +1278,124 @@ trait FootballTrait
                     }
 
                     return false;
-                }));
+                });
                 break;
 
-            case 'prematch_drops':
-                $getData = array_values(array_filter($getData, static function (array $match): bool {
-                    if (($match['result_status'] ?? null) !== 'Prematch') {
-                        return false;
-                    }
-
-                    if (($match['pinnacle_drop_triggered'] ?? false) === true) {
-                        return true;
-                    }
-
-                    foreach (($match['markets'] ?? []) as $marketRunners) {
-                        foreach (($marketRunners ?? []) as $runner) {
-                            if (($runner['prematch_drop_triggered'] ?? false) === true) {
-                                return true;
-                            }
-                        }
-                    }
-
-                    return false;
-                }));
-                break;
-
-            case 'market_shock':
-                $shockCutoff = $now - 1200;
-                $getData = array_values(array_filter($getData, static function (array $match) use ($shockCutoff): bool {
-                    if (($match['result_status'] ?? null) !== 'Prematch') {
-                        return false;
-                    }
-
-                    if ((int) ($match['pinnacle_market_shock_detected_at'] ?? 0) >= $shockCutoff) {
-                        return true;
-                    }
-
-                    foreach (($match['markets'] ?? []) as $marketRunners) {
-                        foreach (($marketRunners ?? []) as $runner) {
-                            if ((int) ($runner['market_shock_detected_at'] ?? 0) >= $shockCutoff) {
-                                return true;
-                            }
-                        }
-                    }
-
-                    return false;
-                }));
-                break;
         }
 
-        foreach ($getData as $data) {
-            // if (($data['data_sync_complete'] ?? false) !== true) {
-            //     continue;
-            // }
-
-            if (($data['result_status'] ?? null) === 'Finished') {
+        $marketNames = [
+            'MATCH_ODDS' => 'match_odds',
+            'OVER_UNDER_05' => 'ou_0_5',
+            'OVER_UNDER_15' => 'ou_1_5',
+            'OVER_UNDER_25' => 'ou_2_5',
+            'OVER_UNDER_35' => 'ou_3_5',
+            'OVER_UNDER_45' => 'ou_4_5',
+            'BOTH_TEAMS_TO_SCORE' => 'btts',
+            'CORRECT_SCORE' => 'correct_score',
+            'HALF_TIME' => 'first_half',
+            'FIRST_HALF_GOALS_05' => 'fh_ou_0_5',
+            'FIRST_HALF_GOALS_15' => 'fh_ou_1_5',
+        ];
+        $marketFilter = request()->input('market_name', 'active');
+        $candidates = [];
+        $rowCount = 0;
+        foreach ($getData as $key => $match) {
+            $status = $match['result_status'] ?? null;
+            if ($status === 'Finished' || MatchBackup::isHidden($match, 'football', $now)) {
+                continue;
+            }
+            if (in_array($type, ['prematch_drops', 'market_shock'], true) && $status !== 'Prematch') {
                 continue;
             }
 
-            $isLive = ($data['result_status'] ?? null) === 'Live';
-            $secondsUntilStart = max(0, (int) ($data['timestamp'] ?? $now) - $now);
-            $minutesUntilStart = (int) ceil($secondsUntilStart / 60);
-            $statusPriority = $isLive ? 0 : ($minutesUntilStart <= 5 ? 1 : ($minutesUntilStart <= 10 ? 2 : 3));
-            $eventTotalLiquidity = 0.0;
-
-            foreach (($data['markets'] ?? []) as $eventMarkets) {
-                if (! is_array($eventMarkets)) {
-                    continue;
-                }
-
-                foreach ($eventMarkets as $eventMarket) {
-                    if (is_array($eventMarket)) {
-                        $eventTotalLiquidity += (float) ($eventMarket['backSize'] ?? 0)
-                            + (float) ($eventMarket['laySize'] ?? 0);
-                    }
+            [$marketTypes, $liquidity, $drop, $shockAt] = $match['_market_activity'] ?? prepareMatchOddsMonitoring($match, marketActivitySummary: true);
+            if (($type === 'prematch_drops' && ! $drop) || ($type === 'market_shock' && $shockAt < $now - 1200)) {
+                continue;
+            }
+            $markets = [];
+            foreach ($marketTypes as $marketKey => $marketType) {
+                $name = $marketNames[$marketType ?? ''] ?? strtolower((string) ($marketType ?? $marketKey));
+                if ($marketFilter === 'active' || $marketFilter === $name) {
+                    $markets[$marketKey] = $name;
                 }
             }
+            if ($markets === []) {
+                continue;
+            }
 
-            foreach (($data['markets'] ?? []) as $marketKey => $markets) {
+            $minutes = (int) ceil(max(0, (int) ($match['timestamp'] ?? $now) - $now) / 60);
+            $statusPriority = $status === 'Live' ? 0 : ($minutes <= 5 ? 1 : ($minutes <= 10 ? 2 : 3));
+            $priority = $match['_fixture_priority'] ?? $this->footballLeaguePriority((string) ($match['tournament'] ?? ''), $match['tournament_country'] ?? null);
+            $candidates[$key] = [$priority, $statusPriority, (float) $liquidity, $minutes, $markets];
+            $rowCount += count($markets);
+        }
+        uasort($candidates, static fn (array $first, array $second): int => ($first[0] <=> $second[0])
+            ?: ($first[1] <=> $second[1]) ?: ($second[2] <=> $first[2]));
+
+        $page = max(1, (int) request()->input('page', 1));
+        $perPage = min(100, max(1, (int) request()->input('per_page', 20)));
+        $offset = ($page - 1) * $perPage;
+        $this->marketActivityHasMore = $rowCount > ($offset + $perPage);
+        $this->marketActivityNextPage = $this->marketActivityHasMore ? $page + 1 : null;
+
+        $selected = [];
+        $remaining = $perPage;
+        foreach ($candidates as $key => [$priority, $statusPriority, $liquidity, $minutes, $markets]) {
+            $count = count($markets);
+            if ($offset >= $count) {
+                $offset -= $count;
+
+                continue;
+            }
+            $selected[$key] = [$statusPriority, $liquidity, $minutes, array_slice($markets, (int) $offset, $remaining, true)];
+            $remaining -= count($selected[$key][3]);
+            $offset = 0;
+            if ($remaining === 0) {
+                break;
+            }
+        }
+        if ($selected === []) {
+            return [];
+        }
+
+        if ($index !== null) {
+            $getData = getInRedis('Football:matches', readOnly: true, snapshot: $index, matchKeys: array_keys($selected));
+            if ($getData === null || count($getData) !== count($selected)) {
+                $attempt = (int) request()->attributes->get('market_activity_index_retry', 0);
+                request()->attributes->set('market_activity_index_retry', $attempt + 1);
+                if ($attempt >= 1) {
+                    request()->attributes->set('market_activity_legacy', true);
+                }
+                unset($index, $getData, $candidates, $selected);
+
+                return $this->getMarketActivites();
+            }
+        }
+        unset($index, $candidates);
+
+        $mainArray = [];
+        foreach ($selected as $key => [$statusPriority, $eventTotalLiquidity, $minutesUntilStart, $selectedMarkets]) {
+            $data = $getData[$key];
+            $data['markets'] = array_intersect_key($data['markets'], $selectedMarkets);
+            $data = prepareMatchOddsMonitoring($data, true);
+            $isLive = ($data['result_status'] ?? null) === 'Live';
+            $score = $this->getScore($data);
+            $displayMinutes = $isLive
+                ? $this->calculateMinutes(
+                    $data['minutes_status'] ?? $data['result_status'],
+                    (int) $data['timestamp'],
+                    $data['result_status'],
+                    $data['added_time'] ?? [],
+                    $data['current_period_start_timestamp'] ?? null
+                )
+                : null;
+            $displayTime = $isLive
+                ? (preg_match('/^\d+(?:\+\d*)?$/', (string) $displayMinutes) === 1 ? $displayMinutes."'" : $displayMinutes)
+                : ($minutesUntilStart >= 60
+                    ? 'in '.intdiv($minutesUntilStart, 60).'h'.($minutesUntilStart % 60 > 0 ? ' '.($minutesUntilStart % 60).'m' : '')
+                    : 'in '.$minutesUntilStart.' min');
+
+            foreach ($data['markets'] as $marketKey => $markets) {
                 if (! is_array($markets)) {
                     continue;
                 }
@@ -1418,34 +1466,7 @@ trait FootballTrait
                     : ($absoluteOddsChange >= 3 ? 'medium' : 'low');
                 $pressureDelta = $indicator['delta'] ?? null;
                 $delta = $pressureDelta === null ? '—' : ($pressureDelta > 0 ? '+' : '').number_format($pressureDelta, 1).' pp';
-                $displayMinutes = $isLive
-                    ? $this->calculateMinutes(
-                        $data['minutes_status'] ?? $data['result_status'],
-                        (int) $data['timestamp'],
-                        $data['result_status'],
-                        $data['added_time'] ?? [],
-                        $data['current_period_start_timestamp'] ?? null
-                    )
-                    : null;
-                $displayTime = $isLive
-                    ? (preg_match('/^\d+(?:\+\d*)?$/', (string) $displayMinutes) === 1 ? $displayMinutes."'" : $displayMinutes)
-                    : ($minutesUntilStart >= 60
-                        ? 'in '.intdiv($minutesUntilStart, 60).'h'.($minutesUntilStart % 60 > 0 ? ' '.($minutesUntilStart % 60).'m' : '')
-                        : 'in '.$minutesUntilStart.' min');
-                $uiMarket = match ($marketType) {
-                    'MATCH_ODDS' => 'match_odds',
-                    'OVER_UNDER_05' => 'ou_0_5',
-                    'OVER_UNDER_15' => 'ou_1_5',
-                    'OVER_UNDER_25' => 'ou_2_5',
-                    'OVER_UNDER_35' => 'ou_3_5',
-                    'OVER_UNDER_45' => 'ou_4_5',
-                    'BOTH_TEAMS_TO_SCORE' => 'btts',
-                    'CORRECT_SCORE' => 'correct_score',
-                    'HALF_TIME' => 'first_half',
-                    'FIRST_HALF_GOALS_05' => 'fh_ou_0_5',
-                    'FIRST_HALF_GOALS_15' => 'fh_ou_1_5',
-                    default => strtolower((string) ($marketType ?? $marketKey)),
-                };
+                $uiMarket = $selectedMarkets[$marketKey];
 
                 $mainArray[] = [
                     'id' => (int) sprintf('%u', crc32(($data['unique_key'] ?? '').'_'.($marketId ?? $marketKey))),
@@ -1458,10 +1479,10 @@ trait FootballTrait
                     'comp' => $data['tournament'] ?? '',
                     'competition_country' => $data['tournament_country'] ?? null,
                     'match' => ($data['team1'] ?? '').' vs '.($data['team2'] ?? ''),
-                    'score' => $this->getScore($data),
+                    'score' => $score,
                     'market' => $uiMarket,
                     'marketName' => $marketName ?? $marketType ?? $marketKey,
-                    'marketDisplayScore' => $uiMarket === 'correct_score' ? $this->getScore($data) : null,
+                    'marketDisplayScore' => $uiMarket === 'correct_score' ? $score : null,
                     'runners' => $runners,
                     'favIdx' => $favoriteIndex,
                     'favorite' => $favoriteIndex !== null ? $runners[$favoriteIndex] : null,
@@ -1487,35 +1508,6 @@ trait FootballTrait
             }
         }
 
-        usort($mainArray, function (array $first, array $second): int {
-            $leagueComparison = $this->footballLeaguePriority((string) ($first['comp'] ?? ''), $first['competition_country'] ?? null)
-                <=> $this->footballLeaguePriority((string) ($second['comp'] ?? ''), $second['competition_country'] ?? null);
-            if ($leagueComparison !== 0) {
-                return $leagueComparison;
-            }
-            $statusComparison = $first['statusPriority'] <=> $second['statusPriority'];
-
-            if ($statusComparison !== 0) {
-                return $statusComparison;
-            }
-
-            return $second['totalLiquidity'] <=> $first['totalLiquidity'];
-        });
-
-        $marketName = request()->input('market_name', 'active');
-        if ($marketName !== 'active') {
-            $mainArray = array_values(array_filter(
-                $mainArray,
-                static fn (array $market): bool => ($market['market'] ?? null) === $marketName
-            ));
-        }
-
-        $page = max(1, (int) request()->input('page', 1));
-        $perPage = min(100, max(1, (int) request()->input('per_page', 20)));
-        $offset = ($page - 1) * $perPage;
-        $this->marketActivityHasMore = count($mainArray) > ($offset + $perPage);
-        $this->marketActivityNextPage = $this->marketActivityHasMore ? $page + 1 : null;
-
-        return array_slice($mainArray, $offset, $perPage);
+        return $mainArray;
     }
 }

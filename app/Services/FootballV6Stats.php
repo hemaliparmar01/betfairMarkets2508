@@ -3,6 +3,8 @@
 namespace App\Services;
 
 use App\Http\Controllers\Users\Football\FootballSyncController;
+use Illuminate\Contracts\Cache\LockTimeoutException;
+use Illuminate\Queue\CallQueuedClosure;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -15,7 +17,15 @@ class FootballV6Stats
         $queued = [];
         $fixtures = null;
         $deferred = [];
-        foreach (getInRedis('Football:matches') ?? [] as $match) {
+        $index = getInRedis('Football:matches', fixtureIndex: true, marketActivityIndex: true);
+        $matches = null;
+        if (($index['statistics_schedule'] ?? null) === 1) {
+            $deadline = time() + 59;
+            $candidates = array_filter($index['matches'], static fn (array $match): bool => ($match['result_status'] ?? '') === 'Live'
+                && ($match['_v6_next_poll_at'] ?? 0) <= $deadline && ! MatchBackup::isHidden($match, 'football'));
+            $matches = $candidates === [] ? [] : getInRedis('Football:matches', snapshot: $index, matchKeys: array_keys($candidates));
+        }
+        foreach ($matches ?? getInRedis('Football:matches') ?? [] as $match) {
             $matchId = (string) ($match['sportsApiPro_match_id'] ?? '');
             $delay = max(abs(crc32($matchId)) % 50, (int) ($match['v6_stats']['next_poll_at'] ?? 0) - time());
             if (! ctype_digit($matchId) || (int) $matchId <= 0 || isset($queued[$matchId]) || ! $this->isLive($match)
@@ -24,6 +34,9 @@ class FootballV6Stats
             }
             $queued[$matchId] = true;
             $fixtures ??= $this->fixtures();
+            if ($fixtures === null) {
+                return;
+            }
             $v6Id = $this->resolveFixtureId($match, $fixtures);
             if ($v6Id === null) {
                 $deferred[$matchId] = ['v6_id' => null, 'retry_after' => 300];
@@ -43,14 +56,20 @@ class FootballV6Stats
             }
             $owner = $lock->owner();
             try {
-                dispatch(static function () use ($matchId, $key, $owner): void {
+                dispatch(static function (CallQueuedClosure $job) use ($matchId, $key, $owner): void {
                     $lock = Cache::store('redis')->restoreLock($key, $owner);
+                    $retrying = false;
                     try {
                         if ($lock->isOwnedByCurrentProcess()) {
                             app(self::class)->pollMatch($matchId);
                         }
+                    } catch (LockTimeoutException) {
+                        $job->release(2);
+                        $retrying = true;
                     } finally {
-                        $lock->release();
+                        if (! $retrying) {
+                            $lock->release();
+                        }
                     }
                 })->name('Football V6 live statistics '.$matchId)->onConnection('sports-realtime')->onQueue('sports-statistics')->delay($delay)
                     ->catch(static function (Throwable $e) use ($key, $owner): void {
@@ -63,7 +82,7 @@ class FootballV6Stats
             }
         }
         if ($deferred !== []) {
-            $this->savePollingStates($deferred);
+            $this->savePollingStates($deferred, deferIfBusy: true);
         }
     }
 
@@ -94,7 +113,11 @@ class FootballV6Stats
         $diagnostics = null;
         $v6Id = null;
         try {
-            $v6Id = $this->resolveFixtureId($match, $this->fixtures());
+            $fixtures = $this->fixtures();
+            if ($fixtures === null) {
+                return;
+            }
+            $v6Id = $this->resolveFixtureId($match, $fixtures);
             if (! is_string($v6Id) || preg_match('/^[a-zA-Z0-9_-]{1,64}$/', $v6Id) !== 1) {
                 $this->saveMapping($matchId, null, 300);
 
@@ -107,6 +130,9 @@ class FootballV6Stats
                 return;
             }
             $version = $this->dictionaryVersion();
+            if ($version === false) {
+                return;
+            }
             if (! Cache::store('redis')->add('Football:v6:stats:'.$matchId.':request', true, 60)) {
                 return;
             }
@@ -130,6 +156,8 @@ class FootballV6Stats
                 return;
             }
             app(FootballSyncController::class)->mergeV6TeamStats($matchId, $v6Id, $payload, $requestedAt, $version);
+        } catch (LockTimeoutException $e) {
+            throw $e;
         } catch (Throwable $e) {
             $this->saveMapping($matchId, $v6Id, 300);
             Log::warning('Football V6 live statistics failed; cached statistics retained', ['match_id' => $matchId, 'api' => $diagnostics, 'exception' => $e::class, 'message' => $e->getMessage()]);
@@ -181,34 +209,45 @@ class FootballV6Stats
         return count($candidates) === 1 ? (string) array_key_first($candidates) : null;
     }
 
-    /** @return list<array<string, mixed>> */
-    private function fixtures(): array
+    /** @return list<array<string, mixed>>|null */
+    private function fixtures(): ?array
     {
-        $fixtures = Cache::store('redis')->lock('Football:v6:catalogue-lock', 20)->block(2, static function (): array {
-            $cached = Cache::store('redis')->get('Football:v6:catalogue');
-            if (is_array($cached)) {
-                return $cached;
-            }
-            $response = ApiCall('https://api.sportsapipro.com/v6/football/live', ['x-api-key' => GetSportApiProKey()], [
-                'connect_timeout' => 3, 'timeout' => 10, 'low_priority' => true,
-            ], $diagnostics);
-            $payload = is_array($response) ? ($response['data'] ?? $response) : [];
-            $fixtures = ($response['success'] ?? true) !== false && ($diagnostics['http_status'] ?? 200) === 200 && is_array($payload['matches'] ?? null) ? $payload['matches'] : [];
-            Cache::store('redis')->put('Football:v6:catalogue', $fixtures, 60);
-            if ($fixtures === [] && ($diagnostics['skipped'] ?? '') !== 'quota_reserve') {
-                Log::warning('Football V6 live catalogue unavailable', ['api' => $diagnostics]);
-            }
+        $fixtures = Cache::store('redis')->get('Football:v6:catalogue');
+        if (! is_array($fixtures)) {
+            $fixtures = Cache::store('redis')->lock('Football:v6:catalogue-lock', 20)->get(static function (): array {
+                $cached = Cache::store('redis')->get('Football:v6:catalogue');
+                if (is_array($cached)) {
+                    return $cached;
+                }
+                $response = ApiCall('https://api.sportsapipro.com/v6/football/live', ['x-api-key' => GetSportApiProKey()], [
+                    'connect_timeout' => 3, 'timeout' => 10, 'low_priority' => true,
+                ], $diagnostics);
+                $payload = is_array($response) ? ($response['data'] ?? $response) : [];
+                $fixtures = ($response['success'] ?? true) !== false && ($diagnostics['http_status'] ?? 200) === 200 && is_array($payload['matches'] ?? null) ? $payload['matches'] : [];
+                Cache::store('redis')->put('Football:v6:catalogue', $fixtures, 60);
+                if ($fixtures === [] && ($diagnostics['skipped'] ?? '') !== 'quota_reserve') {
+                    Log::warning('Football V6 live catalogue unavailable', ['api' => $diagnostics]);
+                }
 
-            return $fixtures;
-        });
+                return $fixtures;
+            });
+            if (! is_array($fixtures)) {
+                return null;
+            }
+        }
 
         return array_values(array_filter($fixtures, static fn (array $fixture): bool => (! isset($fixture['matchStatus']) || (int) $fixture['matchStatus'] === 2)
             && (! isset($fixture['statusId']) || in_array((int) $fixture['statusId'], [2, 3, 4], true))));
     }
 
-    private function dictionaryVersion(): ?string
+    private function dictionaryVersion(): string|false|null
     {
-        return Cache::store('redis')->lock('Football:v6:dictionary-lock', 10)->block(2, static function (): ?string {
+        $cached = Cache::store('redis')->get('Football:v6:dictionary', []);
+        if (($cached['check_after'] ?? 0) > time()) {
+            return $cached['version'] ?? null;
+        }
+
+        return Cache::store('redis')->lock('Football:v6:dictionary-lock', 10)->get(static function (): ?string {
             $cached = Cache::store('redis')->get('Football:v6:dictionary', []);
             if (($cached['check_after'] ?? 0) > time()) {
                 return $cached['version'] ?? null;
@@ -230,7 +269,7 @@ class FootballV6Stats
     }
 
     /** @param array<int|string, array{v6_id: ?string, retry_after: int, clear_mapping?: bool}> $states */
-    private function savePollingStates(array $states): bool
+    private function savePollingStates(array $states, bool $deferIfBusy = false): bool
     {
         return withRedisLock('Football:matches', function () use ($states): bool {
             $matches = getInRedis('Football:matches') ?? [];
@@ -255,7 +294,7 @@ class FootballV6Stats
             }
 
             return $changed;
-        });
+        }, $deferIfBusy ? 0 : 5) ?? false;
     }
 
     private function normalizeTeam(string $name): string

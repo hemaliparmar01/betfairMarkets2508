@@ -11,6 +11,7 @@ use App\Events\CricketSportsScoreUpdated;
 use App\Events\FootballSportsScoreUpdated;
 use App\Http\Controllers\Users\Cricket\CricketSyncController;
 use App\Http\Controllers\Users\Football\FootballController;
+use App\Http\Controllers\Users\Football\FootballSyncController;
 use App\Models\BasketballMatch;
 use App\Models\Favorite;
 use App\Services\CustomerAuthService;
@@ -40,6 +41,7 @@ use Mockery;
 use PHPUnit\Framework\Attributes\DataProvider;
 use ReflectionClass;
 use ReflectionMethod;
+use Revolt\EventLoop;
 use Symfony\Component\Process\Exception\ProcessSignaledException;
 use Symfony\Component\Process\ExecutableFinder;
 use Symfony\Component\Process\Process;
@@ -569,7 +571,7 @@ class SportsPipelineTest extends TestCase
         $cricket->shouldReceive('mergeBetfairWebSocketData')->once()->with(['cricket' => $pending['live']['cricket']], true)->andReturn(true);
         $this->app->instance(CricketSyncController::class, $cricket);
         $lock = Mockery::mock(Lock::class);
-        $lock->shouldReceive('block')->twice()->andThrow(new LockTimeoutException);
+        $lock->shouldReceive('get')->twice()->andReturn(false);
         $store = Mockery::mock();
         $store->shouldReceive('lock')->with('Football:matches:write-lock', 30)->twice()->andReturn($lock);
         Cache::shouldReceive('store')->with('redis')->twice()->andReturn($store);
@@ -591,12 +593,42 @@ class SportsPipelineTest extends TestCase
         for ($offset = -920; $offset <= 0; $offset += 10) {
             $runner = updateOddsMonitoring(['marketId' => '456', 'marketType' => 'MATCH_ODDS', 'runnerId' => '11', 'runner' => 'Porto', 'name' => 'Match Odds', 'backOdds' => 1.88, 'layOdds' => 1.90, 'backSize' => $offset <= -60 ? 60 : 26, 'laySize' => $offset <= -60 ? 40 : 74], $runner, $now + $offset);
         }
-        storeInRedis('Football:matches', ['pressure-preview' => ['unique_key' => 'pressure-preview', 'sportsApiPro_match_id' => 123, 'betfair_match_id' => '456', 'team1' => 'Porto', 'team2' => 'Napoli', 'tournament' => 'Test League', 'timestamp' => time() + 3600, 'result_status' => 'Prematch', 'minutes_status' => 'Prematch', 'data_sync_complete' => true, 'markets' => ['456_MATCH_ODDS' => [$runner]]]], 10, false);
+        $matches = ['pressure-preview' => ['unique_key' => 'pressure-preview', 'sportsApiPro_match_id' => 123, 'betfair_match_id' => '456', 'team1' => 'Porto', 'team2' => 'Napoli', 'tournament' => 'Test League', 'timestamp' => time() + 3600, 'result_status' => 'Prematch', 'minutes_status' => 'Prematch', 'data_sync_complete' => true, 'markets' => ['456_MATCH_ODDS' => [$runner]]]];
+        storeInRedis('Football:matches', $matches, 10, false);
+        $endpoint = '/football/market-activity';
+        $legacy = $this->getJson($endpoint)->assertOk()->json('data');
+        $this->assertCount(1, $legacy);
 
-        $response = $this->get('/football/market-activity');
+        config(['services.football_fixture_index' => true]);
+        storeInRedis('Football:matches', $matches, 10, false, replace: true);
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        $this->getJson($endpoint.'?match=123')->assertOk()->assertJsonPath('data', $legacy);
+        $queries = DB::getQueryLog();
+        DB::disableQueryLog();
+        $this->assertFalse(array_any($queries, static fn (array $query): bool => str_contains($query['query'], 'football_timeline')));
+
+        $response = $this->get($endpoint);
 
         $response->assertSee('Porto vs Napoli')->assertSee('+34.0 pp')->assertSee('Back ↑')->assertSee('Change in Back interest over 5 minutes, in percentage points');
         $response->assertSee('"backPercent":74', false)->assertSee('"layPercent":26', false);
+        $id = $legacy[0]['id'];
+        $compactUrl = $endpoint.'?_market_rows=1';
+        $compact = $this->getJson($compactUrl)->assertOk()->assertJsonPath('data', $legacy)->assertJsonPath('order', [$id]);
+        $this->assertStringNotContainsString('data-market-events', $compact->json('html'));
+        $versions = '&_market_versions='.rawurlencode(json_encode($compact->json('versions')));
+        $delta = $this->getJson($compactUrl.$versions)->assertOk()->assertJsonPath('data', [])->assertJsonPath('order', [$id]);
+        $this->assertStringNotContainsString('<tr', $delta->json('html'));
+        $this->getJson($compactUrl.'&page=2')->assertOk()->assertJsonPath('data', [])->assertJsonPath('order', []);
+
+        $compressed = $this->getJson($compactUrl, ['Accept-Encoding' => 'gzip'])->assertOk()->assertHeader('Content-Encoding', 'gzip');
+        $this->assertSame($legacy, json_decode(gzdecode($compressed->getContent()), true)['data']);
+        $compressedPage = $this->get($endpoint, ['Accept-Encoding' => 'gzip'])->assertOk()->assertHeader('Content-Encoding', 'gzip');
+        $this->assertStringContainsString('Porto vs Napoli', gzdecode($compressedPage->getContent()));
+
+        $matches['pressure-preview']['markets']['456_MATCH_ODDS'][0]['currentBackOdds'] = 1.85;
+        storeInRedis('Football:matches', $matches, 10, false, replace: true);
+        $this->getJson($compactUrl.$versions)->assertOk()->assertJsonPath('order', [$id])->assertJsonPath('data.0.back', 1.85);
         if ($directory = getenv('BFMARKETS_MARKET_PREVIEW_DIR')) {
             $this->assertStringStartsWith('/private/tmp/bfmarkets-market-preview-', $directory);
             file_put_contents($directory.'/index.html', $response->getContent());
@@ -1194,6 +1226,14 @@ class SportsPipelineTest extends TestCase
         $after = getInRedis('Football:matches', fixtureIndex: true);
         $this->assertSame($key, $after['ids']['123']);
         $this->assertSame(Redis::ttl('Football:matches'), Redis::ttl('Football:matches:fixtures'));
+        $selected[$key]['statistics_requests'] = array_fill_keys($sync::PREMATCH_STATISTICS_SECTIONS, ['at' => microtime(true), 'available' => true]);
+        storeInRedis('Football:matches', $selected, 2, false, replace: true);
+        $sync->queueMatchStatistics();
+        $this->assertCount(0, Bus::dispatched(CallQueuedClosure::class)->where('queue', 'sports-prematch-statistics'));
+        $selected[$key]['statistics_requests']['h2h'] = ['at' => microtime(true) - 121, 'available' => false];
+        storeInRedis('Football:matches', $selected, 2, false, replace: true);
+        $sync->queueMatchStatistics();
+        $this->assertCount(1, Bus::dispatched(CallQueuedClosure::class)->where('queue', 'sports-prematch-statistics'));
         Http::assertNothingSent();
     }
 
@@ -1350,6 +1390,49 @@ class SportsPipelineTest extends TestCase
             $report[$mode] = ['median_ms' => $times[2], 'runs_ms' => $times, 'peak_increment_bytes' => max($peaks)];
         }
         $this->assertLessThan($report['legacy']['peak_increment_bytes'], $report['indexed']['peak_increment_bytes']);
+        config(['services.football_fixture_index' => true]);
+        $customer = CustomerFactory::new()->create(['admin_free_days' => -1, 'active_session_id' => str_repeat('b', 40), 'timezone' => 'UTC']);
+        $this->actingAs($customer, 'customers')->withCookie(config('session.cookie'), $customer->active_session_id)->withCredentials();
+        foreach (['initial' => '', 'page_2' => '?page=2', 'market_filter' => '?market_name=market-1'] as $scenario => $query) {
+            $times = [];
+            $peak = 0;
+            for ($run = 0; $run <= 10; $run++) {
+                gc_collect_cycles();
+                gc_mem_caches();
+                memory_reset_peak_usage();
+                $memory = memory_get_usage();
+                $started = hrtime(true);
+                $response = $scenario === 'initial'
+                    ? $this->get('/football/market-activity')
+                    : $this->getJson('/football/market-activity'.$query);
+                $elapsed = round((hrtime(true) - $started) / 1e6, 3);
+                if ($run > 0) {
+                    $times[] = $elapsed;
+                    $peak = max($peak, memory_get_peak_usage() - $memory);
+                }
+                $response->assertOk();
+                if ($scenario !== 'initial') {
+                    $response->assertJsonCount(20, 'data');
+                }
+            }
+            sort($times);
+            $report['market_activity'][$scenario] = [
+                'p50_ms' => $times[4], 'p95_ms' => $times[9],
+                'peak_increment_bytes' => $peak, 'response_bytes' => strlen($response->getContent()),
+            ];
+            $headers = ['Accept-Encoding' => 'gzip'];
+            $compressed = $scenario === 'initial'
+                ? $this->get('/football/market-activity', $headers)
+                : $this->getJson('/football/market-activity'.$query.'&_market_rows=1', $headers);
+            $compressed->assertOk()->assertHeader('Content-Encoding', 'gzip');
+            $report['market_activity'][$scenario]['gzip_bytes'] = strlen($compressed->getContent());
+            if ($scenario !== 'initial') {
+                $decoded = json_decode(gzdecode($compressed->getContent()), true);
+                $this->assertSame($response->json('data'), $decoded['data']);
+                $this->assertSame($response->json('has_more'), $decoded['has_more']);
+                $this->assertSame($response->json('next_page'), $decoded['next_page']);
+            }
+        }
         $path = getenv('BFMARKETS_FIXTURE_BENCHMARK_REPORT');
         if (is_string($path) && str_starts_with($path, '/private/tmp/')) {
             file_put_contents($path, json_encode($report, JSON_PRETTY_PRINT));
@@ -1386,6 +1469,17 @@ class SportsPipelineTest extends TestCase
         $sync->storeTimeline($match, frameType: 'read', storedTimeline: $database);
         Bus::assertDispatchedTimes(CallQueuedClosure::class, 1);
         $manager = DB::getFacadeRoot();
+        $job = $jobs->first()->withFakeQueueInteractions();
+        DB::shouldReceive('transaction')->once()->andThrow(new LockTimeoutException);
+        try {
+            $job->handle($this->app);
+        } finally {
+            DB::swap($manager);
+        }
+        $job->assertReleased(2);
+        $this->assertFalse(Cache::store('redis')->lock('Football:timeline-backfill:123:pending', 3600)->get());
+        $this->assertSame($encoded, Redis::get('Football:matches'));
+
         $failure = new \RuntimeException('Disposable database temporarily unavailable');
         DB::shouldReceive('transaction')->once()->andThrow($failure);
         try {
@@ -1430,6 +1524,10 @@ class SportsPipelineTest extends TestCase
         $lock = Cache::store('redis')->lock('Football:matches:write-lock', 30);
         $this->assertTrue($lock->get());
         try {
+            $this->assertSame(0, app(MatchBackup::class)->process('football'));
+            $this->assertFalse($this->sync('Football')->mergePinnacleDrops([
+                ['sport' => 'soccer', 'is_live' => false, 'alerted' => time()],
+            ], deferIfBusy: true));
             $this->postJson('/football/filter-football', ['prediction' => ['match_id' => '123', 'poll' => '1x2', 'value' => '1']])
                 ->assertJsonPath('prediction.value', '1')->assertJsonPath('prediction.counts.1', 1)->assertJsonMissingPath('html');
             $this->postJson('/football/filter-football', ['prediction' => ['match_id' => '123', 'poll' => '1x2', 'value' => '2']])
@@ -1598,6 +1696,20 @@ PYTHON;
         $job->handle($this->app);
         queueSportsSynchronization($controller::class, 'syncSportsApiProLiveData');
         Bus::assertDispatchedTimes(CallQueuedClosure::class, 2);
+
+        $football = Mockery::mock(FootballSyncController::class);
+        $football->shouldReceive('syncSportsApiProLiveData')->once()->andThrow(new LockTimeoutException);
+        $football->shouldReceive('syncSportsApiProLiveData')->once()->andReturn([]);
+        $this->app->instance(FootballSyncController::class, $football);
+        queueSportsSynchronization(FootballSyncController::class, 'syncSportsApiProLiveData');
+        $footballJob = Bus::dispatched(CallQueuedClosure::class)->last()->withFakeQueueInteractions();
+        $footballJob->handle($this->app);
+        $footballJob->assertReleased(2);
+        queueSportsSynchronization(FootballSyncController::class, 'syncSportsApiProLiveData');
+        Bus::assertDispatchedTimes(CallQueuedClosure::class, 3);
+        $footballJob->handle($this->app);
+        queueSportsSynchronization(FootballSyncController::class, 'syncSportsApiProLiveData');
+        Bus::assertDispatchedTimes(CallQueuedClosure::class, 4);
     }
 
     public function test_pending_timeline_history_is_not_duplicated_while_waiting_for_a_worker(): void
@@ -1680,7 +1792,17 @@ PYTHON;
                 $frame['data'] += ['status.code' => 6, 'status.type' => 'inprogress'];
             }
 
-            (new ReflectionMethod($listener, 'processSportsFrame'))->invokeArgs($listener, ['football', $config, $frame, $socket, &$subscriptions]);
+            $writer = Cache::store('redis')->lock('Football:matches:write-lock', 30);
+            $this->assertTrue($writer->get());
+            $timer = EventLoop::delay(0.05, static function () use ($writer): void {
+                $writer->release();
+            });
+            try {
+                (new ReflectionMethod($listener, 'processSportsFrame'))->invokeArgs($listener, ['football', $config, $frame, $socket, &$subscriptions, new TimeoutCancellation(2)]);
+            } finally {
+                EventLoop::cancel($timer);
+                $writer->release();
+            }
 
             $updated = getInRedis('Football:matches')['known'];
             $this->assertSame(1, $updated['home_score']);
@@ -1703,17 +1825,15 @@ PYTHON;
             $this->assertCount($index + 1, Bus::dispatched(CallQueuedClosure::class)->filter(static fn (CallQueuedClosure $job): bool => $job->queue === 'sports-timeline'));
             $this->assertCount(1, getInRedis('Football:matches')['known']['timeline']['home_goals']);
             $manager = Redis::getFacadeRoot();
-            $failure = new LockTimeoutException('Isolated recovery failure before outbound HTTP');
-            Redis::shouldReceive('eval')->once()->andThrow($failure);
+            $job = $jobs->last()->withFakeQueueInteractions();
+            Redis::shouldReceive('eval')->once()->andThrow(new LockTimeoutException('Isolated recovery failure before outbound HTTP'));
             try {
-                $jobs->last()->handle($this->app);
-                $this->fail('History failure must remain retryable.');
-            } catch (LockTimeoutException $exception) {
-                $this->assertSame($failure, $exception);
+                $job->handle($this->app);
             } finally {
                 Redis::swap($manager);
             }
-            $this->assertFalse(Cache::store('redis')->has('Football:timeline-backfill:'.$id.':pending'));
+            $job->assertReleased(2);
+            $this->assertFalse(Cache::store('redis')->lock('Football:timeline-backfill:'.$id.':pending', 3600)->get());
             $this->assertCount(1, getInRedis('Football:matches')['known']['timeline']['home_goals']);
 
             $incidents = ['type' => 'snapshot', 'channel' => 'match:'.$id.':incidents', 'data' => ['incidents' => [['id' => 'goal-'.$id, 'incidentType' => 'goal', 'time' => 25, 'isHome' => true, 'homeScore' => 1, 'awayScore' => 0]]]];

@@ -3,6 +3,8 @@
 use App\Http\Controllers\Users\Football\FootballController;
 use App\Http\Controllers\Users\Football\FootballSyncController;
 use App\Services\MatchBackup;
+use Illuminate\Contracts\Cache\LockTimeoutException;
+use Illuminate\Queue\CallQueuedClosure;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
@@ -252,8 +254,38 @@ if (! function_exists('prepareMatchOddsMonitoring')) {
      * @param  array<string, mixed>  $match
      * @return array<string, mixed>
      */
-    function prepareMatchOddsMonitoring(array $match, bool $withMarketPressure = false): array
+    function prepareMatchOddsMonitoring(array $match, bool $withMarketPressure = false, bool $marketActivitySummary = false): array
     {
+        if ($marketActivitySummary) {
+            $marketTypes = [];
+            $liquidity = 0.0;
+            $drop = ($match['pinnacle_drop_triggered'] ?? false) === true;
+            $shockAt = (int) ($match['pinnacle_market_shock_detected_at'] ?? 0);
+            $prematch = ($match['result_status'] ?? null) === 'Prematch';
+            foreach ($match['markets'] ?? [] as $key => $runners) {
+                if (! is_array($runners)) {
+                    continue;
+                }
+                foreach ($runners as $runner) {
+                    if (! is_array($runner)) {
+                        continue;
+                    }
+                    $marketTypes[$key] ??= $runner['marketType'] ?? null;
+                    $liquidity += (float) ($runner['backSize'] ?? 0) + (float) ($runner['laySize'] ?? 0);
+                    if ($prematch) {
+                        $detectedAt = (int) ($runner['market_shock_detected_at'] ?? 0);
+                        $triggered = ($runner['prematch_drop_triggered'] ?? false) === true;
+                        if (($detectedAt > $shockAt || ($triggered && ! $drop)) && hasMeaningfulOpeningOdds($runner)) {
+                            $shockAt = max($shockAt, $detectedAt);
+                            $drop = $drop || $triggered;
+                        }
+                    }
+                }
+            }
+
+            return [$marketTypes, $liquidity, $drop, $shockAt];
+        }
+
         $now = microtime(true);
         $feedHealth = [];
         foreach ($match['markets'] ?? [] as $key => $runners) {
@@ -692,11 +724,20 @@ if (! function_exists('queueSportsSynchronization')) {
         }
         $owner = $pending->owner();
         try {
-            dispatch(static function () use ($controller, $method, $key, $owner): void {
+            dispatch(static function (CallQueuedClosure $job) use ($controller, $method, $key, $owner): void {
+                $retrying = false;
                 try {
                     app($controller)->{$method}();
+                } catch (LockTimeoutException $exception) {
+                    if ($controller !== FootballSyncController::class) {
+                        throw $exception;
+                    }
+                    $job->release(2);
+                    $retrying = true;
                 } finally {
-                    Cache::store('redis')->restoreLock($key, $owner)->release();
+                    if (! $retrying) {
+                        Cache::store('redis')->restoreLock($key, $owner)->release();
+                    }
                 }
             })->name($controller.'::'.$method)->onConnection('sports-realtime')
                 ->onQueue(str_contains($method, 'Live') ? 'sports-sync-live' : 'sports-sync-prematch')
@@ -747,9 +788,10 @@ if (! function_exists('getSportsApiProImage')) {
             }
             $owner = $pendingLock->owner();
             [$apiSport, $prefix] = $sports[$sport];
-            dispatch(static function () use ($sport, $type, $entityId, $directory, $lockName, $missingKey, $owner, $apiSport, $prefix): void {
+            dispatch(static function (CallQueuedClosure $job) use ($sport, $type, $entityId, $directory, $lockName, $missingKey, $owner, $apiSport, $prefix): void {
                 $lock = Cache::store('redis')->restoreLock($lockName, $owner);
                 $apiDiagnostics = null;
+                $retrying = false;
                 try {
                     if (! $lock->isOwnedByCurrentProcess()) {
                         return;
@@ -794,7 +836,13 @@ if (! function_exists('getSportsApiProImage')) {
                         }
 
                         return $updated;
-                    }, 2);
+                    }, $sport === 'football' ? 0 : 2);
+                    if ($updated === null) {
+                        $job->release(2);
+                        $retrying = true;
+
+                        return;
+                    }
                     if ($updated) {
                         $eventClass = 'App\\Events\\'.$prefix.'SportsScoreUpdated';
                         Event::dispatch(new $eventClass);
@@ -803,7 +851,9 @@ if (! function_exists('getSportsApiProImage')) {
                     Cache::store('redis')->put($missingKey, true, 300);
                     Log::warning('SportsAPI Pro background image failed', ['sport' => $sport, 'type' => $type, 'entity_id' => $entityId, 'api' => $apiDiagnostics, 'exception' => $e::class, 'message' => $e->getMessage()]);
                 } finally {
-                    $lock->release();
+                    if (! $retrying) {
+                        $lock->release();
+                    }
                 }
             })->onQueue('sports-images')->catch(static function (Throwable $e) use ($lockName, $owner, $missingKey): void {
                 Cache::store('redis')->restoreLock($lockName, $owner)->release();
@@ -924,7 +974,7 @@ if (! function_exists('storeInRedis')) {
             unset($existingData, $data, $previous, $cleaned, $savedTimelines, $matchIds, $saved);
         }
         if ($cacheKey === 'Football:matches' && config('services.football_fixture_index')) {
-            $index = ['format' => 3, 'matches' => [], 'positions' => [], 'ids' => [], 'orders' => []];
+            $index = ['format' => 3, 'market_activity' => 1, 'statistics_schedule' => 1, 'matches' => [], 'positions' => [], 'ids' => [], 'orders' => []];
             $fields = array_flip(['unique_key', 'sportsApiPro_match_id', 'betfair_match_id', 'timestamp', 'result_status', 'minutes_status', 'current_period_start_timestamp', 'added_time', 'tournament', 'tournament_country', 'tournament_id', 'tournament_logo', 'country_id', 'internal_backup', 'provider_lifecycle', 'pinnacle_drop_triggered', 'pinnacle_market_shock_detected_at']);
             $visibleFields = array_flip(['unique_key', 'team1', 'team2', 'home_team_id', 'away_team_id', 'home_team_logo', 'away_team_logo', 'betfair_match_id', 'sportsApiPro_match_id', 'timestamp', 'result_status', 'minutes_status', 'current_period_start_timestamp', 'added_time', 'home_score', 'away_score', 'timeline', 'live_stats', 'live_stats_meta', 'statistics_periods', 'prematch_statistics', 'statistics_requests', 'predictions']);
             $controller = app(FootballController::class);
@@ -941,7 +991,8 @@ if (! function_exists('storeInRedis')) {
                 $index['positions'][$matchKey] = [strlen($serialized), strlen($json)];
                 $serialized .= $json;
                 $rowVersion = hash('xxh3', $json);
-                if (($previousIndex['matches'][$matchKey]['_fixture_source_version']['odds'] ?? null) === $rowVersion) {
+                $reused = ($previousIndex['matches'][$matchKey]['_fixture_source_version']['odds'] ?? null) === $rowVersion;
+                if ($reused) {
                     $entry = $previousIndex['matches'][$matchKey];
                 } else {
                     $entry = array_intersect_key($match, $fields);
@@ -952,16 +1003,23 @@ if (! function_exists('storeInRedis')) {
                     $entry['away_score'] = $match['away_score'] ?? null;
                     $entry['bet365_prematch'] = array_intersect_key($match['bet365_prematch'] ?? [], array_flip(['favorite_side', 'favorite_odds']));
                     $entry['markets'] = [];
+                    $entry['_market_activity'] = prepareMatchOddsMonitoring($match, marketActivitySummary: true);
                     if (($match['result_status'] ?? '') === 'Prematch') {
-                        $entry['pinnacle_drop_triggered'] = ($controller->footballFilterPredicate('prematch_drops'))($match);
-                        $entry['pinnacle_market_shock_detected_at'] = (int) ($match['pinnacle_market_shock_detected_at'] ?? 0);
-                        foreach ($match['markets'] ?? [] as $runners) {
-                            foreach ($runners as $runner) {
-                                if ((int) ($runner['market_shock_detected_at'] ?? 0) > $entry['pinnacle_market_shock_detected_at'] && hasMeaningfulOpeningOdds($runner)) {
-                                    $entry['pinnacle_market_shock_detected_at'] = (int) $runner['market_shock_detected_at'];
-                                }
-                            }
+                        [, , $entry['pinnacle_drop_triggered'], $entry['pinnacle_market_shock_detected_at']] = $entry['_market_activity'];
+                    }
+                }
+                $entry['_market_activity'] ??= prepareMatchOddsMonitoring($match, marketActivitySummary: true);
+                if (! $reused || ($previousIndex['statistics_schedule'] ?? null) !== 1) {
+                    if (! empty($match['statistics_requests'])) {
+                        $nextDue = PHP_FLOAT_MAX;
+                        foreach (FootballSyncController::PREMATCH_STATISTICS_SECTIONS as $section) {
+                            $attempt = $match['statistics_requests'][$section] ?? [];
+                            $nextDue = min($nextDue, ($attempt['at'] ?? 0) + (($attempt['available'] ?? false) ? 1800 : 120));
                         }
+                        $entry['_statistics_due_at'] = $nextDue;
+                    }
+                    if (! empty($match['v6_stats']['next_poll_at'])) {
+                        $entry['_v6_next_poll_at'] = (int) $match['v6_stats']['next_poll_at'];
                     }
                 }
                 $index['matches'][$matchKey] = $entry;
@@ -975,7 +1033,8 @@ if (! function_exists('storeInRedis')) {
             $serialized .= $isList ? ']' : '}';
             $index['length'] = strlen($serialized);
             $index['content_version'] = hash('xxh3', $serialized);
-            if (($previousIndex['content_version'] ?? null) === $index['content_version']) {
+            if (($previousIndex['market_activity'] ?? null) === $index['market_activity'] && ($previousIndex['statistics_schedule'] ?? null) === $index['statistics_schedule']
+                && ($previousIndex['content_version'] ?? null) === $index['content_version']) {
                 $extended = Redis::eval('if redis.call("GETRANGE", KEYS[1], -66, -1) == ARGV[1] then redis.call("EXPIRE", KEYS[1], ARGV[2]); redis.call("EXPIRE", KEYS[2], ARGV[2]); return 1 end; return 0', 2, $cacheKey, $cacheKey.':fixtures', $previousIndex['marker'], $ttlMinutes * 60);
                 if ($extended) {
                     return;
@@ -999,9 +1058,11 @@ if (! function_exists('storeInRedis')) {
                 }
             }
             // JSON whitespace binds the byte index to its payload without changing decoded data.
-            $index['marker'] = "\n".strtr(str_pad(decbin(hexdec(substr(hash('sha256', json_encode($index, JSON_THROW_ON_ERROR)), 0, 15))), 64, '0', STR_PAD_LEFT), '01', " \t")."\n";
-            $serialized .= $index['marker'];
-            Redis::eval('redis.call("SET", KEYS[1], ARGV[1], "EX", ARGV[3]); if ARGV[2] ~= "" then redis.call("SET", KEYS[2], ARGV[2], "EX", ARGV[3]) else redis.call("DEL", KEYS[2]) end; return 1', 2, $cacheKey, $cacheKey.':fixtures', $serialized, $canonical ? json_encode($index, JSON_THROW_ON_ERROR) : '', $ttlMinutes * 60);
+            $metadata = json_encode($index, JSON_THROW_ON_ERROR);
+            $marker = "\n".strtr(str_pad(decbin(hexdec(substr(hash('sha256', $metadata), 0, 15))), 64, '0', STR_PAD_LEFT), '01', " \t")."\n";
+            $serialized .= $marker;
+            $metadata = $canonical ? substr_replace($metadata, ',"marker":'.json_encode($marker, JSON_THROW_ON_ERROR).'}', -1) : '';
+            Redis::eval('redis.call("SET", KEYS[1], ARGV[1], "EX", ARGV[3]); if ARGV[2] ~= "" then redis.call("SET", KEYS[2], ARGV[2], "EX", ARGV[3]) else redis.call("DEL", KEYS[2]) end; return 1', 2, $cacheKey, $cacheKey.':fixtures', $serialized, $metadata, $ttlMinutes * 60);
         } else {
             if ($replace) {
                 Redis::setex($cacheKey, $ttlMinutes * 60, json_encode($mergedData));
@@ -1019,24 +1080,39 @@ if (! function_exists('getInRedis')) {
      *
      * @param  array<int, int|string>|null  $matchIds
      * @param  array<string, mixed>|null  $snapshot
+     * @param  array<int, int|string>|null  $matchKeys
      */
-    function getInRedis(string $cacheKey, bool $restoreVisibleFootballTimelines = false, bool $readOnly = false, ?array $matchIds = null, bool $fixtureIndex = false, ?array $snapshot = null): mixed
+    function getInRedis(string $cacheKey, bool $restoreVisibleFootballTimelines = false, bool $readOnly = false, ?array $matchIds = null, bool $fixtureIndex = false, ?array $snapshot = null, ?array $matchKeys = null, bool $marketActivityIndex = false): mixed
     {
-        if ($cacheKey === 'Football:matches' && ($fixtureIndex || $matchIds !== null)) {
+        if ($cacheKey === 'Football:matches' && ($fixtureIndex || $matchIds !== null || $matchKeys !== null)) {
             $index = $snapshot;
+            $encoded = null;
             if ($index === null && config('services.football_fixture_index')) {
-                $index = json_decode(Redis::get($cacheKey.':fixtures') ?? '[]', true);
+                $encoded = Redis::get($cacheKey.':fixtures');
+                $index = json_decode($encoded ?? '[]', true);
             }
-            $metadata = is_array($index) ? $index : [];
-            unset($metadata['marker']);
-            $marker = "\n".strtr(str_pad(decbin(hexdec(substr(hash('sha256', json_encode($metadata)), 0, 15))), 64, '0', STR_PAD_LEFT), '01', " \t")."\n";
             $valid = is_array($index) && ($index['format'] ?? null) === 3
-                && is_array($index['matches'] ?? null) && is_array($index['orders'] ?? null)
-                && ($index['priority_version'] ?? null) === hash('xxh3', serialize((new ReflectionClass(FootballController::class))->getConstant('LEAGUE_PRIORITY')))
-                && is_string($index['marker'] ?? null) && strlen($index['marker']) === 66
-                && $index['marker'] === $marker
-                && Redis::getrange($cacheKey, -66, -1) === $index['marker'];
-            if ($valid) {
+                && is_string($index['marker'] ?? null) && strlen($index['marker']) === 66;
+            // Callers pass a previously validated index. Redis verifies its marker again when reading the byte ranges.
+            $validatedSnapshot = $snapshot !== null && ! $fixtureIndex;
+            if ($valid && ! $validatedSnapshot) {
+                $markerOffset = is_string($encoded) ? strrpos($encoded, ',"marker":') : false;
+                if ($markerOffset === false) {
+                    $metadata = $index;
+                    unset($metadata['marker']);
+                    $encoded = json_encode($metadata);
+                } else {
+                    // The writer appends the marker as the last property after hashing the original JSON.
+                    $encoded = substr($encoded, 0, $markerOffset).'}';
+                }
+                $marker = "\n".strtr(str_pad(decbin(hexdec(substr(hash('sha256', $encoded), 0, 15))), 64, '0', STR_PAD_LEFT), '01', " \t")."\n";
+                unset($encoded, $metadata);
+                $valid = is_array($index['matches'] ?? null) && is_array($index['orders'] ?? null)
+                    && ($index['priority_version'] ?? null) === hash('xxh3', serialize((new ReflectionClass(FootballController::class))->getConstant('LEAGUE_PRIORITY')))
+                    && $index['marker'] === $marker
+                    && Redis::getrange($cacheKey, -66, -1) === $index['marker'];
+            }
+            if ($valid && ! $marketActivityIndex && ! $validatedSnapshot) {
                 foreach (['competition', 'default', 'time'] as $mode) {
                     $order = $index['orders'][$mode] ?? [];
                     if (! is_array($order) || count($order) !== count($index['matches']) || array_diff_key($index['matches'], array_flip($order)) !== []) {
@@ -1048,14 +1124,14 @@ if (! function_exists('getInRedis')) {
             if ($fixtureIndex) {
                 return $valid ? $index : null;
             }
-            if (array_any($matchIds, static fn (mixed $id): bool => ! is_scalar($id) || ! ctype_digit((string) $id) || (int) $id <= 0)) {
+            if ($matchIds !== null && array_any($matchIds, static fn (mixed $id): bool => ! is_scalar($id) || ! ctype_digit((string) $id) || (int) $id <= 0)) {
                 $valid = false;
             }
             if ($valid) {
                 $arguments = [$index['marker'], (int) $index['length'] + 66];
                 $keys = [];
-                foreach ($matchIds as $id) {
-                    $key = $index['ids'][(string) $id] ?? null;
+                foreach ($matchKeys ?? $matchIds as $id) {
+                    $key = $matchKeys !== null ? $id : ($index['ids'][(string) $id] ?? null);
                     if ($key !== null && ! isset($keys[$key])) {
                         [$offset, $length] = $index['positions'][$key] ?? [-1, 0];
                         if (! is_int($offset) || ! is_int($length) || $offset < 0 || $length < 2 || $offset + $length > $index['length']) {
@@ -1070,9 +1146,10 @@ if (! function_exists('getInRedis')) {
                 $rows = $valid ? Redis::eval('if redis.call("GETRANGE", KEYS[1], -66, -1) ~= ARGV[1] or redis.call("STRLEN", KEYS[1]) ~= tonumber(ARGV[2]) then return false end; local rows = {}; for i = 3, #ARGV, 2 do rows[#rows + 1] = redis.call("GETRANGE", KEYS[1], tonumber(ARGV[i]), tonumber(ARGV[i + 1])) end; return rows', 1, $cacheKey, ...$arguments) : false;
                 if (is_array($rows) && count($rows) === count($keys)) {
                     $matches = [];
-                    foreach (array_keys($keys) as $position => $key) {
-                        $row = json_decode($rows[$position], true);
-                        if (! is_array($row) || ! isset($index['ids'][(string) ($row['sportsApiPro_match_id'] ?? '')])) {
+                    $position = 0;
+                    foreach ($keys as $key => $unused) {
+                        $row = json_decode($rows[$position++], true);
+                        if (! is_array($row) || ($matchKeys === null && ! isset($index['ids'][(string) ($row['sportsApiPro_match_id'] ?? '')]))) {
                             $valid = false;
                             break;
                         }
@@ -1168,11 +1245,25 @@ if (! function_exists('getVisibleSportsMatches')) {
 }
 
 if (! function_exists('withRedisLock')) {
-    function withRedisLock(string $cacheKey, callable $callback, int $waitSeconds = 5): mixed
+    function withRedisLock(string $cacheKey, callable $callback, int $waitSeconds = 5, ?callable $pause = null): mixed
     {
-        return Cache::store('redis')
-            ->lock("{$cacheKey}:write-lock", 30)
-            ->block($waitSeconds, $callback);
+        $lock = Cache::store('redis')->lock("{$cacheKey}:write-lock", 30);
+        if ($waitSeconds !== 0 && $pause === null) {
+            return $lock->block($waitSeconds, $callback);
+        }
+
+        while (! $lock->get()) {
+            if ($pause === null) {
+                return null;
+            }
+            $pause();
+        }
+
+        try {
+            return $callback();
+        } finally {
+            $lock->release();
+        }
     }
 }
 

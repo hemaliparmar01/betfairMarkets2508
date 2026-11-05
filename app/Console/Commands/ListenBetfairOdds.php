@@ -23,7 +23,6 @@ use App\Http\Controllers\Users\IceHockey\IceHockeySyncController;
 use App\Http\Controllers\Users\Tennis\TennisSyncController;
 use App\Models\FootballMarket;
 use Illuminate\Console\Command;
-use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
@@ -533,17 +532,14 @@ class ListenBetfairOdds extends Command
                     }
                 }
                 $pendingChanges[$feed] = array_intersect_key($pendingChanges[$feed], $footballEvents);
-                $feedUpdated = $footballEvents !== [] && withRedisLock(
+                $feedUpdated = $footballEvents === [] ? false : withRedisLock(
                     'Football:matches',
-                    fn (): bool => $this->updateFootballCache($footballEvents, $isLive)
+                    fn (): bool => $this->updateFootballCache($footballEvents, $isLive),
+                    0
                 );
-            } catch (LockTimeoutException $e) {
-                Log::warning('Betfair Odds cache write lock timed out; pending odds will be retried without reconnecting.', [
-                    'feed' => $feed,
-                    'pending_events' => count($pendingChanges[$feed]),
-                ]);
-
-                continue;
+                if ($feedUpdated === null) {
+                    continue;
+                }
             } finally {
                 unset($events, $footballEvents, $cricketEvents, $iceHockeyEvents, $americanFootballEvents, $baseballEvents, $basketballEvents, $tennisEvents, $event, $runner, $updates);
             }

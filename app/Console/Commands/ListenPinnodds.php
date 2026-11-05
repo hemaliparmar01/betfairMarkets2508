@@ -57,8 +57,9 @@ class ListenPinnodds extends Command
                 return;
             }
             try {
-                app(FootballSyncController::class)->mergePinnacleDrops(array_values($pending));
-                $pending = [];
+                if (app(FootballSyncController::class)->mergePinnacleDrops(array_values($pending), deferIfBusy: true)) {
+                    $pending = [];
+                }
             } catch (Throwable $e) {
                 Log::warning('Pinnacle Football filter update deferred; pending signals retained', ['exception' => $e::class]);
             }

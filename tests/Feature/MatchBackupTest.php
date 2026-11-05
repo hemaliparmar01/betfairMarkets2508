@@ -36,6 +36,8 @@ class MatchBackupTest extends TestCase
         Event::fake();
         $lock = Mockery::mock();
         $lock->shouldReceive('block')->andReturnUsing(static fn (int $wait, callable $callback): mixed => $callback());
+        $lock->shouldReceive('get')->andReturnUsing(static fn (?callable $callback = null): mixed => $callback === null ? true : $callback());
+        $lock->shouldReceive('release')->andReturnTrue();
         Cache::shouldReceive('store')->with('redis')->andReturnSelf();
         Cache::shouldReceive('lock')->andReturn($lock);
         Redis::shouldReceive('get')->andReturnUsing(fn (string $key): ?string => $this->redis[$key] ?? null);
