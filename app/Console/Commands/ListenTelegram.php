@@ -28,7 +28,8 @@ class ListenTelegram extends Command
 
                 return self::FAILURE;
             }
-            $process = new Process(array_filter([config('services.telegram.python'), base_path('telegram-listener.py'), $this->option('login') ? '--login' : null]), base_path(), [
+            $listener = base_path(PHP_OS_FAMILY === 'Linux' ? 'server/telegram-listener.py' : 'local/telegram-listener.py');
+            $process = new Process(array_filter([config('services.telegram.python'), $listener, $this->option('login') ? '--login' : null]), base_path(), [
                 'TELEGRAM_API_ID' => (string) config('services.telegram.api_id'), 'TELEGRAM_API_HASH' => config('services.telegram.api_hash'),
                 'TELEGRAM_SOURCE_CHANNEL' => config('services.telegram.source_channel'), 'TELEGRAM_SESSION_FILE' => config('services.telegram.session_file'),
                 'TELEGRAM_SOURCE_SECRET' => config('services.telegram.source_secret'), 'BF_SOURCE_URL' => rtrim(config('app.url'), '/').'/notifications/telegram/source',

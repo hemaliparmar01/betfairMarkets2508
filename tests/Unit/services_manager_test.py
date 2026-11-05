@@ -65,6 +65,23 @@ class ServiceManagerTest(unittest.TestCase):
         self.assertIn('Local services are for macOS only', result.stderr)
         self.assertNotIn('missing-python', result.stderr)
 
+    def test_server_shell_resolves_project_and_config_paths_from_any_directory(self):
+        server = SOURCE.parent.parent / 'server'
+        interpreter = self.root / 'capture-python'
+        interpreter.write_text('#!/bin/sh\nprintf "%s\\n" "$SERVICES_ENV" "$SERVICES_ROOT" "$SERVICES_CONFIG" "$SERVICES_CONTAINER" "$SERVICES_CONTAINER_ROOT" "$@"\n')
+        interpreter.chmod(0o755)
+        uname = self.root / 'uname'
+        uname.write_text('#!/bin/sh\nprintf "Linux\\n"\n')
+        uname.chmod(0o755)
+        environment = {'PATH': str(self.root) + ':/usr/bin:/bin', 'SERVICES_PYTHON': str(interpreter)}
+
+        result = subprocess.run([str(server / 'services.sh'), 'status', 'betfair'], cwd=self.root, env=environment, capture_output=True, text=True, check=True)
+
+        self.assertEqual([
+            'production', str(server.parent), str(server / 'services-manager.json'), 'aapanel',
+            '/www/wwwroot/staging777.bfmarketsanalytics.com', str(server / 'services-manager.py'), 'status', 'betfair',
+        ], result.stdout.splitlines())
+
     def test_existing_telegram_entry_point_forwards_to_local_listener_without_changing_arguments(self):
         entry = SOURCE.parent.parent / 'telegram-listener.py'
 
