@@ -969,7 +969,7 @@ class FixturesAuditTest extends TestCase
         $this->assertContains('g2', array_column($match['timeline']['home_goals'], 'id'));
     }
 
-    public function test_delayed_goals_use_only_the_incident_minute_and_restore_exactly_from_database(): void
+    public function test_delayed_goals_replace_the_observed_minute_and_restore_exactly_from_database(): void
     {
         (require database_path('migrations/2026_10_26_110659_create_football_timeline_table.php'))->up();
         (require database_path('migrations/2026_10_26_124628_add_timeline_to_football_timeline_table.php'))->up();
@@ -990,7 +990,9 @@ class FixturesAuditTest extends TestCase
 
         $this->assertCount(1, $match['timeline']['home_goals']);
         $this->assertSame('score', $match['timeline']['home_goals'][0]['source']);
-        $this->assertFalse($match['timeline']['home_goals'][0]['time_known']);
+        $this->assertTrue($match['timeline']['home_goals'][0]['time_known']);
+        $this->assertTrue($match['timeline']['home_goals'][0]['time_estimated']);
+        $this->assertSame(30, $match['timeline']['home_goals'][0]['minute']);
         $this->assertSame([], $match['timeline']['away_goals']);
         $this->assertTrue($this->timeline($match)['goals_pending']);
         $saved = json_decode(DB::table('football_timeline')->value('timeline'), true);
@@ -998,15 +1000,16 @@ class FixturesAuditTest extends TestCase
         unset($match['timeline']);
         $sync->storeTimeline($match, frameType: 'restore');
         $this->assertSame($saved, $match['timeline']);
-        $this->assertNull($this->timeline($match)['events'][0]['left']);
-        $this->assertSame('', $this->timeline($match)['events'][0]['minute_label']);
+        $this->assertSame(30 / 90 * 100, $this->timeline($match)['events'][0]['left']);
+        $this->assertSame("~30'", $this->timeline($match)['events'][0]['minute_label']);
 
         $legacyTimeline = $saved;
         $legacyTimeline['home_goals'] = [['id' => 'score-home-goal-1', 'minute' => 30, 'added_time' => 0, 'seconds' => 1800, 'time_known' => true, 'time_estimated' => true, 'source' => 'score', 'home_score' => 1, 'away_score' => 0]];
         DB::table('football_timeline')->where('match_id', '123')->update(['timeline' => json_encode($legacyTimeline)]);
         unset($match['timeline']);
         $sync->storeTimeline($match, frameType: 'restore');
-        $this->assertSame([], $match['timeline']['home_goals']);
+        $this->assertSame([30], array_column($match['timeline']['home_goals'], 'minute'));
+        $this->assertTrue($match['timeline']['home_goals'][0]['time_estimated']);
         $sync->storeTimeline($match, frameType: 'persist');
         $this->assertSame($match['timeline'], json_decode(DB::table('football_timeline')->where('match_id', '123')->value('timeline'), true));
 
@@ -1038,16 +1041,17 @@ class FixturesAuditTest extends TestCase
         $this->assertTrue($this->timeline($laterGoalFirst)['goals_pending']);
         $untimed = array_replace($match, ['sportsApiPro_match_id' => '125', 'home_score' => 1, 'away_score' => 0, 'timeline' => []]);
         $sync->storeTimeline($untimed, 'match:125:incidents', ['incidents' => [array_replace($goal, ['time' => null])]], 'snapshot');
-        $this->assertFalse($untimed['timeline']['home_goals'][0]['time_known']);
-        $this->assertSame('', $this->timeline($untimed)['events'][0]['minute_label']);
-        $this->assertNull($this->timeline($untimed)['events'][0]['left']);
+        $this->assertTrue($untimed['timeline']['home_goals'][0]['time_known']);
+        $this->assertTrue($untimed['timeline']['home_goals'][0]['time_estimated']);
+        $this->assertSame("~40'", $this->timeline($untimed)['events'][0]['minute_label']);
+        $this->assertSame(40 / 90 * 100, $this->timeline($untimed)['events'][0]['left']);
         $legacyTimeline = $untimed['timeline'];
         $legacyTimeline['home_goals'][0] = array_replace($legacyTimeline['home_goals'][0], ['minute' => 30, 'seconds' => 1800, 'time_known' => true, 'time_estimated' => true]);
         DB::table('football_timeline')->where('match_id', '125')->update(['timeline' => json_encode($legacyTimeline)]);
         unset($untimed['timeline']);
         $sync->storeTimeline($untimed, frameType: 'restore');
-        $this->assertFalse($untimed['timeline']['home_goals'][0]['time_known']);
-        $this->assertSame(0, $untimed['timeline']['home_goals'][0]['minute']);
+        $this->assertTrue($untimed['timeline']['home_goals'][0]['time_known']);
+        $this->assertSame(30, $untimed['timeline']['home_goals'][0]['minute']);
         $sync->storeTimeline($untimed, 'match:125:incidents', ['incidents' => [$goal]]);
         $this->assertSame(25, $untimed['timeline']['home_goals'][0]['minute']);
         $this->assertFalse($untimed['timeline']['home_goals'][0]['time_estimated']);
@@ -1058,11 +1062,12 @@ class FixturesAuditTest extends TestCase
         $this->assertFalse($lateClock['timeline']['home_goals'][0]['time_known']);
         $lateClock['current_period_start_timestamp'] = time() - 1200;
         $sync->storeTimeline($lateClock);
-        $this->assertSame([0], array_column($lateClock['timeline']['home_goals'], 'minute'));
+        $this->assertSame([20], array_column($lateClock['timeline']['home_goals'], 'minute'));
         $countsOnly = array_replace($lateClock, ['sportsApiPro_match_id' => '127', 'home_score' => 2, 'timeline' => ['reported_counts' => ['home_goals' => 2]]]);
         $sync->storeTimeline($countsOnly);
         $this->assertCount(2, $countsOnly['timeline']['home_goals']);
-        $this->assertSame([false, false], array_column($countsOnly['timeline']['home_goals'], 'time_known'));
+        $this->assertSame([true, true], array_column($countsOnly['timeline']['home_goals'], 'time_known'));
+        $this->assertSame([20, 20], array_column($countsOnly['timeline']['home_goals'], 'minute'));
     }
 
     public function test_goal_markers_preserve_provider_team_and_render_before_score_updates(): void

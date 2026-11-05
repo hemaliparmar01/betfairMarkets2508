@@ -1034,8 +1034,9 @@ class SportsPipelineTest extends TestCase
         $scored = getInRedis('Football:matches')['known'];
         $this->assertCount(2, $scored['timeline']['home_goals']);
         $this->assertSame(2, $scored['home_score']);
-        $this->assertSame([0, 10], array_column($scored['timeline']['home_goals'], 'minute'));
-        $this->assertFalse($scored['timeline']['home_goals'][0]['time_known']);
+        $this->assertSame([10, 20], array_column($scored['timeline']['home_goals'], 'minute'));
+        $this->assertTrue($scored['timeline']['home_goals'][1]['time_known']);
+        $this->assertTrue($scored['timeline']['home_goals'][1]['time_estimated']);
         $this->assertSame($scored['timeline'], json_decode(DB::table('football_timeline')->where('match_id', '123')->value('timeline'), true));
         $withoutTimeline = $scored;
         unset($withoutTimeline['timeline']);
@@ -1612,6 +1613,54 @@ PYTHON;
         $this->assertSame('sports-realtime', $jobs->first()->connection);
     }
 
+    public function test_live_goal_keeps_its_observed_minute_until_the_provider_supplies_the_exact_time(): void
+    {
+        config(['services.football_fixture_index' => true]);
+        $match = ['unique_key' => 'known', 'sportsApiPro_match_id' => '123', 'timestamp' => time() - 1020,
+            'current_period_start_timestamp' => time() - 1020, 'result_status' => 'Live', 'minutes_status' => '1st half',
+            'home_score' => 0, 'away_score' => 0, 'team1' => 'Home', 'team2' => 'Away', 'tournament' => 'Test League', 'markets' => []];
+        storeInRedis('Football:matches', ['known' => $match]);
+        $listener = app(ListenSportsApiPro::class);
+        $method = new ReflectionMethod($listener, 'updateFootballCache');
+        $score = ['homeScore.current' => 1, 'changes.changeTimestamp' => 10];
+
+        $method->invoke($listener, 'match:123', $score);
+
+        $cached = getInRedis('Football:matches', readOnly: true, matchIds: ['123'])['known'];
+        $goal = $cached['timeline']['home_goals'][0];
+        $this->assertSame(17, $goal['minute']);
+        $this->assertTrue($goal['time_known']);
+        $this->assertTrue($goal['time_estimated']);
+        $this->assertSame(['17'], json_decode(DB::table('football_timeline')->where('match_id', '123')->value('home_goals'), true));
+        $this->assertSame($cached['timeline'], json_decode(DB::table('football_timeline')->where('match_id', '123')->value('timeline'), true));
+        $shown = app(FootballController::class)->footballTimeline($cached, $cached['timeline']);
+        $this->assertSame("~17'", $shown['events'][0]['minute_label']);
+        $this->assertSame(17 / 90 * 100, $shown['events'][0]['left']);
+        $this->assertSame([], $shown['untimed_events']['home']);
+        $cached['current_period_start_timestamp'] -= 300;
+        storeInRedis('Football:matches', ['known' => $cached]);
+        $method->invoke($listener, 'match:123', $score);
+        $incident = ['id' => 'real-goal', 'incidentType' => 'goal', 'isHome' => true, 'homeScore' => 1, 'awayScore' => 0];
+        $method->invoke($listener, 'match:123:incidents', ['incidents' => [$incident]], 'update');
+        $cached = getInRedis('Football:matches', readOnly: true, matchIds: ['123'])['known'];
+        $this->assertSame(['real-goal'], array_column($cached['timeline']['home_goals'], 'id'));
+        $this->assertSame([17], array_column($cached['timeline']['home_goals'], 'minute'));
+        $this->assertTrue($cached['timeline']['home_goals'][0]['time_estimated']);
+        $method->invoke($listener, 'match:123:incidents', ['incidents' => [array_replace($incident, ['time' => 16])]], 'update');
+        $cached = getInRedis('Football:matches', readOnly: true, matchIds: ['123'])['known'];
+        $this->assertSame([16], array_column($cached['timeline']['home_goals'], 'minute'));
+        $this->assertFalse($cached['timeline']['home_goals'][0]['time_estimated']);
+        $this->assertSame(['16'], json_decode(DB::table('football_timeline')->where('match_id', '123')->value('home_goals'), true));
+        $this->assertSame($cached['timeline'], json_decode(DB::table('football_timeline')->where('match_id', '123')->value('timeline'), true));
+        $method->invoke($listener, 'match:123', ['homeScore.current' => 2, 'status.code' => 7, 'status.type' => 'inprogress', 'time.currentPeriodStartTimestamp' => time() - 2880, 'time.injuryTime2' => 3, 'changes.changeTimestamp' => 11]);
+        $cached = getInRedis('Football:matches', readOnly: true, matchIds: ['123'])['known'];
+        $this->assertSame([16, 90], array_column($cached['timeline']['home_goals'], 'minute'));
+        $this->assertSame([0, 3], array_column($cached['timeline']['home_goals'], 'added_time'));
+        $this->assertSame(['16', '90+3'], json_decode(DB::table('football_timeline')->where('match_id', '123')->value('home_goals'), true));
+        $this->assertSame($cached['timeline'], json_decode(DB::table('football_timeline')->where('match_id', '123')->value('timeline'), true));
+        Http::assertNothingSent();
+    }
+
     public function test_restart_snapshots_and_score_only_updates_recover_missing_goal_history(): void
     {
         $this->actingAs(CustomerFactory::new()->create(['trial_ends_at' => now()->addDay()]), 'customers');
@@ -1636,13 +1685,14 @@ PYTHON;
             $updated = getInRedis('Football:matches')['known'];
             $this->assertSame(1, $updated['home_score']);
             $this->assertCount(1, $updated['timeline']['home_goals']);
-            $this->assertFalse($updated['timeline']['home_goals'][0]['time_known']);
-            $this->assertSame(0, $updated['timeline']['home_goals'][0]['minute']);
+            $this->assertTrue($updated['timeline']['home_goals'][0]['time_known']);
+            $this->assertTrue($updated['timeline']['home_goals'][0]['time_estimated']);
+            $this->assertSame(30, $updated['timeline']['home_goals'][0]['minute']);
             $this->assertSame('score', $updated['timeline']['home_goals'][0]['source']);
             $this->assertSame($updated['timeline'], json_decode(DB::table('football_timeline')->where('match_id', $id)->value('timeline'), true));
             $rendered = app(FootballController::class)->footballTimeline($updated, $updated['timeline']);
-            $this->assertCount(1, $rendered['untimed_events']['home']);
-            $this->assertSame('', $rendered['events'][0]['minute_label']);
+            $this->assertSame([], $rendered['untimed_events']['home']);
+            $this->assertSame("~30'", $rendered['events'][0]['minute_label']);
             $groups = app(FootballController::class)->getFootballMatches();
             $html = view('users.sports.football.footballDetails', ['data' => $groups])->render();
             $this->assertStringContainsString('data-timeline-event="score-home-goal-1"', $html);
@@ -1682,8 +1732,8 @@ PYTHON;
             (new ReflectionMethod($listener, 'processSportsFrame'))->invokeArgs($listener, ['football', $config, $incidents, $socket, &$subscriptions]);
             $partial = getInRedis('Football:matches')['known']['timeline'];
             $this->assertCount(3, $partial['home_goals']);
-            $this->assertSame([0, 25, 40], array_column($partial['home_goals'], 'minute'));
-            $this->assertSame('score-home-goal-2', $partial['home_goals'][0]['id']);
+            $this->assertSame([25, 30, 40], array_column($partial['home_goals'], 'minute'));
+            $this->assertSame('score-home-goal-2', $partial['home_goals'][1]['id']);
             $frame['data'] = ['homeScore.current' => 2, 'changes.changeTimestamp' => 22];
             (new ReflectionMethod($listener, 'processSportsFrame'))->invokeArgs($listener, ['football', $config, $frame, $socket, &$subscriptions]);
             $incidents['data'] = ['incidents' => [['id' => 'third-'.$id, 'isDeleted' => true], array_replace($thirdGoal, ['id' => 'second-'.$id, 'time' => 35, 'homeScore' => 2])]];
