@@ -249,7 +249,8 @@ class ListenPinnodds extends Command
     /** @param array<string, array<string, mixed>> $pending */
     private function storeDrops(array $pending, array $feeds): void
     {
-        withRedisLock('Pinnacle:drops', function () use ($pending, $feeds): void {
+        $parents = [];
+        withRedisLock('Pinnacle:drops', function () use ($pending, $feeds, &$parents): void {
             $cached = getInRedis('Pinnacle:drops') ?? [];
             $alerts = [];
             foreach ($cached['signals'] ?? $cached['alerts'] ?? [] as $alert) {
@@ -259,12 +260,27 @@ class ListenPinnodds extends Command
             $alerts = array_filter(array_replace($alerts, $pending), static fn (array $alert): bool => (int) ($alert['alerted'] ?? 0) >= time() - 10800);
             uasort($alerts, static fn (array $left, array $right): int => (int) $right['alerted'] <=> (int) $left['alerted']);
             $signals = array_values(array_slice($alerts, 0, 5000, true));
-            $dashboardAlerts = array_values(array_slice(array_filter($alerts, static fn (array $alert): bool => $alert['drop_pct'] >= 5), 0, 1000, true));
+            $dashboardCutoff = time() - 420;
+            $dashboardAlerts = array_values(array_slice(array_filter($alerts, static fn (array $alert): bool => $alert['drop_pct'] >= 5 && (int) $alert['alerted'] > $dashboardCutoff), 0, 1000, true));
             Redis::set('Pinnacle:drops', json_encode(['alerts' => $dashboardAlerts, 'signals' => $signals, 'feeds' => $feeds, 'updated_at' => time()], JSON_THROW_ON_ERROR));
             Redis::expire('Pinnacle:drops', 10800);
+            $parentIds = [];
+            foreach ($pending as $drop) {
+                if (! empty($drop['parent_id'])) {
+                    $parentIds[$drop['sport']][$drop['parent_id']] = true;
+                }
+            }
+            if ($parentIds !== []) {
+                foreach ($signals as $event) {
+                    if (isset($parentIds[$event['sport']][$event['id']]) && ! isset($parents[$event['sport']][$event['id']])
+                        && ! (in_array(strtolower(trim($event['home'])), ['yes', 'no'], true) && in_array(strtolower(trim($event['away'])), ['yes', 'no'], true))) {
+                        $parents[$event['sport']][$event['id']] = array_intersect_key($event, array_flip(['id', 'sport', 'home', 'away', 'league', 'starts', 'start', 'alerted']));
+                    }
+                }
+            }
         });
-        if ($pending !== [] && config('services.telegram.enabled')) {
-            ProcessAlert::dispatch('pinnacle', ['alerts' => array_values($pending)]);
+        if ($pending !== []) {
+            ProcessAlert::dispatch('pinnacle', ['alerts' => array_values($pending), 'parents' => $parents]);
         }
     }
 }

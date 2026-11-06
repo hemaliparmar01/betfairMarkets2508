@@ -21,7 +21,7 @@ function harness(alerts = [base], options = {}) {
     };
     const output = { innerHTML: '', textContent: '' };
     const state = { alerts, view: 'advanced', mode: 'prematch', sport: 'all', collapsedGroups: new Set(), flashes: new Map() };
-    const context = vm.createContext({ state, matchStartLabels, root: { dataset: { timezone: options.timezone ?? 'UTC' }, querySelectorAll: () => [], querySelector: () => output }, Date: { now: () => now }, document: { documentElement: { lang: options.locale ?? 'en' }, createElement: () => ({ set textContent(value) { this.innerHTML = String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;'); } }) } });
+    const context = vm.createContext({ state, matchStartLabels, URL, root: { dataset: { timezone: options.timezone ?? 'UTC' }, querySelectorAll: () => [], querySelector: () => output }, Date: { now: () => now }, document: { documentElement: { lang: options.locale ?? 'en' }, createElement: () => ({ set textContent(value) { this.innerHTML = String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;'); } }) } });
     vm.runInContext(helpers + renderer, context);
     return { state, output, evaluate: code => vm.runInContext(code, context), advance: ms => { now += ms; } };
 }
@@ -91,16 +91,145 @@ test('new or changed drops flash once; initial render and identical polls do not
     assert.doesNotMatch(app.output.innerHTML, /drop-row drop-flash/);
 });
 
+test('archive renders older drops from every market without flashing historical rows', () => {
+    const app = harness([base, { ...base, alert_key: 'handicap', sect: 'Asian Handicap', point: 4 }]);
+    app.state.archive = true;
+    app.state.marketFilter = 'all';
+    app.advance(12 * 3600000);
+    app.evaluate('receiveAlerts(state.alerts); render()');
+    assert.equal(app.state.flashes.size, 0);
+    assert.equal((app.output.innerHTML.match(/data-alert-index=/g) ?? []).length, 2);
+    assert.match(app.output.innerHTML, /Asian Handicap/);
+    assert.doesNotMatch(app.output.innerHTML, /drop-row drop-flash/);
+});
+
+test('prematch and live drops expire at seven minutes while archive history remains available', () => {
+    const now = Date.parse('2026-11-07T12:00:00Z');
+    const app = harness([
+        {...base, alerted: now / 1000},
+        {...base, alert_key: 'live', is_live: true, alerted: now / 1000},
+        {...base, alert_key: 'edge', alerted: now - 419999},
+        {...base, alert_key: 'expired', alerted: now / 1000 - 420},
+        {...base, alert_key: 'older', alerted: now / 1000 - 421},
+        {...base, alert_key: 'missing', alerted: null},
+    ], {now});
+    assert.equal(app.evaluate('filtered().map(alert => alert.alert_key).join(",")'), 'edge,first');
+    app.advance(1);
+    assert.equal(app.evaluate('filtered().map(alert => alert.alert_key).join(",")'), 'first');
+    app.advance(419999);
+    for (const mode of ['prematch', 'live']) {
+        app.state.mode = mode;
+        assert.equal(app.evaluate('filtered().length'), 0);
+    }
+    app.state.archive = true;
+    app.state.mode = 'prematch';
+    assert.equal(app.evaluate('filtered().length'), 5);
+});
+
+test('expired drops disappear on the existing refresh even if the request fails', async () => {
+    const app = harness();
+    app.evaluate('render()');
+    assert.match(app.output.innerHTML, /data-alert-index=/);
+    app.advance(420000);
+    app.evaluate(`
+        globalThis.window = {location: {origin: 'https://example.test'}};
+        root.dataset.sourceUrl = '/pinnacle';
+        globalThis.fetch = async () => {throw new Error('offline');};
+        globalThis.updateStatus = () => {};
+    `);
+    app.evaluate(source.slice(source.indexOf('                let refreshing ='), source.indexOf('                let realtimeAttempts =')));
+    await app.evaluate('refresh()');
+    assert.doesNotMatch(app.output.innerHTML, /data-alert-index=/);
+});
+
+test('archive load-more sends its keyset and active filters, appends once, and makes no automatic request', async () => {
+    const app = harness();
+    Object.assign(app.state, { archive: true, archiveHasMore: true, archiveCursor: { time: 1000, key: 'before' }, marketFilter: 'all', timeFilter: 'today', sport: 'soccer' });
+    app.evaluate(`
+        globalThis.window = {location: {origin: 'https://example.test'}};
+        globalThis.requests = [];
+        root.dataset.sourceUrl = '/pinnacle';
+        root.querySelector('[data-load-archive]').classList = {toggle() {}};
+        globalThis.updateStatus = () => {};
+        globalThis.fetch = async url => {
+            requests.push(Object.fromEntries(url.searchParams));
+            return {ok: true, json: async () => ({data: [{...state.alerts[0], alert_key: 'older', alerted: 900}], has_more: false, next_cursor: null})};
+        };
+    `);
+    app.evaluate(source.slice(source.indexOf('                let refreshing ='), source.indexOf('                let realtimeAttempts =')));
+    app.evaluate('scheduleRefresh()');
+    assert.equal(app.evaluate('requests.length'), 0);
+    await app.evaluate('refresh(true)');
+    assert.equal(app.state.alerts.length, 2);
+    assert.equal(app.state.flashes.size, 0);
+    assert.equal(app.state.archiveHasMore, false);
+    assert.equal(app.state.archiveCursor, null);
+    assert.equal(app.evaluate('requests[0].before_time'), '1000');
+    assert.equal(app.evaluate('requests[0].before_key'), 'before');
+    assert.equal(app.evaluate('requests[0].market_filter'), 'all');
+    assert.equal(app.evaluate('requests[0].sport'), 'soccer');
+    assert.equal(app.evaluate('requests[0].time_filter'), 'today');
+});
+
+test('archive reuses the existing timer only to roll over at midnight without normal feed polling', () => {
+    const app = harness();
+    app.state.archive = true;
+    app.state.archiveDayEndsAt = 1100000;
+    app.evaluate(`
+        globalThis.reloads = 0;
+        globalThis.polls = 0;
+        globalThis.scheduleRefresh = () => { polls++; };
+        globalThis.window = {setInterval(callback) {this.tick = callback;}, location: {reload() {reloads++;}}};
+    `);
+    app.evaluate(source.slice(source.indexOf('                window.setInterval(() => {'), source.indexOf('                const tooltipTexts =')));
+    app.evaluate('window.tick()');
+    assert.equal(app.evaluate('polls'), 0);
+    assert.equal(app.evaluate('reloads'), 0);
+    app.advance(100000);
+    app.evaluate('window.tick()');
+    assert.equal(app.evaluate('reloads'), 1);
+});
+
+test('archive info tooltip opens immediately on hover and toggles on mobile tap in both languages', () => {
+    const key = 'Outdated odds drop data is automatically moved to the archive and stored for 24 hours.';
+    const button = source.split('\n').find(line => line.includes('data-archive-info aria-label='));
+    const click = button.match(/onclick="([^"]+)"/)[1];
+    for (const locale of ['en', 'ka']) {
+        const expected = JSON.parse(readFileSync(new URL(`../../lang/${locale}.json`, import.meta.url), 'utf8'))[key];
+        const app = harness([], {locale});
+        app.evaluate(`
+            globalThis.tooltipTexts = {archive: ${JSON.stringify(expected)}};
+            globalThis.tooltip = {style: {}, offsetWidth: 280, offsetHeight: 80};
+            globalThis.button = {attrs: {'aria-expanded': 'false'}, setAttribute(key, value) {this.attrs[key] = value;}, getAttribute(key) {return this.attrs[key];}, getBoundingClientRect() {return {left: 100, top: 200, bottom: 235, width: 35};}};
+            document.getElementById = () => tooltip;
+            root.querySelector = () => button;
+            globalThis.window = {innerWidth: 1000, innerHeight: 800};
+        `);
+        app.evaluate(source.slice(source.indexOf('                window.showOddsTooltip ='), source.indexOf('            })();')));
+        app.evaluate("window.showOddsTooltip({currentTarget: button}, 'archive')");
+        assert.equal(app.evaluate('tooltip.textContent'), expected);
+        assert.equal(app.evaluate('tooltip.style.display'), 'block');
+        app.evaluate('window.hideOddsTooltip()');
+        assert.equal(app.evaluate('tooltip.style.display'), 'none');
+        app.evaluate(`(function(event) {${click}}).call(button, {currentTarget: button})`);
+        assert.equal(app.evaluate("button.getAttribute('aria-expanded')"), 'true');
+        assert.equal(app.evaluate('tooltip.style.display'), 'block');
+        app.evaluate(`(function(event) {${click}}).call(button, {currentTarget: button})`);
+        assert.equal(app.evaluate("button.getAttribute('aria-expanded')"), 'false');
+        assert.equal(app.evaluate('tooltip.style.display'), 'none');
+    }
+});
+
 test('start windows are cumulative, include boundaries, and exclude missing, past and live starts', () => {
     const now = Date.parse('2026-11-06T12:00:00Z');
     const alerts = [-1, 0, 3600, 3601, 10800, 10801].map(seconds => ({
-        ...base, alert_key: String(seconds), start_timestamp: now / 1000 + seconds,
+        ...base, alerted: now / 1000, alert_key: String(seconds), start_timestamp: now / 1000 + seconds,
     }));
     alerts.push(
-        {...base, alert_key: 'missing'},
-        {...base, alert_key: 'invalid', start_timestamp: 'bad'},
-        {...base, alert_key: 'too-large', start_timestamp: 1e20},
-        {...base, alert_key: 'live', start_timestamp: now / 1000, is_live: true},
+        {...base, alerted: now / 1000, alert_key: 'missing'},
+        {...base, alerted: now / 1000, alert_key: 'invalid', start_timestamp: 'bad'},
+        {...base, alerted: now / 1000, alert_key: 'too-large', start_timestamp: 1e20},
+        {...base, alerted: now / 1000, alert_key: 'live', start_timestamp: now / 1000, is_live: true},
     );
     const app = harness(alerts, {now});
     app.state.timeFilter = '1h';
@@ -118,8 +247,8 @@ test('start windows are cumulative, include boundaries, and exclude missing, pas
 test('calendar filters use the customer timezone across midnight and daylight saving changes', () => {
     const now = Date.parse('2026-11-06T19:00:00Z');
     const app = harness([
-        {...base, alert_key: 'today', start_timestamp: Date.parse('2026-11-07T01:00:00Z') / 1000},
-        {...base, alert_key: 'tomorrow', start_timestamp: Date.parse('2026-11-07T05:00:00Z') / 1000},
+        {...base, alerted: now / 1000, alert_key: 'today', start_timestamp: Date.parse('2026-11-07T01:00:00Z') / 1000},
+        {...base, alerted: now / 1000, alert_key: 'tomorrow', start_timestamp: Date.parse('2026-11-07T05:00:00Z') / 1000},
     ], {now, timezone: 'America/New_York'});
     app.state.timeFilter = 'today';
     assert.equal(app.evaluate('filtered().map(alert => alert.alert_key).join(",")'), 'today');
@@ -127,21 +256,27 @@ test('calendar filters use the customer timezone across midnight and daylight sa
     assert.equal(app.evaluate('filtered().map(alert => alert.alert_key).join(",")'), 'tomorrow');
 
     const dst = harness([
-        {...base, alert_key: 'same-day', start_timestamp: Date.parse('2026-11-02T04:30:00Z') / 1000},
-        {...base, alert_key: 'next-day', start_timestamp: Date.parse('2026-11-02T05:00:00Z') / 1000},
+        {...base, alerted: Date.parse('2026-11-01T04:30:00Z') / 1000, alert_key: 'same-day', start_timestamp: Date.parse('2026-11-02T04:30:00Z') / 1000},
+        {...base, alerted: Date.parse('2026-11-01T04:30:00Z') / 1000, alert_key: 'next-day', start_timestamp: Date.parse('2026-11-02T05:00:00Z') / 1000},
     ], {now: Date.parse('2026-11-01T04:30:00Z'), timezone: 'America/New_York'});
     dst.state.timeFilter = 'today';
     assert.equal(dst.evaluate('filtered().map(alert => alert.alert_key).join(",")'), 'same-day');
     dst.state.timeFilter = 'future';
     assert.equal(dst.evaluate('filtered().map(alert => alert.alert_key).join(",")'), 'next-day');
+    for (const [timezone, time] of [['Asia/Tbilisi', '16:30'], ['Asia/Kolkata', '18:00']]) {
+        const local = harness([{...base, alerted: now / 1000, start_timestamp: Date.parse('2026-11-07T12:30:00Z') / 1000}], {now, timezone});
+        local.evaluate('render()');
+        assert.ok(local.output.innerHTML.includes(`07 Nov 2026, ${time}`));
+        assert.doesNotMatch(local.output.innerHTML, /GMT\+|Asia\/Tbilisi|Asia\/Kolkata/);
+    }
 });
 
 test('start filters preserve market and sport selection and reevaluate incoming updates and elapsed time', () => {
     const now = Date.parse('2026-11-06T12:00:00Z');
     const app = harness([
-        {...base, start_timestamp: now / 1000 + 1800},
-        {...base, alert_key: 'tennis', sport: 'tennis', home: 'Player A', away: 'Player B', sect: 'Moneyline', point: null, start_timestamp: now / 1000 + 1800},
-        {...base, alert_key: 'handicap', sect: 'Asian Handicap', start_timestamp: now / 1000 + 1800},
+        {...base, alerted: now / 1000, start_timestamp: now / 1000 + 1800},
+        {...base, alerted: now / 1000, alert_key: 'tennis', sport: 'tennis', home: 'Player A', away: 'Player B', sect: 'Moneyline', point: null, start_timestamp: now / 1000 + 1800},
+        {...base, alerted: now / 1000, alert_key: 'handicap', sect: 'Asian Handicap', start_timestamp: now / 1000 + 1800},
     ], {now});
     app.state.timeFilter = '1h';
     app.state.marketFilter = 'main';
@@ -150,7 +285,7 @@ test('start filters preserve market and sport selection and reevaluate incoming 
     assert.match(app.output.innerHTML, /Home Team v Away Team/);
     assert.doesNotMatch(app.output.innerHTML, /Player A v Player B|Asian Handicap/);
     assert.match(app.output.innerHTML, /text-\[var\(--text-amber-700\)\]/);
-    assert.match(app.output.innerHTML, /06 Nov 2026, 12:30 UTC/);
+    assert.match(app.output.innerHTML, /06 Nov 2026, 12:30/);
     app.evaluate('receiveAlerts([{...state.alerts[0], start_timestamp: state.alerts[0].start_timestamp + 7200}]); render()');
     assert.doesNotMatch(app.output.innerHTML, /Home Team v Away Team/);
     assert.equal(app.state.timeFilter, '1h');
@@ -167,7 +302,7 @@ test('start filters preserve market and sport selection and reevaluate incoming 
 test('start countdown appears below the league in both languages and views and advances with the existing render', () => {
     const now = Date.parse('2026-11-06T12:00:00Z');
     for (const locale of ['en', 'ka']) {
-        const app = harness([{...base, league: 'Country - League', start_timestamp: now / 1000 + 600}], {now, locale});
+        const app = harness([{...base, alerted: now / 1000, league: 'Country - League', start_timestamp: now / 1000 + 600}], {now, locale});
         for (const view of ['simple', 'advanced']) {
             app.state.view = view;
             app.evaluate('render()');

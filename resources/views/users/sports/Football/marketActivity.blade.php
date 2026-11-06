@@ -13,6 +13,7 @@
         <button type="button" data-premium-required class="mt-5 cursor-pointer rounded-xl bg-[var(--surface-heading)] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[var(--surface-primary)] dark:bg-[var(--button-primary)]">{{ __('View access options') }}</button>
     </section>
 @elseif (request()->routeIs('football.pinnacle-odds'))
+    @php $pinnacleArchive = $pinnacleArchive ?? false; @endphp
     @push('head')
         <style>
             #pinnacleDashboard .drops-table { width:100%; table-layout:fixed; border-collapse:collapse; }
@@ -63,9 +64,40 @@
             </span>
         </div>
 
+        <nav class="mb-4 flex flex-wrap gap-2" aria-label="{{ __('Pinnacle odds history') }}">
+            <a href="{{ route('football.pinnacle-odds') }}" @if (! $pinnacleArchive) aria-current="page" @endif class="cursor-pointer rounded-lg border border-[var(--border-control)] px-4 py-2 text-sm font-bold {{ ! $pinnacleArchive ? 'bg-[var(--surface-heading)] text-white' : 'text-[rgb(var(--text-muted))]' }}">{{ __('Real-Time Drops') }}</a>
+            <span class="inline-flex items-center gap-2">
+                <a href="{{ route('football.pinnacle-odds', ['archive' => 1]) }}" @if ($pinnacleArchive) aria-current="page" @endif class="cursor-pointer rounded-lg border border-[var(--border-control)] px-4 py-2 text-sm font-bold {{ $pinnacleArchive ? 'bg-[var(--surface-heading)] text-white' : 'text-[rgb(var(--text-muted))]' }}">{{ __('Daily Archive') }}</a>
+                <button type="button" data-archive-info aria-label="{{ __('Archive information') }}" aria-expanded="false" class="inline-flex size-9 cursor-pointer items-center justify-center self-center rounded-full border border-[var(--border-control)] text-sm font-bold text-[rgb(var(--text-muted))] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--border-primary)]" onmouseenter="window.showOddsTooltip(event, 'archive')" onmouseleave="window.hideOddsTooltip()" onfocus="window.showOddsTooltip(event, 'archive')" onblur="window.hideOddsTooltip()" onkeydown="if (event.key === 'Escape') { window.hideOddsTooltip(); }" onclick="if (this.getAttribute('aria-expanded') === 'true') { window.hideOddsTooltip(); } else { window.showOddsTooltip(event, 'archive'); this.setAttribute('aria-expanded', 'true'); }">ⓘ</button>
+            </span>
+        </nav>
+        @if ($pinnacleArchive)
+            <p class="mb-4 text-sm text-[rgb(var(--text-muted))] dark:text-[rgb(var(--text-soft))]">{{ $pinnacleArchiveStart->format('d M Y, H:i') }} – {{ $pinnacleArchiveEnd->format('d M Y, H:i') }} GET (UTC+4) · {{ __('Archive resets daily at 6:00 AM Georgia time (GET / UTC+4).') }}</p>
+            <div class="mb-4 grid gap-3 sm:grid-cols-2" data-archive-summary>
+                <div class="rounded-xl border border-[var(--border-control)] bg-[var(--surface-muted)] p-4 dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--surface-soft))]">
+                    <h2 class="text-sm font-bold text-[rgb(var(--text-muted))]">{{ __('Total daily alerts by sport') }}</h2>
+                    <p class="mt-1 text-2xl font-extrabold text-[rgb(var(--text-main))]">{{ number_format($pinnacleArchiveStats['total'] ?? 0) }}</p>
+                    <div class="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-sm text-[rgb(var(--text-muted))]">
+                        @forelse ($pinnacleArchiveStats['sports'] ?? [] as $sport)
+                            <span>{{ __(ucwords(str_replace('-', ' ', $sport->sport))) }}: <strong class="text-[rgb(var(--text-main))]">{{ number_format($sport->total) }}</strong></span>
+                        @empty
+                            <span>{{ __('No data available') }}</span>
+                        @endforelse
+                    </div>
+                    <p class="mt-3 text-xs text-[rgb(var(--text-muted))]">{{ __('Includes all sports, markets, and live/prematch alerts in this archive day.') }}</p>
+                </div>
+                <div class="rounded-xl border border-[var(--border-control)] bg-[var(--surface-muted)] p-4 dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--surface-soft))]">
+                    <h2 class="text-sm font-bold text-[rgb(var(--text-muted))]">{{ __('Betfair Higher Odds Ratio') }}</h2>
+                    <p class="mt-1 text-2xl font-extrabold text-[rgb(var(--text-main))]">{{ number_format($pinnacleArchiveStats['higher'] ?? 0) }} / {{ number_format($pinnacleArchiveStats['total'] ?? 0) }} <span class="text-base">({{ ($pinnacleArchiveStats['compared'] ?? 0) > 0 && ($pinnacleArchiveStats['total'] ?? 0) > 0 ? number_format($pinnacleArchiveStats['higher'] / $pinnacleArchiveStats['total'] * 100, 1).'%' : '—' }})</span></p>
+                    <p class="mt-3 text-sm text-[rgb(var(--text-muted))]">{{ __('Alerts where recorded Betfair odds were higher than Pinnacle at the drop.') }}</p>
+                    <p class="mt-2 text-xs text-[rgb(var(--text-muted))]">{{ __('Compared: :count', ['count' => number_format($pinnacleArchiveStats['compared'] ?? 0)]) }} · {{ __('Drop-time quote unavailable: :count', ['count' => number_format(($pinnacleArchiveStats['total'] ?? 0) - ($pinnacleArchiveStats['compared'] ?? 0))]) }}</p>
+                </div>
+            </div>
+        @endif
+
         <div class="mb-4 flex gap-2 overflow-x-auto pb-2 [scrollbar-width:thin]" data-sport-filters>
             @foreach ([['all','🎯','All'],['soccer','⚽','Soccer'],['tennis','🎾','Tennis'],['basketball','🏀','Basketball'],['ice-hockey','🏒','Ice Hockey'],['baseball','⚾','Baseball'],['cricket','🏏','Cricket'],['esports','🎮','Esports']] as [$value, $icon, $label])
-                <button type="button" data-sport="{{ $value }}" class="pinnacle-sport {{ $value === 'all' ? 'border-[var(--border-heading)] bg-[var(--surface-heading)] text-white' : 'border-[var(--border-control)] bg-[rgb(var(--surface))] text-[var(--text-secondary-strong)] dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--surface-soft))] dark:text-[rgb(var(--text-soft))]' }} inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-2 text-xs font-bold">
+                <button type="button" data-sport="{{ $value }}" class="pinnacle-sport {{ ($pinnacleArchive ? request('sport', 'all') : 'all') === $value ? 'border-[var(--border-heading)] bg-[var(--surface-heading)] text-white' : 'border-[var(--border-control)] bg-[rgb(var(--surface))] text-[var(--text-secondary-strong)] dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--surface-soft))] dark:text-[rgb(var(--text-soft))]' }} inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-2 text-xs font-bold">
                     <span>{{ $icon }} {{ __($label) }}</span><span class="rounded-full bg-black/10 px-1.5 py-0.5 text-[10px]" data-count>0</span>
                 </button>
             @endforeach
@@ -73,33 +105,38 @@
 
         <div class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--border-neutral-5-6)] bg-[var(--surface-muted)] p-3 dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--surface-soft))]">
             <div class="flex rounded-lg border border-[var(--border-control)] bg-[rgb(var(--surface))] p-1 dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--surface))]" data-mode-switch>
-                <button type="button" data-mode="prematch" class="rounded-md bg-[var(--surface-heading)] px-3 py-1.5 text-xs font-bold text-white">📋 {{ __('Prematch') }}</button>
-                <button type="button" data-mode="live" class="rounded-md px-3 py-1.5 text-xs font-bold text-[rgb(var(--text-muted))]">🔴 {{ __('Live') }}</button>
+                <button type="button" data-mode="prematch" class="rounded-md px-3 py-1.5 text-xs font-bold {{ ! $pinnacleArchive || request('mode', 'prematch') === 'prematch' ? 'bg-[var(--surface-heading)] text-white' : 'text-[rgb(var(--text-muted))]' }}">📋 {{ __('Prematch') }}</button>
+                <button type="button" data-mode="live" class="rounded-md px-3 py-1.5 text-xs font-bold {{ $pinnacleArchive && request('mode') === 'live' ? 'bg-[var(--surface-heading)] text-white' : 'text-[rgb(var(--text-muted))]' }}">🔴 {{ __('Live') }}</button>
             </div>
             <div class="flex rounded-lg border border-[var(--border-control)] bg-[rgb(var(--surface))] p-1 dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--surface))]" role="group" aria-label="{{ __('Market filters') }}">
                 @foreach (['main' => __('Main Markets'), 'handicap' => __('Handicaps'), 'all' => __('All')] as $value => $label)
-                    <button type="button" data-market-filter="{{ $value }}" aria-pressed="{{ $value === 'main' ? 'true' : 'false' }}" class="rounded-md px-3 py-1.5 text-xs font-bold {{ $value === 'main' ? 'bg-[var(--surface-primary)] text-white' : 'text-[rgb(var(--text-muted))]' }}">{{ $label }}</button>
+                    <button type="button" data-market-filter="{{ $value }}" aria-pressed="{{ ($pinnacleArchive ? request('market_filter', 'all') : 'main') === $value ? 'true' : 'false' }}" class="rounded-md px-3 py-1.5 text-xs font-bold {{ ($pinnacleArchive ? request('market_filter', 'all') : 'main') === $value ? 'bg-[var(--surface-primary)] text-white' : 'text-[rgb(var(--text-muted))]' }}">{{ $label }}</button>
                 @endforeach
             </div>
             <div class="flex rounded-lg border border-[var(--border-control)] bg-[rgb(var(--surface))] p-1 dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--surface))]" data-view-switch>
-                <button type="button" data-view="simple" class="rounded-md bg-[var(--surface-primary)] px-3 py-1.5 text-xs font-bold text-white">{{ __('Simple') }}</button>
-                <button type="button" data-view="advanced" class="rounded-md px-3 py-1.5 text-xs font-bold text-[rgb(var(--text-muted))]">{{ __('Advanced') }}</button>
+                <button type="button" data-view="simple" class="rounded-md px-3 py-1.5 text-xs font-bold {{ ! $pinnacleArchive || request('view', 'simple') === 'simple' ? 'bg-[var(--surface-primary)] text-white' : 'text-[rgb(var(--text-muted))]' }}">{{ __('Simple') }}</button>
+                <button type="button" data-view="advanced" class="rounded-md px-3 py-1.5 text-xs font-bold {{ $pinnacleArchive && request('view') === 'advanced' ? 'bg-[var(--surface-primary)] text-white' : 'text-[rgb(var(--text-muted))]' }}">{{ __('Advanced') }}</button>
             </div>
         </div>
 
         <div class="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label="{{ __('Time to Start') }}">
             @foreach (['all' => 'All', 'today' => 'Today', '1h' => 'Starting in 1 Hour', '3h' => 'Starting in 3 Hours', 'future' => 'Upcoming / Future Days'] as $value => $label)
-                <button type="button" data-time-filter="{{ $value }}" aria-pressed="{{ $value === 'all' ? 'true' : 'false' }}" class="rounded-md px-3 py-1.5 text-xs font-bold {{ $value === 'all' ? 'bg-[var(--surface-primary)] text-white' : 'text-[rgb(var(--text-muted))]' }}">{{ __($label) }}</button>
+                <button type="button" data-time-filter="{{ $value }}" aria-pressed="{{ ($pinnacleArchive ? request('time_filter', 'all') : 'all') === $value ? 'true' : 'false' }}" class="rounded-md px-3 py-1.5 text-xs font-bold {{ ($pinnacleArchive ? request('time_filter', 'all') : 'all') === $value ? 'bg-[var(--surface-primary)] text-white' : 'text-[rgb(var(--text-muted))]' }}">{{ __($label) }}</button>
             @endforeach
         </div>
 
         <div class="overflow-hidden rounded-2xl border border-[var(--border-neutral-5-6)] bg-[rgb(var(--surface))] dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--surface))]">
             <div class="flex flex-wrap items-center justify-between gap-3 bg-[var(--surface-heading)] px-4 py-3 text-white">
-                <h2 class="flex items-center gap-2 text-sm font-extrabold uppercase tracking-wide"><span class="size-2 rounded-full bg-[var(--surface-danger-0-3)]"></span>{{ __('Real-Time Pinnacle Odds Drops') }}</h2>
+                <h2 class="flex items-center gap-2 text-sm font-extrabold uppercase tracking-wide"><span class="size-2 rounded-full bg-[var(--surface-danger-0-3)]"></span>{{ $pinnacleArchive ? __('Daily Archive') : __('Real-Time Pinnacle Odds Drops') }}</h2>
                 <span class="text-xs font-semibold text-white/70" data-alert-meta>{{ __('Prematch') }} {{ __('· ODDS-DROP · ≥5%') }}</span>
             </div>
             <div class="min-w-0" data-alerts></div>
         </div>
+        @if ($pinnacleArchive)
+            <div class="mt-4 text-center">
+                <button type="button" data-load-archive class="{{ ($pinnacleArchiveHasMore ?? false) ? '' : 'hidden' }} cursor-pointer rounded-lg bg-[var(--surface-heading)] px-5 py-2.5 text-sm font-bold text-white disabled:cursor-wait disabled:opacity-50">{{ __('Load more history') }}</button>
+            </div>
+        @endif
     </section>
 
     <div id="pinnacleModal" class="fixed inset-0 z-[10000] hidden items-center justify-center overflow-hidden bg-black/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="pinnacleModalTitle">
@@ -113,11 +150,11 @@
                 const modal = document.getElementById('pinnacleModal');
                 if (!root || !modal) return;
 
-                const state = { alerts: @json($pinnacleAlerts ?? []), sport: 'all', mode: 'prematch', view: 'simple', marketFilter: 'main', timeFilter: 'all', connected: @json($pinnacleFeedConnected ?? false), feeds: @json($pinnacleFeeds ?? []), openAlertKey: null, collapsedGroups: new Set(), flashes: new Map() };
+                const state = { alerts: @json($pinnacleAlerts ?? []), archive: @json($pinnacleArchive), archiveDayEndsAt: @json($pinnacleArchiveEnd->timestamp * 1000), archiveHasMore: @json($pinnacleArchiveHasMore ?? false), archiveCursor: @json($pinnacleArchiveCursor ?? null), sport: @json($pinnacleArchive ? request('sport', 'all') : 'all'), mode: @json($pinnacleArchive ? request('mode', 'prematch') : 'prematch'), view: @json($pinnacleArchive ? request('view', 'simple') : 'simple'), marketFilter: @json($pinnacleArchive ? request('market_filter', 'all') : 'main'), timeFilter: @json($pinnacleArchive ? request('time_filter', 'all') : 'all'), connected: @json($pinnacleFeedConnected ?? false), feeds: @json($pinnacleFeeds ?? []), openAlertKey: null, collapsedGroups: new Set(), flashes: new Map() };
                 const matchStartLabels = {{ Illuminate\Support\Js::from(['minute' => __('Starts in :count min'), 'minutes' => __('Starts in :count mins'), 'hour' => __('Starts in :count hour'), 'hours' => __('Starts in :count hours'), 'day' => __('Starts in :count day'), 'days' => __('Starts in :count days'), 'now' => __('Starting now')]) }};
                 const sportKey = value => { const key = String(value || '').toLowerCase().trim().replace(/\s+/g, '-'); return key === 'hockey' ? 'ice-hockey' : key; };
                 const matchDayFormat = new Intl.DateTimeFormat('en-CA', { timeZone: root.dataset.timezone || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' });
-                const matchStartFormat = new Intl.DateTimeFormat(document.documentElement.lang === 'ka' ? 'ka-GE' : 'en-GB', { timeZone: root.dataset.timezone || 'UTC', year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZoneName: 'short' });
+                const matchStartFormat = new Intl.DateTimeFormat(document.documentElement.lang === 'ka' ? 'ka-GE' : 'en-GB', { timeZone: root.dataset.timezone || 'UTC', year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
                 const number = value => value === null || value === undefined || value === '' ? null : Number(value);
                 const price = value => Number.isFinite(number(value)) ? number(value).toFixed(2) : '—';
                 const nvpPrice = value => number(value) > 1 ? price(value) : '—';
@@ -161,6 +198,7 @@
                 const alertIdentity = alert => alert.alert_key || [matchKey(alert), alert.sect, marketLine(alert), alert.period, alert.outcome, alert.alerted, alert.from_price, alert.to_price].join('|');
                 const alertVersion = alert => `${alertIdentity(alert)}|${alert.alerted}|${alert.from_price}|${alert.to_price}`;
                 const receiveAlerts = alerts => {
+                    if (state.archive) { state.alerts = alerts; state.flashes.clear(); return; }
                     const previous = new Map(state.alerts.map(alert => [alertIdentity(alert), alertVersion(alert)]));
                     const now = Date.now();
                     alerts.forEach(alert => {
@@ -186,6 +224,8 @@
                 const filtered = (now = Date.now()) => {
                     const today = state.timeFilter === 'today' || state.timeFilter === 'future' ? matchDayFormat.format(now) : null;
                     return state.alerts.filter(alert => {
+                        const alerted = number(alert.alerted);
+                        if (!state.archive && (!Number.isFinite(alerted) || alerted <= 0 || now - (alerted < 100000000000 ? alerted * 1000 : alerted) >= 420000)) return false;
                         if (!matchesMarketFilter(alert) || !(Math.round(drop(alert) * 100000000) / 100000000 >= 5) || (state.mode === 'live' ? !isLive(alert) : isLive(alert))) return false;
                         if (!state.timeFilter || state.timeFilter === 'all') return true;
                         const start = number(alert.start_timestamp) * 1000;
@@ -211,8 +251,9 @@
                     }
                     root.querySelectorAll('[data-sport]').forEach(button => {
                         button.querySelector('[data-count]').textContent = button.dataset.sport === 'all' ? alerts.length : (sportCounts.get(button.dataset.sport) || 0);
+                        button.querySelector('[data-count]').hidden = Boolean(state.archive);
                     });
-                    root.querySelector('[data-alert-meta]').textContent = `${state.mode === 'live' ? 'Live' : 'Prematch'} · ODDS-DROP · ≥5%`;
+                    root.querySelector('[data-alert-meta]').textContent = `${state.archive ? (globalThis.bfTranslations?.['Daily Archive'] ?? 'Daily Archive') + ' · ' : ''}${state.mode === 'live' ? 'Live' : 'Prematch'} · ODDS-DROP · ≥5%`;
 
                     if (!groups.size) {
                         root.querySelector('[data-alerts]').innerHTML = `<div class="px-5 py-14 text-center text-sm font-semibold text-[var(--text-muted-soft)]"><div class="mb-2 text-4xl opacity-50">🔍</div>{{ __('No alerts match the current filters.') }}</div>`;
@@ -277,12 +318,24 @@
                 };
 
                 root.addEventListener('click', event => {
+                    if (event.target.closest('[data-load-archive]')) { refresh(true); return; }
                     const sportButton = event.target.closest('[data-sport]');
                     const switchButton = event.target.closest('[data-mode], [data-view]');
                     const groupButton = event.target.closest('[data-group]');
                     const alertButton = event.target.closest('[data-alert-index]');
-                    if (sportButton) { state.sport = sportButton.dataset.sport; root.querySelectorAll('[data-sport]').forEach(button => { const active = button === sportButton; button.classList.toggle('border-[var(--border-heading)]', active); button.classList.toggle('bg-[var(--surface-heading)]', active); button.classList.toggle('text-white', active); button.classList.toggle('border-[var(--border-control)]', !active); button.classList.toggle('bg-[rgb(var(--surface))]', !active); button.classList.toggle('text-[var(--text-secondary-strong)]', !active); }); render(); }
                     const marketButton = event.target.closest('[data-market-filter], [data-time-filter]');
+                    if (state.archive && (sportButton || marketButton || switchButton?.dataset.mode)) {
+                        const url = new URL(root.dataset.sourceUrl, window.location.origin);
+                        url.searchParams.set('archive', '1');
+                        url.searchParams.set('sport', sportButton?.dataset.sport ?? state.sport);
+                        url.searchParams.set('mode', switchButton?.dataset.mode ?? state.mode);
+                        url.searchParams.set('view', state.view);
+                        url.searchParams.set('market_filter', marketButton?.dataset.marketFilter ?? state.marketFilter);
+                        url.searchParams.set('time_filter', marketButton?.dataset.timeFilter ?? state.timeFilter);
+                        window.location.assign(url);
+                        return;
+                    }
+                    if (sportButton) { state.sport = sportButton.dataset.sport; root.querySelectorAll('[data-sport]').forEach(button => { const active = button === sportButton; button.classList.toggle('border-[var(--border-heading)]', active); button.classList.toggle('bg-[var(--surface-heading)]', active); button.classList.toggle('text-white', active); button.classList.toggle('border-[var(--border-control)]', !active); button.classList.toggle('bg-[rgb(var(--surface))]', !active); button.classList.toggle('text-[var(--text-secondary-strong)]', !active); }); render(); }
                     if (marketButton) {
                         const timeFilter = marketButton.dataset.timeFilter;
                         state[timeFilter ? 'timeFilter' : 'marketFilter'] = timeFilter || marketButton.dataset.marketFilter;
@@ -315,6 +368,11 @@
 
                 const status = root.querySelector('#pinnacleConnection');
                 const updateStatus = () => {
+                    if (state.archive) {
+                        status.className = 'inline-flex items-center gap-2 rounded-full border border-[var(--border-control)] px-3 py-1.5 text-xs font-bold text-[rgb(var(--text-muted))]';
+                        status.querySelector('[data-status-text]').textContent = globalThis.bfTranslations?.['Daily Archive'] ?? 'Daily Archive';
+                        return;
+                    }
                     const connection = state.feeds[state.mode] || 'disconnected';
                     const colors = connection === 'connected' ? (globalThis.bfTranslations?.["border-[var(--border-emerald-200)] bg-[var(--surface-emerald-50)] text-[var(--text-emerald-700)]"] ?? "border-[var(--border-emerald-200)] bg-[var(--surface-emerald-50)] text-[var(--text-emerald-700)]") : connection === 'connecting' ? (globalThis.bfTranslations?.["border-[var(--border-amber-200)] bg-[var(--surface-amber-50)] text-[var(--text-amber-700)]"] ?? "border-[var(--border-amber-200)] bg-[var(--surface-amber-50)] text-[var(--text-amber-700)]") : (globalThis.bfTranslations?.["border-[var(--border-red-200)] bg-[var(--surface-red-50)] text-[var(--text-red-700)]"] ?? "border-[var(--border-red-200)] bg-[var(--surface-red-50)] text-[var(--text-red-700)]");
                     status.className = `inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold ${colors}`;
@@ -323,15 +381,29 @@
                 let refreshing = false;
                 let refreshAgain = false;
                 let refreshTimer = null;
-                const refresh = async () => {
+                const refresh = async (append = false) => {
                     if (refreshing) { refreshAgain = true; return; }
                     refreshing = true;
+                    const loadButton = root.querySelector('[data-load-archive]');
+                    if (state.archive && loadButton) loadButton.disabled = true;
                     try {
                         const url = new URL(root.dataset.sourceUrl, window.location.origin);
-                            const response = await fetch(url, { headers: { Accept: 'application/json' }, cache: 'no-store' });
+                        if (state.archive) {
+                            for (const [key, value] of Object.entries({ archive: '1', sport: state.sport, mode: state.mode, view: state.view, market_filter: state.marketFilter, time_filter: state.timeFilter })) url.searchParams.set(key, value);
+                            if (append && state.archiveCursor) {
+                                url.searchParams.set('before_time', state.archiveCursor.time);
+                                url.searchParams.set('before_key', state.archiveCursor.key);
+                            }
+                        }
+                        const response = await fetch(url, { headers: { Accept: 'application/json' }, cache: 'no-store' });
                         if (!response.ok) throw new Error(`HTTP ${response.status}`);
                         const payload = await response.json();
-                        receiveAlerts(payload.data ?? []);
+                        receiveAlerts(state.archive && append ? [...state.alerts, ...(payload.data ?? [])] : (payload.data ?? []));
+                        if (state.archive) {
+                            state.archiveHasMore = Boolean(payload.has_more);
+                            state.archiveCursor = payload.next_cursor ?? null;
+                            if (loadButton) loadButton.classList.toggle('hidden', !state.archiveHasMore);
+                        }
                         state.feeds = payload.feeds ?? {};
                         updateStatus();
                         render();
@@ -342,12 +414,15 @@
                     } catch (error) {
                         state.feeds = { live: 'disconnected', prematch: 'disconnected' };
                         updateStatus();
+                        render();
                     } finally {
                         refreshing = false;
+                        if (state.archive && loadButton) loadButton.disabled = false;
                         if (refreshAgain) { refreshAgain = false; scheduleRefresh(); }
                     }
                 };
                 const scheduleRefresh = () => {
+                    if (state.archive) return;
                     if (refreshTimer !== null) return;
                     refreshTimer = window.setTimeout(() => { refreshTimer = null; refresh(); }, 250);
                 };
@@ -363,11 +438,18 @@
                 root.addEventListener('click', event => { if (event.target.closest('[data-mode]')) updateStatus(); });
                 updateStatus();
                 render();
-                bindRealtime();
-                window.setInterval(() => { if (!document.hidden) scheduleRefresh(); }, 30000);
-                document.addEventListener('visibilitychange', () => { if (!document.hidden) scheduleRefresh(); });
+                if (!state.archive) {
+                    bindRealtime();
+                    document.addEventListener('visibilitychange', () => { if (!document.hidden) scheduleRefresh(); });
+                }
+                window.setInterval(() => {
+                    if (document.hidden) return;
+                    if (!state.archive) scheduleRefresh();
+                    else if (Date.now() >= state.archiveDayEndsAt) window.location.reload();
+                }, 30000);
 
                 const tooltipTexts = {
+                    archive: @json(__('Outdated odds drop data is automatically moved to the archive and stored for 24 hours.')),
                     betfair: @json(__('Currently unavailable on Betfair')),
                     moneyline: @json(__('Pinnacle: Moneyline = Betfair: Match Odds')),
                     nvp: (globalThis.bfTranslations?.["NVP (No-Vig Price) is the 'fair' or 'true' odds for an outcome. It is calculated by removing the bookmaker's margin (vigorish) from the Pinnacle odds. It represents the true probability of the event without the bookmaker's built-in profit."] ?? "NVP (No-Vig Price) is the 'fair' or 'true' odds for an outcome. It is calculated by removing the bookmaker's margin (vigorish) from the Pinnacle odds. It represents the true probability of the event without the bookmaker's built-in profit."),
@@ -386,7 +468,7 @@
                     document.body.appendChild(tooltip);
                 }
 
-                tooltip.textContent = tooltipTexts[type];
+                tooltip.textContent = state.archive && type === 'betfair' ? (globalThis.bfTranslations?.['Betfair odds at the time of the drop were unavailable.'] ?? 'Betfair odds at the time of the drop were unavailable.') : tooltipTexts[type];
                 event.currentTarget.setAttribute('aria-describedby', 'odds-info-tooltip');
 
                 // Reset previous positioning before measuring
@@ -416,6 +498,9 @@
                 tooltip.style.left = `${left}px`;
                 tooltip.style.top = `${top}px`;
                 tooltip.style.visibility = 'visible';
+                if (type === 'archive' && !window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) {
+                    tooltip.animate?.([{ opacity: 0 }, { opacity: 1 }], { duration: 120, easing: 'ease-out' });
+                }
             };
 
             window.hideOddsTooltip = function() {
@@ -424,6 +509,7 @@
                 if (tooltip) {
                     tooltip.style.display = 'none';
                 }
+                root.querySelector('[data-archive-info]')?.setAttribute('aria-expanded', 'false');
             };
             })();
         </script>

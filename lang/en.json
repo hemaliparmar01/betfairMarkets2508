@@ -2293,5 +2293,19 @@
     "Pinnacle Odds Drops & Market Movement": "Pinnacle Odds Drops & Market Movement",
     "Real-Time Sports Market Activity": "Real-Time Sports Market Activity",
     "Automated Sports Market Alerts": "Automated Sports Market Alerts",
-    "Real-Time Pinnacle Odds Drops": "Real-Time Pinnacle Odds Drops"
+    "Real-Time Pinnacle Odds Drops": "Real-Time Pinnacle Odds Drops",
+    "Pinnacle odds history": "Pinnacle odds history",
+    "Real-Time Drops": "Real-Time Drops",
+    "Daily Archive": "Daily Archive",
+    "Load more history": "Load more history",
+    "Archive information": "Archive information",
+    "Outdated odds drop data is automatically moved to the archive and stored for 24 hours.": "Outdated odds drop data is automatically moved to the archive and stored for 24 hours.",
+    "Archive resets daily at 6:00 AM Georgia time (GET / UTC+4).": "Archive resets daily at 6:00 AM Georgia time (GET / UTC+4).",
+    "Total daily alerts by sport": "Total daily alerts by sport",
+    "Includes all sports, markets, and live/prematch alerts in this archive day.": "Includes all sports, markets, and live/prematch alerts in this archive day.",
+    "Betfair Higher Odds Ratio": "Betfair Higher Odds Ratio",
+    "Alerts where recorded Betfair odds were higher than Pinnacle at the drop.": "Alerts where recorded Betfair odds were higher than Pinnacle at the drop.",
+    "Compared: :count": "Compared: :count",
+    "Drop-time quote unavailable: :count": "Drop-time quote unavailable: :count",
+    "Betfair odds at the time of the drop were unavailable.": "Betfair odds at the time of the drop were unavailable."
 }

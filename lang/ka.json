@@ -2292,5 +2292,19 @@
     "Pinnacle Odds Drops & Market Movement": "Pinnacle-ის კოეფიციენტების ვარდნა და ბაზრის მოძრაობა",
     "Real-Time Sports Market Activity": "სპორტული ბაზრის აქტივობა რეალურ დროში",
     "Automated Sports Market Alerts": "სპორტული ბაზრის ავტომატური შეტყობინებები",
-    "Real-Time Pinnacle Odds Drops": "Pinnacle-ის კოეფიციენტების ვარდნა რეალურ დროში"
+    "Real-Time Pinnacle Odds Drops": "Pinnacle-ის კოეფიციენტების ვარდნა რეალურ დროში",
+    "Pinnacle odds history": "Pinnacle-ის კოეფიციენტების ისტორია",
+    "Real-Time Drops": "ვარდნები რეალურ დროში",
+    "Daily Archive": "დღიური არქივი",
+    "Load more history": "მეტი ისტორიის ჩატვირთვა",
+    "Archive information": "ინფორმაცია არქივის შესახებ",
+    "Outdated odds drop data is automatically moved to the archive and stored for 24 hours.": "კოეფიციენტების ვარდნის მოძველებული მონაცემები ავტომატურად გადადის არქივში და ინახება 24 საათის განმავლობაში.",
+    "Archive resets daily at 6:00 AM Georgia time (GET / UTC+4).": "არქივი ყოველდღე, საქართველოს დროით დილის 6:00 საათზე ახლდება (GET / UTC+4).",
+    "Total daily alerts by sport": "დღიური შეტყობინებების რაოდენობა სპორტის სახეობების მიხედვით",
+    "Includes all sports, markets, and live/prematch alerts in this archive day.": "მოიცავს ამ საარქივო დღის ყველა სპორტის სახეობას, ბაზარსა და მიმდინარე თუ მატჩისწინა შეტყობინებას.",
+    "Betfair Higher Odds Ratio": "Betfair-ის უფრო მაღალი კოეფიციენტების წილი",
+    "Alerts where recorded Betfair odds were higher than Pinnacle at the drop.": "შეტყობინებები, რომლებშიც ვარდნის მომენტში დაფიქსირებული Betfair-ის კოეფიციენტი Pinnacle-ისაზე მაღალი იყო.",
+    "Compared: :count": "შედარებულია: :count",
+    "Drop-time quote unavailable: :count": "ვარდნის მომენტის კოეფიციენტი მიუწვდომელია: :count",
+    "Betfair odds at the time of the drop were unavailable.": "ვარდნის მომენტში Betfair-ის კოეფიციენტი მიუწვდომელი იყო."
 }

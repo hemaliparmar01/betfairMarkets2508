@@ -1242,7 +1242,7 @@ class FixturesAuditTest extends TestCase
         $start = time() + 3600;
         $match = ['unique_key' => 'matched', 'team1' => 'Galatasaray FC', 'team2' => 'Chennaiyin FC', 'timestamp' => $start, 'data_sync_complete' => true, 'result_status' => 'Prematch', 'markets' => [[['marketType' => 'MATCH_ODDS', 'runner' => 'Galatasaray', 'currentBackOdds' => 1.54, 'layOdds' => 1.56, 'backSize' => 10]]]];
         $matches = [$match];
-        $alerts = [['id' => 1, 'sport' => 'soccer', 'home' => 'Galatasaray', 'away' => 'Chennaiyin', 'starts' => $start, 'sect' => 'moneyline', 'outcome' => 'home', 'is_live' => false, 'period' => 0, 'from_price' => 1.8, 'to_price' => 1.47, 'nvp' => 1.52]];
+        $alerts = [['alerted' => time(), 'id' => 1, 'sport' => 'soccer', 'home' => 'Galatasaray', 'away' => 'Chennaiyin', 'starts' => $start, 'sect' => 'moneyline', 'outcome' => 'home', 'is_live' => false, 'period' => 0, 'from_price' => 1.8, 'to_price' => 1.47, 'nvp' => 1.52]];
         Redis::shouldReceive('get')->andReturnUsing(function (string $key) use (&$matches, &$alerts): ?string {
             return match ($key) {
                 'Football:matches' => json_encode($matches),
@@ -1337,7 +1337,7 @@ class FixturesAuditTest extends TestCase
                 ]),
             ]);
         }
-        $alert = [
+        $alert = ['alerted' => time(),
             'id' => 100, 'sport' => 'soccer', 'home' => 'Man Utd', 'away' => 'Liverpool FC', 'starts' => $start,
             'league' => 'Premier League', 'sect' => 'spread', 'outcome' => 'away', 'hdp' => 4,
             'period' => 0, 'from_price' => 2.1, 'to_price' => 1.85,
