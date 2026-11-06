@@ -64,7 +64,10 @@ class ListenTelegram extends Command
                         'offset' => Cache::get('alerts:bot-offset', 0), 'timeout' => $this->option('once') ? 0 : 20, 'allowed_updates' => ['message'],
                     ]);
                     if ($response->json('ok') !== true) {
-                        $this->error('Bot updates unavailable. Verify bot configuration; webhook and getUpdates cannot run together.');
+                        $description = $response->json('description');
+                        $description = is_string($description) ? $description : 'Telegram returned no error description.';
+                        $description = str_replace((string) config('services.telegram.bot_token'), '[REDACTED]', $description);
+                        $this->error('Bot updates unavailable (HTTP '.$response->status().', code '.(int) $response->json('error_code', $response->status()).'): '.$description);
 
                         return self::FAILURE;
                     }

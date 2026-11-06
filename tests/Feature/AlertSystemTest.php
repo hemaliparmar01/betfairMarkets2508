@@ -142,6 +142,55 @@ class AlertSystemTest extends TestCase
         $this->assertSame('555', $other->fresh()->telegram_chat_id);
     }
 
+    public function test_bot_listener_reports_api_errors_without_exposing_credentials_or_advancing_updates(): void
+    {
+        $responses = Http::sequence()
+            ->push(['ok' => false, 'error_code' => 409, 'description' => 'Conflict: terminated by other getUpdates request'], 409)
+            ->push(['ok' => false, 'error_code' => 401, 'description' => 'Unauthorized'], 401)
+            ->push(['ok' => false, 'error_code' => 429, 'description' => 'Too Many Requests: retry after 30', 'parameters' => ['retry_after' => 30]], 429)
+            ->push('<html>Service unavailable</html>', 503, ['Content-Type' => 'text/html'])
+            ->push(['ok' => false, 'error_code' => 500, 'description' => 'Failed endpoint https://api.telegram.org/bottest-token/getUpdates'], 500);
+        Http::fake(['https://api.telegram.org/bottest-token/getUpdates' => $responses]);
+        Cache::put('alerts:bot-offset', 12);
+
+        foreach ([
+            'Bot updates unavailable (HTTP 409, code 409): Conflict: terminated by other getUpdates request',
+            'Bot updates unavailable (HTTP 401, code 401): Unauthorized',
+            'Bot updates unavailable (HTTP 429, code 429): Too Many Requests: retry after 30',
+            'Bot updates unavailable (HTTP 503, code 503): Telegram returned no error description.',
+            'Bot updates unavailable (HTTP 500, code 500): Failed endpoint https://api.telegram.org/bot[REDACTED]/getUpdates',
+        ] as $message) {
+            $this->artisan('telegram:listen', ['--once' => true])
+                ->expectsOutput($message)
+                ->doesntExpectOutputToContain('test-token')
+                ->assertExitCode(1);
+
+            $this->assertSame(12, Cache::get('alerts:bot-offset'));
+            $lock = Cache::lock('alerts:bot-listener', 60);
+            $this->assertTrue($lock->get());
+            $lock->release();
+        }
+        Http::assertSentCount(5);
+    }
+
+    public function test_bot_listener_binds_received_start_and_advances_the_existing_offset(): void
+    {
+        $token = str_repeat('c', 48);
+        $customer = $this->customer(['telegram_chat_id' => null, 'telegram_available' => false,
+            'telegram_token_hash' => hash('sha256', $token), 'telegram_token_expires_at' => now()->addMinutes(5)]);
+        Cache::put('alerts:bot-offset', 1);
+        Http::fake(['https://api.telegram.org/bottest-token/getUpdates' => Http::response(['ok' => true, 'result' => [$this->start($token)]])]);
+
+        $this->artisan('telegram:listen', ['--once' => true])->assertExitCode(0);
+
+        $this->assertSame('555', $customer->fresh()->telegram_chat_id);
+        $this->assertTrue($customer->fresh()->telegram_available);
+        $this->assertNull($customer->fresh()->telegram_token_hash);
+        $this->assertSame(2, Cache::get('alerts:bot-offset'));
+        Http::assertSent(fn ($request): bool => $request->method() === 'POST' && $request['offset'] === 1
+            && $request['timeout'] === 0 && $request['allowed_updates'] === ['message']);
+    }
+
     public function test_save_and_popup_mute_are_independent_and_reject_unknown_preferences(): void
     {
         $customer = $this->customer();
