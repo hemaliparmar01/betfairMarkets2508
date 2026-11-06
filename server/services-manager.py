@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 
 ROOT = Path(__file__).resolve().parent
 
@@ -309,7 +310,16 @@ class Manager:
                     # Adopted production units remain authoritative and are never rewritten.
                     run(['systemctl', 'daemon-reload'])
                 if not loaded or (not self.mac and not status.startswith('active/')):
-                    self.reject_unmanaged(spec)
+                    stop_deadline = (time.monotonic() + spec.get('stop_timeout', self.config.get('stop_timeout', 120))
+                                     if action == 'restart' and not self.mac and os.environ.get('SERVICES_CONTAINER') else None)
+                    while True:
+                        try:
+                            self.reject_unmanaged(spec)
+                            break
+                        except ValueError:
+                            if stop_deadline is None or time.monotonic() >= stop_deadline:
+                                raise
+                            time.sleep(1)
                     if self.mac:
                         run(['launchctl', 'enable', self.domain + '/' + spec['label']])
                         run(['launchctl', 'bootstrap', self.domain, str(self.destination(spec))])

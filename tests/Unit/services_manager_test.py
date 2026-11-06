@@ -6,6 +6,7 @@ import plistlib
 import runpy
 import subprocess
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -229,6 +230,69 @@ class ServiceManagerTest(unittest.TestCase):
         with patch.object(module, 'run', return_value=subprocess.CompletedProcess([], 0, redis, '')):
             with self.assertRaisesRegex(ValueError, 'Unmanaged'):
                 self.manager.reject_unmanaged(self.manager.instances['queue-sports-statistics'])
+
+    def test_docker_restart_waits_for_the_previous_process_before_starting(self):
+        with patch.object(server_module.platform, 'system', return_value='Linux'), patch.dict(os.environ, {
+            'SERVICES_ENV': 'production', 'SERVICES_CONTAINER': 'aapanel',
+            'SERVICES_CONFIG': str(SOURCE.parent.parent / 'server/services-manager.json'),
+        }):
+            for service in ['queue-alerts', 'queue-alerts-telegram', 'pinnodds']:
+                with self.subTest(service=service):
+                    manager = server_module.Manager()
+                    with patch.object(manager, 'inspect', return_value=(True, 'active/running pid=123')), \
+                            patch.object(manager, 'verify_existing'), \
+                            patch.object(manager, 'destination', return_value=self.root / 'unit.service'), \
+                            patch.object(manager, 'stop') as stop, \
+                            patch.object(manager, 'reject_unmanaged', side_effect=[ValueError('Unmanaged matching Artisan process exists'), None]) as guard, \
+                            patch.object(server_module, 'run') as systemctl, \
+                            patch.object(time, 'monotonic', return_value=100), \
+                            patch.object(time, 'sleep') as sleep:
+                        manager.execute('restart', service)
+
+                    stop.assert_called_once_with(manager.instances[service])
+                    self.assertEqual(2, guard.call_count)
+                    sleep.assert_called_once_with(1)
+                    systemctl.assert_called_once_with(['systemctl', 'enable', '--now', manager.instances[service]['unit']])
+
+    def test_docker_restart_keeps_duplicate_protection_when_the_process_does_not_exit(self):
+        with patch.object(server_module.platform, 'system', return_value='Linux'), patch.dict(os.environ, {
+            'SERVICES_ENV': 'production', 'SERVICES_CONTAINER': 'aapanel',
+            'SERVICES_CONFIG': str(SOURCE.parent.parent / 'server/services-manager.json'),
+        }):
+            manager = server_module.Manager()
+            with patch.object(manager, 'inspect', return_value=(True, 'active/running pid=123')), \
+                    patch.object(manager, 'verify_existing'), \
+                    patch.object(manager, 'destination', return_value=self.root / 'unit.service'), \
+                    patch.object(manager, 'stop'), \
+                    patch.object(manager, 'reject_unmanaged', side_effect=ValueError('Unmanaged matching Artisan process exists')), \
+                    patch.object(server_module, 'run') as systemctl, \
+                    patch.object(time, 'monotonic', side_effect=[100, 221]), \
+                    patch.object(time, 'sleep') as sleep:
+                with self.assertRaisesRegex(ValueError, 'Unmanaged'):
+                    manager.execute('restart', 'queue-alerts-telegram')
+
+            systemctl.assert_not_called()
+            sleep.assert_not_called()
+
+    def test_docker_start_rejects_an_unmanaged_process_without_waiting_or_stopping_it(self):
+        with patch.object(server_module.platform, 'system', return_value='Linux'), patch.dict(os.environ, {
+            'SERVICES_ENV': 'production', 'SERVICES_CONTAINER': 'aapanel',
+            'SERVICES_CONFIG': str(SOURCE.parent.parent / 'server/services-manager.json'),
+        }):
+            manager = server_module.Manager()
+            with patch.object(manager, 'inspect', return_value=(True, 'inactive/dead pid=0')), \
+                    patch.object(manager, 'verify_existing'), \
+                    patch.object(manager, 'destination', return_value=self.root / 'unit.service'), \
+                    patch.object(manager, 'stop') as stop, \
+                    patch.object(manager, 'reject_unmanaged', side_effect=ValueError('Unmanaged matching Artisan process exists')), \
+                    patch.object(server_module, 'run') as systemctl, \
+                    patch.object(time, 'sleep') as sleep:
+                with self.assertRaisesRegex(ValueError, 'Unmanaged'):
+                    manager.execute('start', 'queue-alerts-telegram')
+
+            stop.assert_not_called()
+            systemctl.assert_not_called()
+            sleep.assert_not_called()
 
     def test_loaded_service_start_is_idempotent(self):
         with patch.object(self.manager, 'inspect', return_value=(True, 'running pid=123')), patch.object(self.manager, 'verify_existing'), patch.object(module, 'run') as run:

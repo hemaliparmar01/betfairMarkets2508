@@ -81,7 +81,19 @@ class FootballController extends Controller
                     })->get()->groupBy('sport')->map->pluck('betfair_event_id', 'pinnacle_event_id')->all();
             }
             $matchingController = app(FootballSyncController::class);
-            $pinnacleEvents = array_column($pinnacleAlerts, null, 'id');
+            $pinnacleEvents = [];
+            foreach ($pinnaclePayload['signals'] ?? $pinnacleAlerts as $event) {
+                if (! is_array($event) || ! isset($event['id']) || ! is_string($event['home'] ?? null) || ! is_string($event['away'] ?? null)
+                    || trim($event['home']) === '' || trim($event['away']) === ''
+                    || (in_array(strtolower(trim($event['home'])), ['yes', 'no'], true) && in_array(strtolower(trim($event['away'])), ['yes', 'no'], true))) {
+                    continue;
+                }
+                $eventSport = (string) ($event['sport'] ?? '');
+                $existingEvent = $pinnacleEvents[$eventSport][$event['id']] ?? null;
+                if ($existingEvent === null || (int) ($event['alerted'] ?? 0) > (int) ($existingEvent['alerted'] ?? 0)) {
+                    $pinnacleEvents[$eventSport][$event['id']] = $event;
+                }
+            }
             $remainingLookups = 1;
             $legacyFootballMatches = $sportsmeldKey === '' && isset($eventIds['soccer']) ? (getInRedis('Football:matches', readOnly: true) ?? []) : [];
             $footballIndex = $sportsmeldKey !== '' && isset($eventIds['soccer']) ? getInRedis('Football:matches', fixtureIndex: true, marketActivityIndex: true) : null;
@@ -90,12 +102,16 @@ class FootballController extends Controller
                 $alert['bf_back'] = $alert['bf_lay'] = $alert['bf_back_size'] = $alert['bf_lay_size'] = null;
                 $alert['full_market'] = [];
                 $tennisGames = ($alert['sport'] ?? null) === 'tennis' && preg_match('/\(games\)$/i', (string) ($alert['home'] ?? '')) === 1;
-                if (isset($alert['parent_id'], $pinnacleEvents[$alert['parent_id']])) {
-                    $parent = $pinnacleEvents[$alert['parent_id']];
+                $sport = $alert['sport'] ?? '';
+                $selectionHome = strtolower(trim((string) ($alert['home'] ?? '')));
+                $selectionAway = strtolower(trim((string) ($alert['away'] ?? '')));
+                $selectionNames = in_array($selectionHome, ['yes', 'no'], true) && in_array($selectionAway, ['yes', 'no'], true);
+                $parent = $pinnacleEvents[$sport][$alert['parent_id'] ?? ''] ?? ($selectionNames ? ($pinnacleEvents[$sport][$alert['id'] ?? ''] ?? null) : null);
+                $hasFixtureNames = ! $selectionNames || $parent !== null;
+                if ($parent !== null) {
                     $alert['home'] = $parent['home'];
                     $alert['away'] = $parent['away'];
                 }
-                $sport = $alert['sport'] ?? '';
                 $eventId = (string) (($alert['parent_id'] ?? null) ?: ($alert['id'] ?? ''));
                 $starts = $parent['starts'] ?? $parent['start'] ?? $alert['starts'] ?? $alert['start'] ?? null;
                 unset($parent);
@@ -106,7 +122,8 @@ class FootballController extends Controller
                 $alert['start_timestamp'] = $startTimestamp > 0 ? $startTimestamp : null;
                 $status = ($alert['is_live'] ?? false) ? 'Live' : 'Prematch';
                 $matchedFixture = null;
-                if (isset($sportKeys[$sport]) && ($sportsmeldKey !== '' || $sport === 'soccer')) {
+                if (isset($sportKeys[$sport]) && ($sportsmeldKey !== '' || $sport === 'soccer')
+                    && ($hasFixtureNames || isset($eventMappings[$sport][$eventId]))) {
                     $sportTable = $sportKeys[$sport];
                     $resolutionKey = $sport.'|'.$eventId.'|'.$status;
                     if (! array_key_exists($resolutionKey, $resolvedEvents)) {
@@ -211,9 +228,16 @@ class FootballController extends Controller
                         $resolvedEvents[$resolutionKey]['snapshot_checked'] = true;
                     }
                 }
+                if (! $hasFixtureNames) {
+                    $alert['home'] = $matchedFixture['team1'] ?? null;
+                    $alert['away'] = $matchedFixture['team2'] ?? null;
+                }
                 $period = (int) ($alert['period'] ?? 0);
                 $section = str_replace('_', ' ', strtolower(trim((string) ($alert['sect'] ?? ''))));
                 $outcome = strtolower(trim((string) ($alert['outcome'] ?? '')));
+                if ($selectionNames && in_array($section, ['btts', 'both teams to score'], true) && in_array($outcome, ['home', 'away', '1', '2'], true)) {
+                    $alert['outcome'] = $outcome = in_array($outcome, ['home', '1'], true) ? $selectionHome : $selectionAway;
+                }
                 $line = $alert['point'] ?? $alert['points'] ?? $alert['hdp'] ?? null;
                 if (! is_numeric($line) && preg_match('/(?:over|under|total|o\/u)\s*([0-9]+(?:\.[0-9]+)?)/i', $section.' '.$outcome, $lineMatch)) {
                     $line = $lineMatch[1];

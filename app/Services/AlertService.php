@@ -238,12 +238,41 @@ class AlertService
         if (! config('services.telegram.enabled') || ! in_array($type, [...self::FILTERS, 'goal', 'test', 'expired'], true)) {
             return null;
         }
-        if (! in_array($type, ['test', 'expired'], true)) {
-            if (empty($match['sportsApiPro_match_id']) || empty($match['team1']) || empty($match['team2']) || empty($match['tournament'])
-                || MatchBackup::isHidden($match, 'football')) {
+        $pinnacle = $context['pinnacle'] ?? null;
+        $matchId = $match['sportsApiPro_match_id'] ?? null;
+        if ($pinnacle !== null) {
+            if ($type !== 'prematch_drops' || ! is_array($pinnacle) || empty($pinnacle['id']) || empty($pinnacle['home']) || empty($pinnacle['away'])
+                || empty($pinnacle['alert_key']) || ($pinnacle['is_live'] ?? false) || ($pinnacle['feed'] ?? '') === 'live') {
                 return null;
             }
-            $predicate = $this->footballFilterPredicate($type);
+            $from = (float) ($pinnacle['from_price'] ?? 0);
+            $to = (float) ($pinnacle['to_price'] ?? 0);
+            $at = (int) ($pinnacle['alerted'] ?? 0);
+            if (! is_finite($from) || ! is_finite($to) || $from <= 1 || $to <= 1 || round(($from - $to) / $from * 100, 8) < 5
+                || $at < time() - 10800 || $at > time() + 30) {
+                return null;
+            }
+            $sport = strtolower((string) ($pinnacle['sport'] ?? 'other'));
+            $matchId = 'pinnacle:'.$sport.':'.$pinnacle['id'];
+            $starts = $pinnacle['starts'] ?? $pinnacle['start'] ?? null;
+            $starts = is_numeric($starts) ? (int) $starts : (is_string($starts) ? (int) strtotime($starts) : 0);
+            if ($starts > 100_000_000_000) {
+                $starts = intdiv($starts, 1000);
+            }
+            $match = ['team1' => $pinnacle['home'], 'team2' => $pinnacle['away'], 'tournament' => $pinnacle['league'] ?? null,
+                'timestamp' => $starts > 0 ? $starts : null, 'result_status' => 'Prematch'];
+            $context = ['provider' => 'pinnacle', 'sport' => $sport, 'pinnacle_event_id' => $pinnacle['id'], 'movement' => [
+                'market' => $pinnacle['sect'] ?? '', 'selection' => $pinnacle['outcome'] ?? '',
+                'point' => $pinnacle['point'] ?? $pinnacle['points'] ?? $pinnacle['hdp'] ?? null, 'period' => $pinnacle['period'] ?? 0,
+                'from' => $from, 'to' => $to, 'at' => $at, 'sport' => $sport, 'pinnacle_alert_key' => $pinnacle['alert_key'],
+            ]];
+        }
+        if (! in_array($type, ['test', 'expired'], true)) {
+            if ($pinnacle === null && (empty($matchId) || empty($match['team1']) || empty($match['team2']) || empty($match['tournament'])
+                || MatchBackup::isHidden($match, 'football'))) {
+                return null;
+            }
+            $predicate = $pinnacle === null ? $this->footballFilterPredicate($type) : null;
             if ($predicate !== null && ! $predicate($match)) {
                 return null;
             }
@@ -286,6 +315,7 @@ class AlertService
                     || ($type === 'market_shock' && (int) ($runner['shock_detected_at'] ?? 0) >= time() - 1200)) {
                     $movements[] = ['market' => $runner['sect'] ?? '', 'selection' => $runner['outcome'] ?? '',
                         'point' => $runner['point'] ?? null, 'period' => $runner['period'] ?? 0,
+                        'sport' => 'soccer', 'pinnacle_alert_key' => $runner['alert_key'] ?? null,
                         'from' => $runner['from_price'] ?? $runner['baseline_odds'] ?? null, 'to' => $runner['current_odds'] ?? null,
                         'at' => $type === 'market_shock' ? ($runner['shock_detected_at'] ?? null) : ($runner['initialBackOddsTimestamp'] ?? null), 'volume' => $runner['volume_surge'] ?? null];
                 }
@@ -322,9 +352,12 @@ class AlertService
         if ($trigger === null) {
             return null;
         }
-        $key = hash('sha256', implode('|', [$type, $match['sportsApiPro_match_id'] ?? $customerId, $trigger]));
+        $pinnacleAlertKey = $context['movement']['pinnacle_alert_key'] ?? null;
+        $key = hash('sha256', $type === 'prematch_drops' && is_string($pinnacleAlertKey) && $pinnacleAlertKey !== ''
+            ? implode('|', [$type, 'pinnacle', $context['movement']['sport'] ?? 'soccer', $pinnacleAlertKey])
+            : implode('|', [$type, $matchId ?? $customerId, $trigger]));
         $payload = [
-            'alert_type' => $type, 'match_id' => $match['sportsApiPro_match_id'] ?? null,
+            'alert_type' => $type, 'match_id' => $matchId,
             'match' => isset($match['team1']) ? $match['team1'].' vs '.$match['team2'] : null,
             'league' => $match['tournament'] ?? null, 'score' => $score, 'minute' => $minute,
             'kickoff' => isset($match['timestamp']) ? date('c', (int) $match['timestamp']) : null,
@@ -561,8 +594,9 @@ class AlertService
             $drop = is_numeric($m['from']) && (float) $m['from'] > 0 && is_numeric($m['to']) ? round(((float) $m['from'] - (float) $m['to']) / (float) $m['from'] * 100, 1) : null;
             $kickoff = isset($payload['kickoff']) ? Carbon::parse($payload['kickoff'])->timezone(getCurrentUserTimezone())->format('d M H:i') : '—';
             $shock = $type === 'market_shock';
+            $line = is_numeric($m['point'] ?? null) ? ' '.$m['point'] : '';
             $text = ($shock ? '⚡️ BF MARKETS | MARKET SHOCK DETECTED' : '📉 BF MARKETS | PREMATCH DROP ALERT')
-                ."\n\n🎯 Filter: ".($shock ? 'Market Shock Detector' : 'Prematch Drops')."\n{$base}\n⏰ Kickoff: {$kickoff}\n\n📊 Market: ".str_replace('_', ' ', $m['market']).' ('.$m['selection'].")\n📈 Odds Movement: {$from} 📉 {$to}".($drop === null ? '' : " (-{$drop}% Drop)");
+                ."\n\n🎯 Filter: ".($shock ? 'Market Shock Detector' : 'Prematch Drops')."\n{$base}\n⏰ Kickoff: {$kickoff}\n\n📊 Market: ".str_replace('_', ' ', $m['market']).$line.' ('.$m['selection'].")\n📈 Odds Movement: {$from} 📉 {$to}".($drop === null ? '' : " (-{$drop}% Drop)");
 
             return $text.($shock ? "\n💥 Volume Surge: ".($m['volume'] ?? 'No data available') : "\n🔥 Price Drop: ".($drop === null ? '—' : "-{$drop}%"));
         }

@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Console\Commands\ListenPinnodds;
 use App\Jobs\ProcessAlert;
 use App\Models\Customer;
 use App\Models\FootballMarket;
@@ -20,7 +21,10 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Str;
+use PHPUnit\Framework\Attributes\TestWith;
+use ReflectionMethod;
 use Tests\TestCase;
 
 class AlertSystemTest extends TestCase
@@ -267,6 +271,168 @@ class AlertSystemTest extends TestCase
         $this->assertDatabaseMissing('alert_deliveries', ['alert_id' => $id, 'customer_id' => $expired->id]);
         Bus::assertDispatched(ProcessAlert::class, static fn (ProcessAlert $job): bool => $job->task === 'deliver' && $job->queue === 'alerts-platform');
         Bus::assertDispatched(ProcessAlert::class, static fn (ProcessAlert $job): bool => $job->task === 'deliver' && $job->queue === 'alerts-telegram');
+    }
+
+    #[TestWith(['soccer'])]
+    #[TestWith(['basketball'])]
+    #[TestWith(['tennis'])]
+    #[TestWith(['ice-hockey'])]
+    #[TestWith(['american-football'])]
+    #[TestWith(['baseball'])]
+    #[TestWith(['cricket'])]
+    #[TestWith(['esports'])]
+    #[TestWith(['snooker'])]
+    public function test_pinnacle_main_market_drops_reach_telegram_for_each_sport_without_a_football_fixture(string $sport): void
+    {
+        $customer = $this->customer(['tg_prematch_drops' => true, 'popup_enabled' => false]);
+        Http::fake(['https://api.telegram.org/bottest-token/sendMessage' => Http::response(['ok' => true, 'result' => ['message_id' => 321]])]);
+        $drops = (new ReflectionMethod(ListenPinnodds::class, 'normalizeDrops'))->invoke(app(ListenPinnodds::class), [
+            'id' => 100, 'home' => 'Home Team', 'away' => 'Away Team', 'league' => 'Main League', 'sport' => $sport,
+            'sect' => 'Moneyline', 'outcome' => 'Home', 'period' => 0, 'starts' => time() + 600,
+            'from_price' => 3.20, 'to_price' => 2.75, 'alerted' => time(),
+        ], 'prematch');
+        $job = new ProcessAlert('pinnacle', ['alerts' => array_values($drops)]);
+
+        $job->handle(app(AlertService::class));
+
+        $this->assertDatabaseCount('football_matches', 0);
+        $alert = DB::table('alerts')->sole();
+        $this->assertSame('pinnacle:'.$sport.':100', $alert->match_id);
+        $payload = json_decode($alert->payload, true);
+        $this->assertSame($sport, $payload['context']['sport']);
+        $this->assertSame('Home Team vs Away Team', $payload['match']);
+        $this->assertSame(100, $payload['context']['pinnacle_event_id']);
+        $delivery = $this->delivery($alert->id, $customer);
+        app(AlertService::class)->deliver($delivery);
+        app(AlertService::class)->deliver($delivery);
+        $job->handle(app(AlertService::class));
+
+        $this->assertDatabaseCount('alerts', 1);
+        $this->assertDatabaseHas('alert_deliveries', ['id' => $delivery, 'status' => 'sent', 'remote_id' => '321']);
+        Http::assertSentCount(1);
+        Http::assertSent(fn ($request): bool => $request['chat_id'] === $customer->telegram_chat_id
+            && str_contains($request['text'], 'PREMATCH DROP ALERT') && str_contains($request['text'], '3.20 📉 2.75'));
+    }
+
+    public function test_pinnacle_drops_respect_saved_preferences_access_and_disconnect_at_delivery(): void
+    {
+        $allowed = $this->customer(['tg_prematch_drops' => true, 'popup_enabled' => false]);
+        $lifetime = $this->customer(['tg_prematch_drops' => true, 'popup_enabled' => false, 'trial_ends_at' => now()->subDay(), 'admin_free_days' => -1]);
+        $excluded = [];
+        foreach ([
+            ['tg_prematch_drops' => false],
+            ['tg_prematch_drops' => false, 'tg_market_shock' => true],
+            ['trial_ends_at' => now()->subDay()],
+            ['is_verified' => false],
+            ['is_blocked' => true],
+            ['is_suspended' => true],
+            ['telegram_available' => false, 'telegram_chat_id' => null],
+        ] as $attributes) {
+            $excluded[] = $this->customer(['tg_prematch_drops' => true, 'popup_enabled' => false, ...$attributes]);
+        }
+        $id = app(AlertService::class)->process('prematch_drops', [], ['pinnacle' => [
+            'id' => 100, 'home' => 'Sokol Prazsky', 'away' => 'Basketbal Polabi', 'league' => '1. Liga', 'sport' => 'basketball',
+            'sect' => 'Moneyline', 'outcome' => 'Home', 'from_price' => 1.76, 'to_price' => 1.67,
+            'alert_key' => 'basketball-main', 'alerted' => time(),
+        ]]);
+
+        app(AlertService::class)->fanout($id);
+
+        foreach ($excluded as $customer) {
+            $this->assertDatabaseMissing('alert_deliveries', ['alert_id' => $id, 'customer_id' => $customer->id]);
+        }
+        $this->assertDatabaseHas('alert_deliveries', ['alert_id' => $id, 'customer_id' => $lifetime->id, 'channel' => 'telegram']);
+        $delivery = DB::table('alert_deliveries')->where('alert_id', $id)->where('customer_id', $allowed->id)->value('id');
+        $allowed->forceFill(['tg_prematch_drops' => false])->save();
+        app(AlertService::class)->deliver($delivery);
+        $this->assertDatabaseHas('alert_deliveries', ['id' => $delivery, 'status' => 'skipped']);
+        Http::assertNothingSent();
+    }
+
+    public function test_pinnacle_rejects_secondary_live_stale_and_invalid_drops_and_deduplicates_football_scan(): void
+    {
+        $drop = ['id' => 100, 'home' => 'Torino', 'away' => 'Monza 1912', 'league' => 'Coppa Italia', 'sport' => 'soccer',
+            'sect' => 'Moneyline', 'outcome' => 'Home', 'from_price' => 4.0, 'to_price' => 3.5,
+            'alert_key' => 'soccer-main', 'alerted' => time(), 'starts' => time() + 600];
+        foreach ([
+            ['sect' => 'Asian Handicap', 'point' => -1.5], ['sect' => 'Total', 'point' => 2.75], ['period' => 1],
+            ['is_live' => true], ['feed' => 'live'], ['from_price' => 2.0, 'to_price' => 1.95],
+            ['from_price' => 0], ['to_price' => 1], ['to_price' => 4.1], ['from_price' => INF], ['to_price' => NAN],
+            ['alerted' => time() - 10801], ['alerted' => time() + 31], ['home' => ''], ['away' => ''], ['id' => null], ['alert_key' => ''],
+        ] as $changes) {
+            $this->assertNull(app(AlertService::class)->process('prematch_drops', [], ['pinnacle' => [...$drop, ...$changes]]));
+        }
+        $this->assertNull(app(AlertService::class)->process('market_shock', [], ['pinnacle' => $drop]));
+        $this->assertDatabaseCount('alerts', 0);
+
+        $id = app(AlertService::class)->process('prematch_drops', [], ['pinnacle' => $drop]);
+        $match = $this->fixture(['result_status' => 'Prematch', 'timestamp' => time() + 600, 'pinnacle_drop_triggered' => true,
+            'pinnacle_markets' => [['sect' => 'Moneyline', 'outcome' => 'Home', 'period' => 0, 'drop_triggered' => true,
+                'from_price' => 4.0, 'current_odds' => 3.5, 'initialBackOddsTimestamp' => time(), 'alert_key' => 'soccer-main']]]);
+        $this->assertSame($id, app(AlertService::class)->process('prematch_drops', $match->payload));
+        $this->assertDatabaseCount('alerts', 1);
+
+        $match->forceFill(['payload' => [...$match->payload, 'pinnacle_markets' => [[...$match->payload['pinnacle_markets'][0], 'alert_key' => 'soccer-second']]]])->save();
+        $second = app(AlertService::class)->process('prematch_drops', $match->payload);
+        $this->assertSame($second, app(AlertService::class)->process('prematch_drops', [], ['pinnacle' => [...$drop, 'alert_key' => 'soccer-second']]));
+        $this->assertDatabaseCount('alerts', 2);
+        $this->assertNotSame($id, app(AlertService::class)->process('prematch_drops', [], ['pinnacle' => [...$drop, 'sport' => 'basketball']]));
+        $this->assertDatabaseCount('alerts', 3);
+
+        $shockMatch = [...$match->payload, 'pinnacle_market_shock_detected_at' => time(),
+            'pinnacle_markets' => [[...$match->payload['pinnacle_markets'][0], 'shock_detected_at' => time()]]];
+        $shock = app(AlertService::class)->process('market_shock', $shockMatch);
+        $this->assertNotNull($shock);
+        $shockMatch['pinnacle_markets'][0]['alert_key'] = 'later-price-in-same-shock';
+        $this->assertSame($shock, app(AlertService::class)->process('market_shock', $shockMatch));
+        Http::assertNothingSent();
+    }
+
+    public function test_pinnacle_listener_queues_the_existing_alert_job_after_persisting_drops(): void
+    {
+        config(['cache.stores.redis.driver' => 'array']);
+        $command = app(ListenPinnodds::class);
+        $pending = (new ReflectionMethod(ListenPinnodds::class, 'normalizeDrops'))->invoke($command, [
+            'id' => 100, 'home' => 'Home', 'away' => 'Away', 'league' => 'League', 'sport' => 'snooker',
+            'sect' => 'Moneyline', 'outcome' => 'Away', 'from_price' => 2.0, 'to_price' => 1.8, 'alerted' => time(),
+        ], 'prematch');
+        $stored = null;
+        Redis::shouldReceive('get')->with('Pinnacle:drops')->andReturnNull();
+        Redis::shouldReceive('set')->times(3)->with('Pinnacle:drops', \Mockery::capture($stored))->andReturnTrue();
+        Redis::shouldReceive('expire')->times(3)->with('Pinnacle:drops', 10800)->andReturnTrue();
+
+        (new ReflectionMethod(ListenPinnodds::class, 'storeDrops'))->invoke($command, $pending, []);
+
+        $this->assertSame('snooker', json_decode($stored, true)['alerts'][0]['sport']);
+        Bus::assertDispatched(ProcessAlert::class, fn (ProcessAlert $job): bool => $job->task === 'pinnacle'
+            && $job->queue === 'alerts' && $job->data['alerts'] === array_values($pending));
+        Bus::fake([ProcessAlert::class]);
+        config(['services.telegram.enabled' => false]);
+        (new ReflectionMethod(ListenPinnodds::class, 'storeDrops'))->invoke($command, $pending, []);
+        config(['services.telegram.enabled' => true]);
+        (new ReflectionMethod(ListenPinnodds::class, 'storeDrops'))->invoke($command, [], []);
+        Bus::assertNotDispatched(ProcessAlert::class);
+        Http::assertNothingSent();
+    }
+
+    public function test_unmatched_soccer_total_drop_preserves_its_exact_market_line_and_kickoff(): void
+    {
+        $starts = time() + 3600;
+        $id = app(AlertService::class)->process('prematch_drops', [], ['pinnacle' => [
+            'id' => 101, 'home' => 'Brentford', 'away' => 'Wolverhampton', 'league' => 'Premier League 2 U21', 'sport' => 'soccer',
+            'sect' => 'Total', 'outcome' => 'Over', 'point' => 4.5, 'from_price' => 2.72, 'to_price' => 2.57,
+            'alert_key' => 'soccer-total-4.5', 'alerted' => time(), 'starts' => $starts * 1000,
+        ]]);
+
+        $this->assertNotNull($id);
+        $payload = json_decode(DB::table('alerts')->find($id)->payload, true);
+        $this->assertSame(date('c', $starts), $payload['kickoff']);
+        $this->assertSame(4.5, $payload['context']['movement']['point']);
+        $text = app(AlertService::class)->text($payload);
+        $this->assertStringContainsString('Market: Total 4.5 (Over)', $text);
+        $this->assertStringContainsString('2.72 📉 2.57', $text);
+        $this->assertDatabaseCount('football_matches', 0);
+        Http::assertNothingSent();
     }
 
     public function test_delivery_rechecks_expiry_disconnect_and_preferences_before_sending(): void

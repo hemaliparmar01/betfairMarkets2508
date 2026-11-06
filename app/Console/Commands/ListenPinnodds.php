@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use Amp\Http\Client\HttpClientBuilder;
 use Amp\Http\Client\Request;
 use App\Http\Controllers\Users\Football\FootballSyncController;
+use App\Jobs\ProcessAlert;
 use Illuminate\Console\Command;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Facades\Broadcast;
@@ -60,7 +61,7 @@ class ListenPinnodds extends Command
             try {
                 $this->storeDrops($pending, $feeds);
             } catch (Throwable $e) {
-                Log::warning('Pinnodds cache update failed', ['exception' => $e::class]);
+                Log::warning('Pinnodds cache update or alert dispatch failed', ['exception' => $e::class]);
 
                 return;
             }
@@ -262,5 +263,8 @@ class ListenPinnodds extends Command
             Redis::set('Pinnacle:drops', json_encode(['alerts' => $dashboardAlerts, 'signals' => $signals, 'feeds' => $feeds, 'updated_at' => time()], JSON_THROW_ON_ERROR));
             Redis::expire('Pinnacle:drops', 10800);
         });
+        if ($pending !== [] && config('services.telegram.enabled')) {
+            ProcessAlert::dispatch('pinnacle', ['alerts' => array_values($pending)]);
+        }
     }
 }

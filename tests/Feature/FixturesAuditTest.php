@@ -1268,6 +1268,47 @@ class FixturesAuditTest extends TestCase
         $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonPath('data.0.bf_back', null);
     }
 
+    public function test_pinnacle_binary_selections_use_cached_parent_teams_and_never_become_fixture_names(): void
+    {
+        config(['services.sportsmeld.key' => null]);
+        $this->withoutMiddleware(CustomerAuthService::class);
+        $this->app['auth']->guard('customers')->setUser(new Customer(['trial_ends_at' => now()->addDay()]));
+        app()->instance(FootballSyncController::class, $this->sync());
+        $start = time() + 3600;
+        $child = ['id' => 200, 'parent_id' => 100, 'sport' => 'soccer', 'home' => 'Yes', 'away' => 'No',
+            'league' => 'Belarusian Championship', 'sect' => 'btts', 'outcome' => 'Yes',
+            'is_live' => false, 'period' => 0, 'from_price' => 1.80, 'to_price' => 1.60, 'alerted' => time()];
+        $parent = [...$child, 'id' => 100, 'parent_id' => null, 'home' => 'Home Club', 'away' => 'Away Club',
+            'sect' => 'Moneyline', 'outcome' => 'Home', 'starts' => $start, 'to_price' => 1.79];
+        $payload = ['alerts' => [$child], 'signals' => [$child, $parent,
+            [...$parent, 'home' => 'Older Home Name', 'alerted' => time() - 60],
+            [...$parent, 'home' => 'Yes', 'away' => 'No']]];
+        Redis::shouldReceive('get')->andReturnUsing(function (string $key) use (&$payload): ?string {
+            return match ($key) {
+                'Pinnacle:drops' => json_encode($payload),
+                'Football:matches' => '[]',
+                default => null,
+            };
+        });
+        Http::preventStrayRequests();
+
+        $this->getJson(route('football.pinnacle-odds'))->assertOk()
+            ->assertJsonPath('data.0.home', 'Home Club')->assertJsonPath('data.0.away', 'Away Club')
+            ->assertJsonPath('data.0.outcome', 'Yes')->assertJsonPath('data.0.sect', 'btts')
+            ->assertJsonPath('data.0.start_timestamp', $start);
+
+        $payload['alerts'][0]['outcome'] = 'home';
+        $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonPath('data.0.outcome', 'yes');
+        $payload['alerts'][0]['outcome'] = 'away';
+        $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonPath('data.0.outcome', 'no');
+
+        $payload['signals'] = [$child, [...$parent, 'sport' => 'basketball']];
+        $this->getJson(route('football.pinnacle-odds'))->assertOk()
+            ->assertJsonPath('data.0.home', null)->assertJsonPath('data.0.away', null)
+            ->assertJsonPath('data.0.outcome', 'no')->assertJsonPath('data.0.bf_back', null);
+        Http::assertNothingSent();
+    }
+
     public function test_pinnacle_persists_sportsmeld_event_matches_and_reads_the_latest_exact_handicap(): void
     {
         config(['services.sportsmeld.key' => 'test-key']);

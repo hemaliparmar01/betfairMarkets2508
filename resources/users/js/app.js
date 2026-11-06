@@ -175,7 +175,7 @@ if (notificationPage && notificationState) {
                 telegramWindow = window.open('about:blank', '_blank');
                 if (telegramWindow) telegramWindow.opener = null;
                 const data = await notificationRequest(notificationPage.dataset.connectUrl, 'POST');
-                const destination = data.url;
+                const destination = data.web_url || data.url;
                 if (telegramWindow) telegramWindow.location.replace(destination);
                 else window.location.assign(destination);
                 notificationFeedback.textContent = (globalThis.bfTranslations?.["Open @BFMarketsAlertsBot and press Start to finish connecting."] ?? "Open @BFMarketsAlertsBot and press Start to finish connecting.");

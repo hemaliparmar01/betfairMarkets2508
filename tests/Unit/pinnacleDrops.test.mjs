@@ -62,6 +62,18 @@ test('simple has exactly four columns; advanced adds fair price, both edges and 
     assert.match(app.output.innerHTML, /Over 2.5 Goals/);
 });
 
+test('missing fixture names never turn BTTS selections into a match title in either view', () => {
+    const app = harness([{ ...base, home: null, away: null, sect: 'btts', outcome: 'Yes', point: null }]);
+    for (const view of ['simple', 'advanced']) {
+        app.state.view = view;
+        app.evaluate('render()');
+        assert.match(app.output.innerHTML, /No data available/);
+        assert.match(app.output.innerHTML, /aria-label="View btts: Yes"/);
+        assert.match(app.output.innerHTML, />Yes<\/span>/);
+        assert.doesNotMatch(app.output.innerHTML, /Yes v No|null v null|undefined v undefined/);
+    }
+});
+
 test('new or changed drops flash once; initial render and identical polls do not flash', () => {
     const app = harness();
     app.evaluate('render()');

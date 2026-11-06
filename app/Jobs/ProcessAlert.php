@@ -40,6 +40,12 @@ class ProcessAlert implements ShouldBeUnique, ShouldQueue
         }
         if ($this->task === 'scan') {
             $alerts->scan();
+        } elseif ($this->task === 'pinnacle') {
+            foreach ($this->data['alerts'] ?? [] as $drop) {
+                if (is_array($drop)) {
+                    $alerts->process('prematch_drops', [], ['pinnacle' => $drop]);
+                }
+            }
         } elseif ($this->task === 'source') {
             $alerts->source($this->data);
         } elseif ($this->task === 'fanout') {
