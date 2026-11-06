@@ -24,6 +24,9 @@ class AlertService
 
     public const FILTERS = ['ht00', '00_70', 'fav_losing', 'ltd', 'prematch_drops', 'market_shock'];
 
+    private const MAIN_MARKETS = ['moneyline', 'money line', '1x2', 'match odds', 'btts', 'both teams to score',
+        'over under 05', 'over under 15', 'over under 25', 'over under 35', 'over under 45'];
+
     public const STRATEGY = ['en' => 'Strategy: 1st Half Lay The Draw (LTD)', 'ka' => 'სტრატეგია: 1-ლი ტაიმის Lay The Draw (LTD)'];
 
     public function eligible(Customer $customer): bool
@@ -282,6 +285,7 @@ class AlertService
                 if (($type === 'prematch_drops' && ($runner['drop_triggered'] ?? false))
                     || ($type === 'market_shock' && (int) ($runner['shock_detected_at'] ?? 0) >= time() - 1200)) {
                     $movements[] = ['market' => $runner['sect'] ?? '', 'selection' => $runner['outcome'] ?? '',
+                        'point' => $runner['point'] ?? null, 'period' => $runner['period'] ?? 0,
                         'from' => $runner['from_price'] ?? $runner['baseline_odds'] ?? null, 'to' => $runner['current_odds'] ?? null,
                         'at' => $type === 'market_shock' ? ($runner['shock_detected_at'] ?? null) : ($runner['initialBackOddsTimestamp'] ?? null), 'volume' => $runner['volume_surge'] ?? null];
                 }
@@ -298,6 +302,17 @@ class AlertService
         }
         if (isset($context['movement'])) {
             $movement = $context['movement'];
+            if (in_array($type, ['prematch_drops', 'market_shock'], true)) {
+                $market = strtolower(str_replace('_', ' ', trim((string) ($movement['market'] ?? ''))));
+                $line = $movement['point'] ?? null;
+                if (! is_numeric($line) && preg_match('/(?:over|under|total|o\/u)\s*([0-9]+(?:\.[0-9]+)?)/i', $market.' '.($movement['selection'] ?? ''), $lineMatch)) {
+                    $line = $lineMatch[1];
+                }
+                if ((int) ($movement['period'] ?? 0) !== 0 || (! in_array($market, self::MAIN_MARKETS, true)
+                    && ! (preg_match('/^(total|totals|o\/u)(?:\s|$)/', $market) === 1 && is_numeric($line) && in_array((float) $line, [0.5, 1.5, 2.5, 3.5, 4.5], true)))) {
+                    return null;
+                }
+            }
             $trigger = implode('|', [$movement['market'], $movement['selection'], $movement['at']]);
         }
         if ($type === 'goal' && (empty($context['parent_alert_id']) || $score === null || $minute === null
@@ -422,6 +437,16 @@ class AlertService
                     $allowed = $customer->telegram_available && $customer->telegram_chat_id === $delivery->destination
                         && (! in_array($alert->type, self::FILTERS, true) || $customer->{'tg_'.$alert->type})
                         && ($alert->type !== 'goal' || $customer->tg_ltd);
+                    if ($allowed && in_array($alert->type, ['prematch_drops', 'market_shock'], true)) {
+                        $movement = $payload['context']['movement'] ?? [];
+                        $market = strtolower(str_replace('_', ' ', trim((string) ($movement['market'] ?? ''))));
+                        $line = $movement['point'] ?? null;
+                        if (! is_numeric($line) && preg_match('/(?:over|under|total|o\/u)\s*([0-9]+(?:\.[0-9]+)?)/i', $market.' '.($movement['selection'] ?? ''), $lineMatch)) {
+                            $line = $lineMatch[1];
+                        }
+                        $allowed = (int) ($movement['period'] ?? 0) === 0 && (in_array($market, self::MAIN_MARKETS, true)
+                            || (preg_match('/^(total|totals|o\/u)(?:\s|$)/', $market) === 1 && is_numeric($line) && in_array((float) $line, [0.5, 1.5, 2.5, 3.5, 4.5], true)));
+                    }
                 } elseif ($allowed) {
                     $allowed = $customer->popup_enabled;
                 }

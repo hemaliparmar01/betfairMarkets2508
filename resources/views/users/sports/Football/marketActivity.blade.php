@@ -50,7 +50,7 @@
             @media(prefers-reduced-motion:reduce) { #pinnacleDashboard .drop-flash td { animation:none; } }
         </style>
     @endpush
-    <section id="pinnacleDashboard" class="my-5 min-w-0" data-source-url="{{ route('football.pinnacle-odds') }}">
+    <section id="pinnacleDashboard" class="my-5 min-w-0" data-source-url="{{ route('football.pinnacle-odds') }}" data-timezone="{{ getCurrentUserTimezone() }}">
         <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div>
                 <h1 class="flex items-center gap-2 text-2xl font-extrabold text-[rgb(var(--text-main))] dark:text-[var(--text-on-primary)] max-[480px]:text-xl">
@@ -87,6 +87,12 @@
             </div>
         </div>
 
+        <div class="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label="{{ __('Time to Start') }}">
+            @foreach (['all' => 'All', 'today' => 'Today', '1h' => 'Starting in 1 Hour', '3h' => 'Starting in 3 Hours', 'future' => 'Upcoming / Future Days'] as $value => $label)
+                <button type="button" data-time-filter="{{ $value }}" aria-pressed="{{ $value === 'all' ? 'true' : 'false' }}" class="rounded-md px-3 py-1.5 text-xs font-bold {{ $value === 'all' ? 'bg-[var(--surface-primary)] text-white' : 'text-[rgb(var(--text-muted))]' }}">{{ __($label) }}</button>
+            @endforeach
+        </div>
+
         <div class="overflow-hidden rounded-2xl border border-[var(--border-neutral-5-6)] bg-[rgb(var(--surface))] dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--surface))]">
             <div class="flex flex-wrap items-center justify-between gap-3 bg-[var(--surface-heading)] px-4 py-3 text-white">
                 <h2 class="flex items-center gap-2 text-sm font-extrabold uppercase tracking-wide"><span class="size-2 rounded-full bg-[var(--surface-danger-0-3)]"></span>{{ __('Real-Time Pinnacle Odds Drops') }}</h2>
@@ -107,8 +113,11 @@
                 const modal = document.getElementById('pinnacleModal');
                 if (!root || !modal) return;
 
-                const state = { alerts: @json($pinnacleAlerts ?? []), sport: 'all', mode: 'prematch', view: 'simple', marketFilter: 'main', connected: @json($pinnacleFeedConnected ?? false), feeds: @json($pinnacleFeeds ?? []), openAlertKey: null, collapsedGroups: new Set(), flashes: new Map() };
+                const state = { alerts: @json($pinnacleAlerts ?? []), sport: 'all', mode: 'prematch', view: 'simple', marketFilter: 'main', timeFilter: 'all', connected: @json($pinnacleFeedConnected ?? false), feeds: @json($pinnacleFeeds ?? []), openAlertKey: null, collapsedGroups: new Set(), flashes: new Map() };
+                const matchStartLabels = {{ Illuminate\Support\Js::from(['minute' => __('Starts in :count min'), 'minutes' => __('Starts in :count mins'), 'hour' => __('Starts in :count hour'), 'hours' => __('Starts in :count hours'), 'day' => __('Starts in :count day'), 'days' => __('Starts in :count days'), 'now' => __('Starting now')]) }};
                 const sportKey = value => { const key = String(value || '').toLowerCase().trim().replace(/\s+/g, '-'); return key === 'hockey' ? 'ice-hockey' : key; };
+                const matchDayFormat = new Intl.DateTimeFormat('en-CA', { timeZone: root.dataset.timezone || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' });
+                const matchStartFormat = new Intl.DateTimeFormat(document.documentElement.lang === 'ka' ? 'ka-GE' : 'en-GB', { timeZone: root.dataset.timezone || 'UTC', year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZoneName: 'short' });
                 const number = value => value === null || value === undefined || value === '' ? null : Number(value);
                 const price = value => Number.isFinite(number(value)) ? number(value).toFixed(2) : '—';
                 const nvpPrice = value => number(value) > 1 ? price(value) : '—';
@@ -174,20 +183,36 @@
                     return /^(spreads?|asian handicap|handicap)(?:\s|$)/.test(section) ? 3 : 4;
                 };
                 const matchesMarketFilter = alert => state.marketFilter === 'all' || (state.marketFilter === 'handicap' ? marketPriority(alert) === 3 : marketPriority(alert) < 3);
-                const filtered = () => state.alerts.filter(alert => matchesMarketFilter(alert) && Math.round(drop(alert) * 100000000) / 100000000 >= 5 && (state.sport === 'all' || sportKey(alert.sport) === state.sport) && (state.mode === 'live' ? isLive(alert) : !isLive(alert))).sort((a, b) => (number(b.alerted) || 0) - (number(a.alerted) || 0));
+                const filtered = (now = Date.now()) => {
+                    const today = state.timeFilter === 'today' || state.timeFilter === 'future' ? matchDayFormat.format(now) : null;
+                    return state.alerts.filter(alert => {
+                        if (!matchesMarketFilter(alert) || !(Math.round(drop(alert) * 100000000) / 100000000 >= 5) || (state.mode === 'live' ? !isLive(alert) : isLive(alert))) return false;
+                        if (!state.timeFilter || state.timeFilter === 'all') return true;
+                        const start = number(alert.start_timestamp) * 1000;
+                        if (!Number.isFinite(start) || start <= 0 || start > 8640000000000000) return false;
+                        if (state.timeFilter === 'today') return matchDayFormat.format(start) === today;
+                        if (isLive(alert) || start < now) return false;
+                        if (state.timeFilter === 'future') return matchDayFormat.format(start) !== today;
+                        return start - now <= (state.timeFilter === '1h' ? 3600000 : 10800000);
+                    }).sort((a, b) => (number(b.alerted) || 0) - (number(a.alerted) || 0));
+                };
                 const render = () => {
-                    root.querySelectorAll('[data-sport]').forEach(button => {
-                        const count = state.alerts.filter(alert => matchesMarketFilter(alert) && Math.round(drop(alert) * 100000000) / 100000000 >= 5 && (button.dataset.sport === 'all' || sportKey(alert.sport) === button.dataset.sport) && (state.mode === 'live' ? isLive(alert) : !isLive(alert))).length;
-                        button.querySelector('[data-count]').textContent = count;
-                    });
-                    root.querySelector('[data-alert-meta]').textContent = `${state.mode === 'live' ? 'Live' : 'Prematch'} · ODDS-DROP · ≥5%`;
-
+                    const now = Date.now();
                     const groups = new Map();
-                    filtered().forEach(alert => {
+                    const sportCounts = new Map();
+                    const alerts = filtered(now);
+                    for (const alert of alerts) {
+                        const sport = sportKey(alert.sport);
+                        sportCounts.set(sport, (sportCounts.get(sport) || 0) + 1);
+                        if (state.sport !== 'all' && sport !== state.sport) continue;
                         const key = matchKey(alert);
                         if (!groups.has(key)) groups.set(key, []);
                         groups.get(key).push(alert);
+                    }
+                    root.querySelectorAll('[data-sport]').forEach(button => {
+                        button.querySelector('[data-count]').textContent = button.dataset.sport === 'all' ? alerts.length : (sportCounts.get(button.dataset.sport) || 0);
                     });
+                    root.querySelector('[data-alert-meta]').textContent = `${state.mode === 'live' ? 'Live' : 'Prematch'} · ODDS-DROP · ≥5%`;
 
                     if (!groups.size) {
                         root.querySelector('[data-alerts]').innerHTML = `<div class="px-5 py-14 text-center text-sm font-semibold text-[var(--text-muted-soft)]"><div class="mb-2 text-4xl opacity-50">🔍</div>{{ __('No alerts match the current filters.') }}</div>`;
@@ -196,27 +221,41 @@
 
                     const advanced = state.view === 'advanced';
                     const columns = advanced ? 7 : 4;
-                    const info = (label, type) => `${label} <button type="button" aria-label="About ${label}" class="inline-flex size-3.5 items-center justify-center rounded-full bg-[var(--surface-neutral-5-8)] text-[10px] font-bold normal-case text-[var(--text-muted-soft)]" onmouseenter="showOddsTooltip(event, '${type}')" onmouseleave="hideOddsTooltip()" onfocus="showOddsTooltip(event, '${type}')" onblur="hideOddsTooltip()">i</button>`;
+                    const info = (label, type) => `${label} <button type="button" aria-label="About ${label}" class="inline-flex size-3.5 items-center justify-center rounded-full bg-[var(--surface-neutral-5-8)] text-[10px] font-bold normal-case text-[var(--text-muted-soft)]" onmouseenter="showOddsTooltip(event, '${type}')" onmouseleave="hideOddsTooltip()" onfocus="showOddsTooltip(event, '${type}')" onblur="hideOddsTooltip()"${type === 'moneyline' ? ` onclick="event.stopPropagation(); showOddsTooltip(event, 'moneyline')"` : ''}>i</button>`;
                     const header = `<table class="drops-table ${advanced ? 'drops-advanced' : 'drops-simple'} text-xs text-[rgb(var(--text-main))] dark:text-[var(--text-on-primary)]"><caption class="sr-only">${(globalThis.bfTranslations?.["Pinnacle odds drops, grouped by match"] ?? "Pinnacle odds drops, grouped by match")}</caption><colgroup>${(advanced ? [8,32,17,8,10,18,7] : [10,46,25,19]).map(width => `<col style="width:${width}%">`).join('')}</colgroup><thead><tr><th scope="col">${(globalThis.bfTranslations?.["Drop"] ?? "Drop")}</th><th scope="col">${(globalThis.bfTranslations?.["Match / Market"] ?? "Match / Market")}</th><th scope="col">${(globalThis.bfTranslations?.["Pinnacle Odds"] ?? "Pinnacle Odds")}</th>${advanced ? `<th scope="col">${info('NVP', 'nvp')}</th>` : ''}<th scope="col">Betfair</th>${advanced ? `<th scope="col">${info((globalThis.bfTranslations?.["Edge %"] ?? "Edge %"), 'edge')}</th><th scope="col">${(globalThis.bfTranslations?.["Time"] ?? "Time")}</th>` : ''}</tr></thead>`;
                     const html = [...groups.values()].map((alerts, groupIndex) => {
                         const first = alerts[0];
                         const groupKey = matchKey(first);
+                        const matchStart = number(first.start_timestamp) * 1000;
+                        const secondsUntilStart = (matchStart - now) / 1000;
+                        let countdown = '';
+                        if (Number.isFinite(matchStart) && matchStart > 0 && matchStart <= 8640000000000000 && secondsUntilStart >= 0 && !isLive(first)) {
+                            if (secondsUntilStart === 0) {
+                                countdown = matchStartLabels.now;
+                            } else {
+                                const unit = secondsUntilStart < 3600 ? 'minute' : secondsUntilStart < 86400 ? 'hour' : 'day';
+                                const count = unit === 'minute' ? Math.ceil(secondsUntilStart / 60) : Math.floor(secondsUntilStart / (unit === 'hour' ? 3600 : 86400));
+                                countdown = matchStartLabels[unit + (count === 1 ? '' : 's')].replace(':count', count);
+                            }
+                        }
                         const collapsed = state.collapsedGroups.has(groupKey);
                         const rows = alerts.sort((a, b) => marketPriority(a) - marketPriority(b)).map(alert => {
                             const alertIndex = state.alerts.indexOf(alert);
                             const from = number(alert.from_price); const to = number(alert.to_price);
+                            const betfairOdds = betfairPrice(alert);
+                            const marketName = escapeHtml(marketLabel(alert));
                             const down = to < from;
                             const flash = (state.flashes.get(alertIdentity(alert)) || 0) > Date.now();
-                            return `<tr tabindex="0" role="button" aria-label="View ${escapeHtml(marketLabel(alert))}: ${escapeHtml(marketPosition(alert))}" data-alert-index="${alertIndex}" data-alert-key="${escapeHtml(alertIdentity(alert))}" class="drop-row ${flash ? 'drop-flash' : ''}">
+                            return `<tr tabindex="0" role="button" aria-label="View ${marketName}: ${escapeHtml(marketPosition(alert))}" data-alert-index="${alertIndex}" data-alert-key="${escapeHtml(alertIdentity(alert))}" class="drop-row ${flash ? 'drop-flash' : ''}">
                                 <td class="font-extrabold text-[var(--text-danger-edge)] dark:text-[var(--text-red-400)]">−${Math.abs(drop(alert)).toFixed(1)}%</td>
-                                <td><strong class="block font-bold text-[rgb(var(--text-main))] dark:text-[var(--text-on-primary)]">${escapeHtml(marketLabel(alert))}</strong><span class="mt-0.5 block text-[11px] text-[rgb(var(--text-muted))] dark:text-[rgb(var(--text-soft))]">${escapeHtml(marketPosition(alert))}</span><small class="mt-0.5 block text-[9px] uppercase text-[var(--text-muted-soft)]">${isLive(alert) ? 'LIVE' : 'PREMATCH'} · ${escapeHtml(alert.sport || '')}${advanced ? `<span class="min-[641px]:hidden"> · ${alertTime(alert.alerted)}</span>` : ` · ${alertTime(alert.alerted)}`}</small></td>
+                                <td><strong class="block font-bold text-[rgb(var(--text-main))] dark:text-[var(--text-on-primary)]">${marketPriority(alert) === 0 ? info(marketName, 'moneyline') : marketName}</strong><span class="mt-0.5 block text-[11px] text-[rgb(var(--text-muted))] dark:text-[rgb(var(--text-soft))]">${escapeHtml(marketPosition(alert))}</span><small class="mt-0.5 block text-[9px] uppercase text-[var(--text-muted-soft)]">${isLive(alert) ? 'LIVE' : 'PREMATCH'} · ${escapeHtml(alert.sport || '')}${advanced ? `<span class="min-[641px]:hidden"> · ${alertTime(alert.alerted)}</span>` : ` · ${alertTime(alert.alerted)}`}</small></td>
                                 <td class="font-bold"><span class="drop-odds"><span>${price(from)}</span><span aria-hidden="true">→</span><b>${price(to)}</b>${from !== to ? `<span class="${down ? 'text-[var(--text-danger-edge)]' : 'text-[var(--text-emerald-600)]'}" aria-label="Odds ${down ? 'decreased' : 'increased'}">${down ? '↓' : '↑'}</span>` : ''}</span>${alert.pinnacle_selection ? `<small class="block font-normal">${escapeHtml(alert.pinnacle_selection)}</small>` : ''}</td>
                                 ${advanced ? `<td class="text-[var(--text-slate-700)] dark:text-[var(--text-slate-300)]">${nvpPrice(fairPrice(alert))}</td>` : ''}
-                                <td class="font-semibold text-[var(--text-brand-50-3)] dark:text-[rgb(var(--text-soft))]">${price(betfairPrice(alert))}${alert.bf_selection ? `<small class="block font-normal">${escapeHtml(alert.bf_selection)}</small>` : ''}</td>
+                                <td class="font-semibold text-[var(--text-brand-50-3)] dark:text-[rgb(var(--text-soft))]"${betfairOdds === null ? ` tabindex="0" onmouseenter="showOddsTooltip(event, 'betfair')" onmouseleave="hideOddsTooltip()" onfocus="showOddsTooltip(event, 'betfair')" onblur="hideOddsTooltip()"` : ''}>${betfairOdds === null ? `<span>${price(betfairOdds)}</span>` : price(betfairOdds)}${alert.bf_selection ? `<small class="block font-normal">${escapeHtml(alert.bf_selection)}</small>` : ''}</td>
                                 ${advanced ? `<td class="text-[10px] leading-relaxed"><span class="block ${edgeClass(pinnacleEdge(alert))}">${(globalThis.bfTranslations?.["Pinnacle:"] ?? "Pinnacle:")} ${edgeText(pinnacleEdge(alert))}</span><span class="block ${edgeClass(edge(alert))}">BF: ${betfairEdgeText(alert)}</span></td><td class="text-[9px] text-[var(--text-muted-soft)]">${alertTime(alert.alerted)}</td>` : ''}
                             </tr>`;
                         }).join('');
-                        return `<tbody data-group-key="${escapeHtml(groupKey)}"><tr class="drop-group"><td colspan="${columns}"><button type="button" data-group="${groupIndex}" data-group-key="${escapeHtml(groupKey)}" aria-expanded="${!collapsed}" aria-controls="pinnacle-group-${groupIndex}" class="flex w-full items-center justify-between gap-3 border-y border-[var(--border-neutral-5-6)] bg-[var(--surface-neutral-0-21)] px-4 py-3 text-left dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--surface))]"><span class="min-w-0"><strong class="block text-sm font-extrabold text-[rgb(var(--text-main))] dark:text-[var(--text-on-primary)]">${escapeHtml(first.home)} v ${escapeHtml(first.away)}</strong><small class="mt-1 block text-[10px] text-[var(--text-brand-35)] dark:text-[rgb(var(--text-soft))]">${escapeHtml(first.league || '')}</small>${first.bf_home && first.bf_away ? `<small class="block text-[10px]">Betfair · ${escapeHtml(first.bf_home)} v ${escapeHtml(first.bf_away)}</small>` : ''}</span><span class="shrink-0 text-[10px] font-semibold text-[var(--text-brand-50-3)] dark:text-[rgb(var(--text-soft))]">${alerts.length} alert${alerts.length === 1 ? '' : 's'} <span data-group-toggle class="ml-2 text-base font-bold" aria-hidden="true">${collapsed ? '↓' : '↑'}</span></span></button></td></tr></tbody><tbody id="pinnacle-group-${groupIndex}" data-group-body="${groupIndex}" class="${collapsed ? 'hidden' : ''}">${rows}</tbody>`;
+                        return `<tbody data-group-key="${escapeHtml(groupKey)}"><tr class="drop-group"><td colspan="${columns}"><button type="button" data-group="${groupIndex}" data-group-key="${escapeHtml(groupKey)}" aria-expanded="${!collapsed}" aria-controls="pinnacle-group-${groupIndex}" class="flex w-full items-center justify-between gap-3 border-y border-[var(--border-neutral-5-6)] bg-[var(--surface-neutral-0-21)] px-4 py-3 text-left dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--surface))]"><span class="min-w-0"><strong class="block text-sm font-extrabold text-[rgb(var(--text-main))] dark:text-[var(--text-on-primary)]">${escapeHtml(first.home)} v ${escapeHtml(first.away)}</strong><small class="mt-1 block text-xs font-semibold text-[var(--text-emerald-700)] dark:text-[var(--text-emerald-400)]">${escapeHtml(first.league || '')}</small><small class="mt-1 block text-xs font-semibold text-[var(--text-amber-700)] dark:text-[var(--text-amber-400)]">${Number.isFinite(matchStart) && matchStart > 0 && matchStart <= 8640000000000000 ? escapeHtml(matchStartFormat.format(matchStart)) : '—'}${countdown ? ' · ' + escapeHtml(countdown) : ''}</small>${first.bf_home && first.bf_away ? `<small class="block text-[10px]">Betfair · ${escapeHtml(first.bf_home)} v ${escapeHtml(first.bf_away)}</small>` : ''}</span><span class="shrink-0 text-[10px] font-semibold text-[var(--text-brand-50-3)] dark:text-[rgb(var(--text-soft))]">${alerts.length} alert${alerts.length === 1 ? '' : 's'} <span data-group-toggle class="ml-2 text-base font-bold" aria-hidden="true">${collapsed ? '↓' : '↑'}</span></span></button></td></tr></tbody><tbody id="pinnacle-group-${groupIndex}" data-group-body="${groupIndex}" class="${collapsed ? 'hidden' : ''}">${rows}</tbody>`;
                     }).join('');
                     const target = root.querySelector('[data-alerts]');
                     if (globalThis.updateFixtureRows) {
@@ -243,10 +282,11 @@
                     const groupButton = event.target.closest('[data-group]');
                     const alertButton = event.target.closest('[data-alert-index]');
                     if (sportButton) { state.sport = sportButton.dataset.sport; root.querySelectorAll('[data-sport]').forEach(button => { const active = button === sportButton; button.classList.toggle('border-[var(--border-heading)]', active); button.classList.toggle('bg-[var(--surface-heading)]', active); button.classList.toggle('text-white', active); button.classList.toggle('border-[var(--border-control)]', !active); button.classList.toggle('bg-[rgb(var(--surface))]', !active); button.classList.toggle('text-[var(--text-secondary-strong)]', !active); }); render(); }
-                    const marketButton = event.target.closest('[data-market-filter]');
+                    const marketButton = event.target.closest('[data-market-filter], [data-time-filter]');
                     if (marketButton) {
-                        state.marketFilter = marketButton.dataset.marketFilter;
-                        root.querySelectorAll('[data-market-filter]').forEach(button => {
+                        const timeFilter = marketButton.dataset.timeFilter;
+                        state[timeFilter ? 'timeFilter' : 'marketFilter'] = timeFilter || marketButton.dataset.marketFilter;
+                        root.querySelectorAll(timeFilter ? '[data-time-filter]' : '[data-market-filter]').forEach(button => {
                             const active = button === marketButton;
                             button.setAttribute('aria-pressed', String(active));
                             button.classList.toggle('bg-[var(--surface-primary)]', active);
@@ -328,6 +368,8 @@
                 document.addEventListener('visibilitychange', () => { if (!document.hidden) scheduleRefresh(); });
 
                 const tooltipTexts = {
+                    betfair: @json(__('Currently unavailable on Betfair')),
+                    moneyline: @json(__('Pinnacle: Moneyline = Betfair: Match Odds')),
                     nvp: (globalThis.bfTranslations?.["NVP (No-Vig Price) is the 'fair' or 'true' odds for an outcome. It is calculated by removing the bookmaker's margin (vigorish) from the Pinnacle odds. It represents the true probability of the event without the bookmaker's built-in profit."] ?? "NVP (No-Vig Price) is the 'fair' or 'true' odds for an outcome. It is calculated by removing the bookmaker's margin (vigorish) from the Pinnacle odds. It represents the true probability of the event without the bookmaker's built-in profit."),
 
                     edge: (globalThis.bfTranslations?.["Edge % represents the percentage difference between the current odds (Pinnacle or Betfair) and the fair NVP odds. A positive (+) Edge % means you are getting better odds than the fair price (Value Bet). A negative (-) Edge % means the odds are lower than the fair price."] ?? "Edge % represents the percentage difference between the current odds (Pinnacle or Betfair) and the fair NVP odds. A positive (+) Edge % means you are getting better odds than the fair price (Value Bet). A negative (-) Edge % means the odds are lower than the fair price.")
@@ -353,11 +395,12 @@
                 tooltip.style.left = '0px';
                 tooltip.style.top = '0px';
 
-                const rect = event.currentTarget.getBoundingClientRect();
+                const anchor = type === 'betfair' ? event.currentTarget.firstElementChild : event.currentTarget;
+                const rect = anchor.getBoundingClientRect();
                 const width = tooltip.offsetWidth;
                 const height = tooltip.offsetHeight;
 
-                // Center horizontally above the info icon
+                // Center on the anchor while keeping the tooltip inside the viewport.
                 const left = Math.max(
                     12,
                     Math.min(
@@ -366,8 +409,9 @@
                     )
                 );
 
-                // Always position above the icon
-                const top = rect.top - height - 8 >= 8 ? rect.top - height - 8 : Math.min(rect.bottom + 8, window.innerHeight - height - 8);
+                // Prefer above the anchor when there is room.
+                const gap = type === 'betfair' ? 4 : 8;
+                const top = rect.top - height - gap >= 8 ? rect.top - height - gap : Math.min(rect.bottom + gap, window.innerHeight - height - 8);
 
                 tooltip.style.left = `${left}px`;
                 tooltip.style.top = `${top}px`;

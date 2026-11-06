@@ -25,7 +25,7 @@ class ContactMessageService
                 'status' => 'new',
             ]);
 
-            $adminEmail = 'office@betfairmarkets.com';
+            $adminEmail = 'office@bfmarketsanalytics.com';
 
             if (filled($adminEmail)) {
                 Mail::send('users.emails.contact-message', ['contactMessage' => $contactMessage], function (Message $mailMessage) use ($adminEmail, $contactMessage): void {

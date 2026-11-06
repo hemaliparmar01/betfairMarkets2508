@@ -246,7 +246,8 @@ class AlertSystemTest extends TestCase
         $customer = $this->customer();
         $id = app(AlertService::class)->source($this->source());
         $delivery = $this->delivery($id, $customer);
-        Http::fake(['https://api.telegram.org/bottest-token/sendMessage' => Http::sequence()->push(['ok' => true, 'result' => ['message_id' => 42]])->push(['ok' => false, 'error_code' => 403], 403)]);
+        $responses = Http::sequence()->push(['ok' => true, 'result' => ['message_id' => 42]])->push(['ok' => false, 'error_code' => 403], 403);
+        Http::fake(['https://api.telegram.org/bottest-token/sendMessage' => $responses]);
         app(AlertService::class)->deliver($delivery);
         app(AlertService::class)->deliver($delivery);
         Http::assertSentCount(1);
@@ -259,6 +260,35 @@ class AlertSystemTest extends TestCase
         app(AlertService::class)->deliver($testDelivery);
         $this->assertFalse($customer->fresh()->telegram_available);
         $this->assertTrue($customer->fresh()->tg_ltd);
+
+        $sent = Http::recorded()->count();
+        foreach (['prematch_drops', 'market_shock'] as $type) {
+            foreach ([
+                ['moneyline', null, 0, true],
+                ['Total', 2.5, 0, true],
+                ['Total', null, 0, true],
+                ['BTTS', null, 0, true],
+                ['Asian Handicap', -1.5, 0, false],
+                ['Total', 2.75, 0, false],
+                ['Moneyline', null, 1, false],
+            ] as [$market, $point, $period, $expected]) {
+                $recipient = $this->customer(['tg_'.$type => true]);
+                $payload = ['alert_type' => $type, 'match' => 'Torino vs Monza 1912', 'league' => 'Coppa Italia',
+                    'context' => ['movement' => ['market' => $market, 'selection' => 'Over 2.5', 'point' => $point, 'period' => $period, 'from' => 4.0, 'to' => 3.5]]];
+                $queued = DB::table('alerts')->insertGetId(['event_key' => (string) Str::uuid(), 'type' => $type,
+                    'match_id' => '12345', 'payload' => json_encode($payload), 'created_at' => now()]);
+                $pending = $this->delivery($queued, $recipient);
+                if ($expected) {
+                    $responses->push(['ok' => true, 'result' => ['message_id' => 43]]);
+                    $sent++;
+                }
+
+                app(AlertService::class)->deliver($pending);
+
+                $this->assertDatabaseHas('alert_deliveries', ['id' => $pending, 'status' => $expected ? 'sent' : 'skipped']);
+                Http::assertSentCount($sent);
+            }
+        }
     }
 
     public function test_rate_limit_retries_and_unknown_outcomes_do_not_duplicate_notifications(): void
@@ -342,6 +372,52 @@ class AlertSystemTest extends TestCase
         $this->assertSame($drop, $alerts->process('prematch_drops', $prematch));
         $this->assertSame($shock, $alerts->process('market_shock', $prematch));
         $this->assertDatabaseCount('alerts', 5);
+
+        $pinnacle = [...$prematch, 'markets' => [], 'pinnacle_drop_triggered' => true, 'pinnacle_market_shock_detected_at' => time(),
+            'pinnacle_markets' => [
+                ['sect' => 'Total', 'outcome' => 'Over', 'point' => 2.5, 'period' => 0, 'drop_triggered' => true, 'shock_detected_at' => time(), 'initialBackOddsTimestamp' => time(), 'from_price' => 4, 'current_odds' => 3.5],
+                ['sect' => 'Asian Handicap', 'outcome' => 'Home', 'point' => -1.5, 'period' => 0, 'drop_triggered' => true, 'shock_detected_at' => time(), 'initialBackOddsTimestamp' => time(), 'from_price' => 4, 'current_odds' => 3.5],
+                ['sect' => 'Moneyline', 'outcome' => 'Home', 'period' => 1, 'drop_triggered' => true, 'shock_detected_at' => time(), 'initialBackOddsTimestamp' => time(), 'from_price' => 4, 'current_odds' => 3.5],
+            ]];
+        foreach (['prematch_drops', 'market_shock'] as $type) {
+            $id = $alerts->process($type, $pinnacle);
+            $this->assertNotNull($id);
+            $movement = json_decode(DB::table('alerts')->find($id)->payload, true)['context']['movement'];
+            $this->assertSame('Total', $movement['market']);
+            $this->assertSame(2.5, $movement['point']);
+            $this->assertSame(0, $movement['period']);
+        }
+        $this->assertDatabaseCount('alerts', 7);
+
+        foreach (['prematch_drops', 'market_shock'] as $type) {
+            foreach ([
+                ['moneyline', null, 0, true],
+                ['Money_Line', null, 0, true],
+                ['MATCH_ODDS', null, 0, true],
+                ['1X2', null, 0, true],
+                ['BTTS', null, 0, true],
+                ['BOTH_TEAMS_TO_SCORE', null, 0, true],
+                ['Total', 0.5, 0, true],
+                ['Total', 1.5, 0, true],
+                ['Total', 2.5, 0, true],
+                ['Total', 3.5, 0, true],
+                ['Total', 4.5, 0, true],
+                ['OVER_UNDER_25', null, 0, true],
+                ['Total', 2.75, 0, false],
+                ['Total', 5.5, 0, false],
+                ['Total', null, 0, false],
+                ['Asian Handicap', -1.5, 0, false],
+                ['CORRECT_SCORE', null, 0, false],
+                ['HALF_TIME', null, 0, false],
+                ['Moneyline', null, 1, false],
+                ['Total', 2.5, 1, false],
+                ['BTTS', null, 1, false],
+            ] as $index => [$market, $point, $period, $expected]) {
+                $movement = ['market' => $market, 'selection' => 'Selection '.$index, 'point' => $point, 'period' => $period, 'from' => 4, 'to' => 3.5, 'at' => time() + $index];
+                $id = $alerts->process($type, $prematch, ['movement' => $movement]);
+                $this->assertSame($expected, $id !== null, $type.' '.$market.' period '.$period);
+            }
+        }
     }
 
     public function test_platform_broadcast_contains_both_languages_and_no_telegram_credentials(): void

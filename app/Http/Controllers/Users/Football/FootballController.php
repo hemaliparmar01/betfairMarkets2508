@@ -103,6 +103,7 @@ class FootballController extends Controller
                 if ($startTimestamp > 100_000_000_000) {
                     $startTimestamp = intdiv($startTimestamp, 1000);
                 }
+                $alert['start_timestamp'] = $startTimestamp > 0 ? $startTimestamp : null;
                 $status = ($alert['is_live'] ?? false) ? 'Live' : 'Prematch';
                 $matchedFixture = null;
                 if (isset($sportKeys[$sport]) && ($sportsmeldKey !== '' || $sport === 'soccer')) {

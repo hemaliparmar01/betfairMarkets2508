@@ -1475,6 +1475,7 @@ class FootballSyncController extends Controller
                 }
                 $display = [
                     'sect' => (string) ($alert['sect'] ?? ''), 'outcome' => (string) ($alert['outcome'] ?? ''),
+                    'period' => (int) ($alert['period'] ?? 0),
                     'point' => $alert['point'] ?? $alert['points'] ?? $alert['hdp'] ?? null, 'from_price' => $from,
                 ];
                 if (($state['alert_key'] ?? null) === ($alert['alert_key'] ?? json_encode($alert))) {

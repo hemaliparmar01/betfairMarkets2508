@@ -158,7 +158,7 @@
                                 <div class="pt-2">
                                     <button
                                         type="submit"
-                                        class="inline-flex w-full items-center justify-center rounded-2xl px-6 py-3 text-sm font-semibold text-[rgb(var(--surface))] transition hover:-translate-y-0.5 betguru-gradient-cta sm:w-auto"
+                                        class="inline-flex w-full cursor-pointer items-center justify-center rounded-2xl bg-gradient-to-r from-[var(--surface-heading)] to-[var(--surface-primary)] px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:brightness-110 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--border-primary)] sm:w-auto"
                                     >
                                         {{ __('Send Message') }}
                                     </button>
@@ -177,7 +177,7 @@
                                         <p class="text-xs font-semibold uppercase tracking-[0.16em] theme-text-primary">
                                             {{ __('Email Support') }}
                                         </p>
-                                        <a href="mailto:office@betfairmarkets.com" class="mt-2 inline-flex text-base font-semibold theme-text-main hover:opacity-80">
+                                        <a href="mailto:office@bfmarketsanalytics.com" class="mt-2 inline-flex text-base font-semibold theme-text-main hover:opacity-80">
                                             {{ __('📧 office') }}@betfairmarkets{{ __('.com') }}
                                         </a>
                                     </div>

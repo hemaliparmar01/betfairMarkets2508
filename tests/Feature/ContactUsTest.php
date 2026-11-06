@@ -28,10 +28,52 @@ class ContactUsTest extends TestCase
     {
         $this->get('/contact-us')->assertOk()->assertViewIs('users.contactUs')
             ->assertSee('Send Us a Message')->assertSee('Contact Methods')->assertSee('Company Information')
-            ->assertSee('office@betfairmarkets.com')->assertSee('https://wa.me/995511705508', false)
+            ->assertSee('office@bfmarketsanalytics.com')->assertSee('https://wa.me/995511705508', false)
             ->assertSee('name="name"', false)->assertSee('name="email"', false)
             ->assertSee('name="subject"', false)->assertSee('name="message"', false)
             ->assertSee('name="_token"', false)->assertSee(route('contact-us.store'), false);
+    }
+
+    public function test_feature_request_submission_is_saved_and_forwarded_to_the_admin(): void
+    {
+        $notifications = [];
+        Event::listen(MessageSending::class, function (MessageSending $event) use (&$notifications): void {
+            $notifications[] = $event->message;
+        });
+
+        $this->from('/guides/feature-request')->post('/guides/feature-request', [
+            'email' => 'ideas@example.com', 'message' => 'Please add a market comparison view.',
+            'status' => 'closed', 'subject' => 'Injected subject', 'customer_id' => 987,
+        ])->assertRedirect('/guides/feature-request')->assertSessionHasNoErrors()
+            ->assertSessionHas('success', 'Your request has been submitted successfully! Thank you.');
+
+        $this->assertDatabaseHas('contact_messages', [
+            'customer_id' => null, 'email' => 'ideas@example.com', 'subject' => 'Feature Request',
+            'message' => 'Please add a market comparison view.', 'status' => 'new',
+        ]);
+        $this->assertCount(1, $notifications);
+        $this->assertSame('office@bfmarketsanalytics.com', $notifications[0]->getTo()[0]->getAddress());
+        $this->assertSame('New Contact Message: Feature Request', $notifications[0]->getSubject());
+        $this->assertStringContainsString('Please add a market comparison view.', $notifications[0]->getHtmlBody());
+        $this->get('/guides/feature-request')->assertSee('Your request has been submitted successfully! Thank you.')
+            ->assertSee('name="_token"', false)->assertSee('action="'.route('feature-request.store').'"', false);
+    }
+
+    public function test_feature_request_validation_and_email_failure_preserve_input(): void
+    {
+        Mail::shouldReceive('send')->once()->andThrow(new \RuntimeException('Test mail transport failure'));
+        $this->from('/guides/feature-request')->post('/guides/feature-request', [])
+            ->assertRedirect('/guides/feature-request')->assertSessionHasErrors(['email', 'message']);
+        $this->postJson('/guides/feature-request', ['email' => 'invalid', 'message' => ['bad']])
+            ->assertUnprocessable()->assertJsonValidationErrors(['email', 'message']);
+        $this->from('/guides/feature-request')->post('/guides/feature-request', [
+            'email' => 'ideas@example.com', 'message' => 'Please add market comparisons.',
+        ])->assertRedirect('/guides/feature-request')
+            ->assertSessionHas('error', 'Unable to send your message. Please try again.')
+            ->assertSessionHasInput('email', 'ideas@example.com')->assertSessionHasInput('message', 'Please add market comparisons.');
+        $this->assertDatabaseCount('contact_messages', 0);
+        $this->get('/guides/feature-request')->assertSee('Unable to send your message. Please try again.')
+            ->assertSee('ideas@example.com')->assertSee('Please add market comparisons.');
     }
 
     public function test_submission_requires_all_source_fields_and_preserves_old_input(): void
@@ -65,7 +107,7 @@ class ContactUsTest extends TestCase
         ]))->assertRedirect('/contact-us')->assertSessionHasNoErrors()->assertSessionHas('success', 'Message sent successfully.');
         $this->assertDatabaseHas('contact_messages', array_merge($this->submission(), ['customer_id' => null, 'status' => 'new']));
         $this->assertCount(1, $notifications);
-        $this->assertSame('office@betfairmarkets.com', $notifications[0]->getTo()[0]->getAddress());
+        $this->assertSame('office@bfmarketsanalytics.com', $notifications[0]->getTo()[0]->getAddress());
         $this->assertSame('New Contact Message: Payment question', $notifications[0]->getSubject());
         $this->assertStringContainsString('Please help with my subscription.', $notifications[0]->getHtmlBody());
         $this->get('/contact-us')->assertSee('Message sent successfully.');

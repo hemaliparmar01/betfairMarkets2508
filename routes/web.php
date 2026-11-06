@@ -179,6 +179,7 @@ Route::post('notifications/telegram/source', [NotificationController::class, 'so
 Route::get('subscriptions', [SubscriptionController::class, 'subscriptions'])->name('subscriptions');
 Route::get('subscriptions-details', [SubscriptionController::class, 'getSubscriptions'])->name('checkout-single');
 Route::get('/guides/feature-request', [FeatureRequestController::class, 'featureRequest'])->name('feature-request');
+Route::post('/guides/feature-request', [FeatureRequestController::class, 'featureRequest'])->name('feature-request.store');
 Route::get('/guides/disclaimer', [StaticPageController::class, 'disclaimer'])->name('disclaimer');
 Route::get('/guides/privacy-policy', [StaticPageController::class, 'privacyPolicy'])->name('privacy-policy');
 Route::get('/guides/terms-of-service', [StaticPageController::class, 'termsOfService'])->name('terms-of-service');
