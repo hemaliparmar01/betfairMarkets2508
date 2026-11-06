@@ -122,7 +122,7 @@ test('shock countdown uses original timestamps across rerenders and never revive
     let now = 1000;
     let cards = [];
     const card = expires => ({ dataset: { shockExpiresAt: String(expires) }, counter: { textContent: '' }, querySelector() { return this.counter; }, remove() { cards = cards.filter(item => item !== this); } });
-    const context = vm.createContext({ Date: { now: () => now * 1000 }, document: { querySelector: () => null, querySelectorAll: selector => selector === '[data-shock-alert]' ? cards : [] } });
+    const context = vm.createContext({ Date: { now: () => now * 1000 }, performance: { now: () => now * 1000 }, document: { querySelector: () => null, querySelectorAll: selector => selector === '[data-shock-alert]' ? cards : [] } });
     const start = source.indexOf('const refreshFootballTimelineClocks =');
     vm.runInContext('const footballTimelineClockAnchors = new WeakMap();' + source.slice(start, source.indexOf('\n};', start) + 4), context);
     const refresh = () => vm.runInContext('refreshFootballTimelineClocks()', context);
@@ -141,6 +141,49 @@ test('shock countdown uses original timestamps across rerenders and never revive
     now++;
     refresh();
     assert.equal(cards.length, 0);
+});
+
+test('football progress and row minute reset to a fresh snapshot on the same timeline element', () => {
+    let elapsed = 0;
+    let progressLookups = 0;
+    const rowMinute = { textContent: '64' };
+    const progress = { style: {} };
+    const timeline = {
+        dataset: { footballTimeline: '123', timelineAt: '1000', timelineMinute: '64', timelineSecond: '0', timelineDuration: '90', timelinePeriodLimit: '90', timelineClockLimit: '90' },
+        querySelector: () => {
+            progressLookups++;
+            return progress;
+        },
+        closest: () => ({ querySelector: () => rowMinute }),
+    };
+    const context = vm.createContext({
+        performance: { now: () => elapsed },
+        document: { querySelector: () => null, querySelectorAll: selector => selector.includes('[data-football-timeline]') ? [timeline] : [] },
+        openFootballTimeline: null,
+    });
+    const start = source.indexOf('const footballTimelineClockAnchors =');
+    vm.runInContext(source.slice(start, source.indexOf('const FOOTBALL_PAGE_SIZE', start)), context);
+    const refresh = () => vm.runInContext('refreshFootballTimelineClocks()', context);
+    refresh();
+    elapsed = 13 * 60_000;
+    Object.assign(timeline.dataset, { timelineAt: '1780', timelineMinute: '77', timelineSecond: '50' });
+    rowMinute.textContent = '77';
+    refresh();
+    assert.equal(timeline.dataset.timelineLabel, "77'");
+    assert.ok(Math.abs(parseFloat(progress.style.width) - 85.56) < 0.01);
+
+    elapsed += 10_000;
+    refresh();
+    assert.equal(timeline.dataset.timelineLabel, "78'");
+    assert.equal(rowMinute.textContent, '78');
+    assert.ok(Math.abs(parseFloat(progress.style.width) - 86.67) < 0.01);
+
+    const lookupsAt78 = progressLookups;
+    for (let second = 0; second < 59; second++) {
+        elapsed += 1000;
+        refresh();
+    }
+    assert.equal(progressLookups, lookupsAt78);
 });
 
 test('football clock lifecycle has one shared interval and resumes once after back navigation', () => {

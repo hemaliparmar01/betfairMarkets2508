@@ -129,7 +129,7 @@
                     @else
                     @php $color = $event['status'] == 'Live' ? 'var(--text-danger-15-2)' : 'var(--text-secondary)'; @endphp
                     <span style="color: {{ $color }}"
-                        class="event-time w-[52px] shrink-0 [font-size:13px] font-medium [transition:color_0.3s] text-right dark:[color:rgb(var(--text-soft))]">{{ __($event['minutes']) }}
+                        class="event-time w-[52px] shrink-0 [font-size:13px] font-medium [transition:color_0.3s] text-right dark:[color:rgb(var(--text-soft))]"><span data-football-fixture-minute>{{ __($event['minutes']) }}</span>
                         @if ($event['status'] === 'Live' && preg_match('/^\d+(?:\+\d*)?$/', (string) $event['minutes']) === 1)
                             <span class="minute-tick-blink">'</span>
                         @endif

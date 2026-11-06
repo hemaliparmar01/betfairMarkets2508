@@ -200,7 +200,43 @@ class Manager:
                 loaded, status = self.inspect(spec)
                 print(key + ': ' + status + (' [disabled in configuration]' if not spec['enabled'] else '') + (' [not installed/loaded]' if not loaded else ''))
             return
+        if action == 'configure-recovery':
+            self.configure_recovery(selected)
+            return
         self.reconcile(action, selected, name)
+
+    def configure_recovery(self, selected):
+        if self.mac or self.environment != 'production':
+            raise ValueError('configure-recovery requires production systemd services')
+        commands = {'betfair:listen', 'sports-api-pro:listen', 'pinnodds:listen', 'queue:work'}
+        units = {}
+        for key, spec in selected.items():
+            if not spec['enabled'] or spec['command'][0] not in commands:
+                continue
+            if not self.inspect(spec)[0]:
+                print('Missing unit for ' + key + '; install it before configuring recovery', file=sys.stderr)
+                continue
+            self.verify_existing(spec)
+            units[spec['unit']] = self.destination(spec)
+        if not units:
+            raise ValueError('No installed listener or queue worker selected')
+
+        recovery_policy = '[Unit]\nStartLimitIntervalSec=0\n\n[Service]\nRestart=always\nRestartSec=20s\nRestartPreventExitStatus=\n'
+        for unit, destination in units.items():
+            directory = destination.parent / (unit + '.d')
+            directory.mkdir(parents=True, exist_ok=True)
+            drop_in = directory / '90-bfmarkets-recovery.conf'
+            temporary = drop_in.with_suffix('.tmp')
+            temporary.write_text(recovery_policy)
+            temporary.replace(drop_in)
+        run(['systemctl', 'daemon-reload'])
+        for unit in units:
+            result = run(['systemctl', 'show', unit, '--property=Restart,StartLimitIntervalUSec,RestartUSec,RestartPreventExitStatus'])
+            properties = dict(line.split('=', 1) for line in result.stdout.splitlines() if '=' in line)
+            if (properties.get('Restart') != 'always' or properties.get('StartLimitIntervalUSec') not in ('0', '0us')
+                    or properties.get('RestartUSec') != '20s' or properties.get('RestartPreventExitStatus')):
+                raise ValueError('Effective recovery policy for ' + unit + ' is overridden; check its systemd drop-ins')
+            print('Recovery configured: ' + unit)
 
     def reconcile(self, action, selected, name):
         self.state.mkdir(parents=True, exist_ok=True)
@@ -302,7 +338,7 @@ class Manager:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['start', 'stop', 'restart', 'status', 'logs', 'reload', 'validate', 'prepare', 'install'])
+    parser.add_argument('action', choices=['start', 'stop', 'restart', 'status', 'logs', 'reload', 'validate', 'prepare', 'install', 'configure-recovery'])
     parser.add_argument('service', nargs='?')
     args = parser.parse_args()
     manager = Manager()

@@ -13,6 +13,9 @@ SOURCE = Path(__file__).resolve().parents[2] / 'local/services-manager.py'
 spec = importlib.util.spec_from_file_location('service_manager', SOURCE)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
+server_spec = importlib.util.spec_from_file_location('server_service_manager', SOURCE.parent.parent / 'server/services-manager.py')
+server_module = importlib.util.module_from_spec(server_spec)
+server_spec.loader.exec_module(server_module)
 
 
 class ServiceManagerTest(unittest.TestCase):
@@ -89,6 +92,33 @@ class ServiceManagerTest(unittest.TestCase):
             exec(compile(entry.read_text(), str(entry), 'exec'), {'__name__': '__main__', '__file__': str(entry)})
 
         execute.assert_called_once_with(str(SOURCE.parent / 'telegram-listener.py'), run_name='__main__')
+
+    def test_server_recovery_updates_installed_listeners_and_queue_workers_without_restarting(self):
+        config = SOURCE.parent.parent / 'server/services-manager.json'
+        with patch.object(server_module.platform, 'system', return_value='Linux'), patch.dict(os.environ, {
+            'SERVICES_ENV': 'production', 'SERVICES_CONFIG': str(config),
+        }):
+            manager = server_module.Manager()
+        missing = manager.instances['queue-alerts-telegram']['unit']
+        effective_policy = 'Restart=always\nRestartUSec=20s\nStartLimitIntervalUSec=0\nRestartPreventExitStatus=\n'
+        installed = [spec['unit'] for spec in manager.instances.values() if spec['unit'] != missing
+                     and spec['command'][0] in {'betfair:listen', 'sports-api-pro:listen', 'pinnodds:listen', 'queue:work'}]
+        for unit in installed:
+            (self.root / unit).write_text('existing Docker unit')
+
+        with patch.object(manager, 'inspect', side_effect=lambda spec: (spec['unit'] != missing, 'active/running')), \
+                patch.object(manager, 'verify_existing') as verify, \
+                patch.object(manager, 'destination', side_effect=lambda spec: self.root / spec['unit']), \
+                patch.object(server_module, 'run', return_value=subprocess.CompletedProcess([], 0, effective_policy, '')) as systemctl:
+            manager.execute('configure-recovery')
+
+        self.assertEqual(len(installed), verify.call_count)
+        self.assertEqual(['daemon-reload'] + ['show'] * len(installed), [call.args[0][1] for call in systemctl.call_args_list])
+        for unit in installed:
+            self.assertEqual('existing Docker unit', (self.root / unit).read_text())
+            self.assertIn('Restart=always', (self.root / (unit + '.d') / '90-bfmarkets-recovery.conf').read_text())
+        self.assertFalse((self.root / (missing + '.d')).exists())
+        self.assertFalse((self.root / 'bfmarkets-reverb.service.d').exists())
 
     def test_local_managed_processes_use_finite_php_memory_and_keep_queue_memory_defaults(self):
         for name, spec in self.manager.instances.items():

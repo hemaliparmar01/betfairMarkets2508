@@ -93,12 +93,23 @@ const refreshFootballTimelineClocks = () => {
     }
     const markets = document.querySelector('[data-prematch-markets]');
     if (markets && markets.dataset.layoutWidth !== String(markets.clientWidth)) restoreFootballTimeline();
+    const clockNow = performance.now();
     document.querySelectorAll('[data-football-timeline][data-timeline-running="true"]').forEach((timeline) => {
-        if (!footballTimelineClockAnchors.has(timeline)) footballTimelineClockAnchors.set(timeline, performance.now() - Number(timeline.dataset.timelineSecond ?? 0) * 1000);
-        const elapsed = Math.max(0, Math.floor((performance.now() - footballTimelineClockAnchors.get(timeline)) / 60000));
-        const minute = Math.min(Number(timeline.dataset.timelineClockLimit), Number(timeline.dataset.timelineMinute) + elapsed);
+        const { timelineAt, timelineMinute, timelineSecond } = timeline.dataset;
+        let anchor = footballTimelineClockAnchors.get(timeline);
+        if (!anchor || anchor.snapshotAt !== timelineAt || anchor.minute !== timelineMinute || anchor.second !== timelineSecond) {
+            anchor = { snapshotAt: timelineAt, minute: timelineMinute, second: timelineSecond, startedAt: clockNow - Number(timelineSecond ?? 0) * 1000 };
+            footballTimelineClockAnchors.set(timeline, anchor);
+        }
+        const elapsed = Math.max(0, Math.floor((clockNow - anchor.startedAt) / 60000));
+        const minute = Math.min(Number(timeline.dataset.timelineClockLimit), Number(timelineMinute) + elapsed);
         const limit = Number(timeline.dataset.timelinePeriodLimit);
-        const label = (minute > limit ? `${limit}+${minute - limit}` : String(minute)) + "'";
+        const displayedMinute = minute > limit ? `${limit}+${minute - limit}` : String(minute);
+        const label = displayedMinute + "'";
+        if (timeline.dataset.timelineLabel === label) return;
+
+        const rowMinute = timeline.closest('.event-row')?.querySelector('[data-football-fixture-minute]');
+        if (rowMinute) rowMinute.textContent = displayedMinute;
         timeline.dataset.timelineLabel = label;
         const progress = timeline.querySelector('[data-timeline-progress]');
         if (progress) progress.style.width = `${Math.min(100, Math.max(0, minute / Number(timeline.dataset.timelineDuration ?? 90) * 100))}%`;

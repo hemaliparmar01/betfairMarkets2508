@@ -136,16 +136,14 @@ class ListenSportsApiPro extends Command
         $prefix = $config['prefix'];
         $cacheKey = $prefix.':matches';
         $listenerLock = Cache::store('redis')->lock($prefix.':sports-api-pro-listener', 300);
-        if (! $listenerLock->get()) {
-            $this->warn("[{$sport}] SportsAPI Pro listener is already running.");
-
-            return;
+        $hasListenerLock = $listenerLock->get();
+        if (! $hasListenerLock) {
+            $this->warn("[{$sport}] Waiting for the previous SportsAPI Pro listener lock.");
         }
 
         $socket = null;
         $lockTimer = null;
         $connectionFailure = null;
-        $hasListenerLock = true;
         $release = static function () use ($sport, $listenerLock, &$socket, &$lockTimer): void {
             if ($lockTimer !== null) {
                 EventLoop::cancel($lockTimer);

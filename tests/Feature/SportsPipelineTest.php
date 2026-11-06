@@ -953,6 +953,51 @@ class SportsPipelineTest extends TestCase
         return ['APP_ENV' => 'testing', 'DB_CONNECTION' => 'sqlite', 'DB_DATABASE' => ':memory:', 'DB_URL' => '', 'CACHE_STORE' => 'array', 'SESSION_DRIVER' => 'array', 'QUEUE_CONNECTION' => 'sports-realtime', 'QUEUE_FAILED_DRIVER' => 'null', 'BROADCAST_CONNECTION' => 'null', 'REDIS_HOST' => getenv('BFMARKETS_TEST_REDIS_SOCKET'), 'REDIS_PORT' => '0', 'REDIS_URL' => '', 'REDIS_PASSWORD' => '', 'REDIS_USERNAME' => '', 'REDIS_DB' => '0', 'REDIS_CACHE_DB' => '0', 'REDIS_PREFIX' => config('database.redis.options.prefix'), 'CACHE_PREFIX' => config('cache.prefix'), 'HTTP_PROXY' => 'http://127.0.0.1:1', 'HTTPS_PROXY' => 'http://127.0.0.1:1', 'ALL_PROXY' => 'http://127.0.0.1:1', 'http_proxy' => 'http://127.0.0.1:1', 'https_proxy' => 'http://127.0.0.1:1', 'all_proxy' => 'http://127.0.0.1:1', 'NO_PROXY' => '', 'no_proxy' => ''];
     }
 
+    public function test_betfair_restart_waits_for_the_previous_listener_lock_to_expire(): void
+    {
+        $lockName = 'Football:betfair-odds-listener';
+        $previousListener = Cache::store('redis')->lock($lockName, 4);
+        $this->assertTrue($previousListener->get());
+        $environment = $this->processEnvironment();
+        $environment['Betfair_API_KEY'] = '';
+        $listener = new Process([PHP_BINARY, 'artisan', 'betfair:listen', '--no-interaction'], base_path(), $environment, timeout: 15);
+
+        $this->assertSame(1, $listener->run(), $listener->getOutput().$listener->getErrorOutput());
+        $this->assertStringContainsString('BETFAIR_API_KEY is missing.', $listener->getOutput());
+        $this->assertTrue(Cache::store('redis')->lock($lockName, 1)->get());
+    }
+
+    #[TestWith(['sports-api-pro:listen', 'SPORTS_API_PRO_KEY', 'SportsAPI Pro'])]
+    #[TestWith(['pinnodds:listen', 'PINACLE_ODDS_KEY', 'Pinnodds'])]
+    public function test_provider_listener_waits_while_the_previous_owner_holds_its_lock(string $command, string $key, string $provider): void
+    {
+        $names = $command === 'pinnodds:listen'
+            ? ['Pinnacle:listener']
+            : array_map(static fn (array $sport): string => $sport['prefix'].':sports-api-pro-listener', (new ReflectionClass(ListenSportsApiPro::class))->getConstant('SPORTS'));
+        $locks = [];
+        foreach ($names as $name) {
+            $locks[] = $lock = Cache::store('redis')->lock($name, 30);
+            $this->assertTrue($lock->get());
+        }
+
+        $environment = $this->processEnvironment();
+        $environment[$key] = 'test-key';
+        $listener = new Process([PHP_BINARY, 'artisan', $command, '--no-interaction'], base_path(), $environment, timeout: 10);
+        try {
+            $listener->start();
+            $this->assertTrue($listener->waitUntil(static fn (string $type, string $output): bool => str_contains($output, "Waiting for the previous {$provider} listener lock.")));
+            $this->assertTrue($listener->isRunning());
+            foreach ($locks as $lock) {
+                $this->assertTrue($lock->isOwnedByCurrentProcess());
+            }
+        } finally {
+            $listener->stop(2);
+            foreach ($locks as $lock) {
+                $lock->release();
+            }
+        }
+    }
+
     public function test_real_redis_lock_serializes_two_independent_php_writers(): void
     {
         Redis::set('pipeline-counter', '0');
@@ -1881,7 +1926,7 @@ PYTHON;
     public function test_restart_snapshots_and_score_only_updates_recover_missing_goal_history(): void
     {
         $this->actingAs(CustomerFactory::new()->create(['trial_ends_at' => now()->addDay()]), 'customers');
-        $request = Request::create('/', 'POST', ['type' => 'live']);
+        $request = Request::create('/', 'POST', ['type' => 'finished']);
         $request->setLaravelSession($this->app['session']->driver());
         $this->app->instance('request', $request);
         $listener = app(ListenSportsApiPro::class);
@@ -1920,9 +1965,7 @@ PYTHON;
             $rendered = app(FootballController::class)->footballTimeline($updated, $updated['timeline']);
             $this->assertSame([], $rendered['untimed_events']['home']);
             $this->assertSame("~30'", $rendered['events'][0]['minute_label']);
-            $groups = app(FootballController::class)->getFootballMatches();
-            $html = view('users.sports.football.footballDetails', ['data' => $groups])->render();
-            $this->assertStringContainsString('data-timeline-event="score-home-goal-1"', $html);
+            $this->assertSame([], app(FootballController::class)->getFootballMatches());
             $jobs = Bus::dispatched(CallQueuedClosure::class)->filter(static fn (CallQueuedClosure $job): bool => $job->queue === 'sports-timeline');
             $this->assertCount($index + 1, $jobs);
             $this->assertSame('sports-realtime', $jobs->last()->connection);
@@ -1941,12 +1984,41 @@ PYTHON;
             $this->assertFalse(Cache::store('redis')->lock('Football:timeline-backfill:'.$id.':pending', 3600)->get());
             $this->assertCount(1, getInRedis('Football:matches')['known']['timeline']['home_goals']);
 
+            $quotaBlocked = Mockery::mock($manager);
+            $quotaBlocked->shouldReceive('eval')->atLeast()->once()->andReturnUsing(
+                static fn (string $script, mixed ...$args) => str_starts_with($script, 'local total = ') ? 0 : $manager->eval($script, ...$args)
+            );
+            $job->withFakeQueueInteractions();
+            Redis::swap($quotaBlocked);
+            try {
+                $job->handle($this->app);
+            } finally {
+                Redis::swap($manager);
+            }
+            $job->assertReleased(60);
+            $this->assertFalse(Cache::store('redis')->lock('Football:timeline-backfill:'.$id.':pending', 3600)->get());
+
             $incidents = ['type' => 'snapshot', 'channel' => 'match:'.$id.':incidents', 'data' => ['incidents' => [['id' => 'goal-'.$id, 'incidentType' => 'goal', 'time' => 25, 'isHome' => true, 'homeScore' => 1, 'awayScore' => 0]]]];
             (new ReflectionMethod($listener, 'processSportsFrame'))->invokeArgs($listener, ['football', $config, $incidents, $socket, &$subscriptions]);
             $restored = getInRedis('Football:matches')['known']['timeline'];
             $this->assertSame([25], array_column($restored['home_goals'], 'minute'));
             $this->assertSame(['goal-'.$id], array_column($restored['home_goals'], 'id'));
             $this->assertSame($restored, json_decode(DB::table('football_timeline')->where('match_id', $id)->value('timeline'), true));
+
+            $job->withFakeQueueInteractions();
+            Redis::swap($quotaBlocked);
+            try {
+                $job->handle($this->app);
+            } finally {
+                Redis::swap($manager);
+            }
+            $job->assertNotReleased();
+
+            $request->merge(['type' => 'live']);
+            $groups = app(FootballController::class)->getFootballMatches();
+            $html = view('users.sports.football.footballDetails', ['data' => $groups])->render();
+            $this->assertStringContainsString('data-timeline-event="goal-'.$id.'"', $html);
+            $request->merge(['type' => 'finished']);
 
             $frame['type'] = 'update';
             $frame['data'] = ['homeScore.current' => 3, 'changes.changeTimestamp' => 21];

@@ -6,6 +6,7 @@ use Amp\Http\Client\HttpClientBuilder;
 use Amp\Http\Client\Request;
 use App\Http\Controllers\Users\Football\FootballSyncController;
 use Illuminate\Console\Command;
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Facades\Broadcast;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
@@ -32,11 +33,18 @@ class ListenPinnodds extends Command
             return self::FAILURE;
         }
 
-        $listenerLock = Cache::store('redis')->lock('Pinnacle:listener', 120);
+        $lockSeconds = 120;
+        $listenerLock = Cache::store('redis')->lock('Pinnacle:listener', $lockSeconds);
         if (! $listenerLock->get()) {
-            $this->warn('Pinnodds listener is already running.');
+            $this->warn('Waiting for the previous Pinnodds listener lock.');
 
-            return self::SUCCESS;
+            try {
+                $listenerLock->betweenBlockedAttemptsSleepFor(2000)->block($lockSeconds + 5);
+            } catch (LockTimeoutException) {
+                $this->warn('Pinnodds listener is already running.');
+
+                return self::SUCCESS;
+            }
         }
 
         $pending = [];
@@ -92,9 +100,9 @@ class ListenPinnodds extends Command
         };
         EventLoop::onSignal(SIGINT, $stop);
         EventLoop::onSignal(SIGTERM, $stop);
-        EventLoop::repeat(30, function () use ($listenerLock): void {
+        EventLoop::repeat(30, function () use ($listenerLock, $lockSeconds): void {
             try {
-                if ($listenerLock->refresh(120)) {
+                if ($listenerLock->refresh($lockSeconds)) {
                     return;
                 }
             } catch (Throwable $e) {

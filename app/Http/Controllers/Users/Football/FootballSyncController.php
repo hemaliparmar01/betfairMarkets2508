@@ -530,7 +530,17 @@ class FootballSyncController extends Controller
                             $pending->release();
                         } else {
                             $owner = $pending->owner();
-                            dispatch(static function (CallQueuedClosure $job) use ($matchId, $onlyIncidents, $key, $owner, $needsHistory, $repairTimeline): void {
+                            $expectedGoals = [];
+                            if ($needsHistory && $missingTimedEvents) {
+                                foreach (['home', 'away'] as $side) {
+                                    $group = $side.'_goals';
+                                    $score = (int) ($match[$side.'_score'] ?? 0);
+                                    if ($score > count(array_filter($timeline[$group], static fn (array $event): bool => ($event['time_known'] ?? false) && ! ($event['time_estimated'] ?? false)))) {
+                                        $expectedGoals[$group] = $score;
+                                    }
+                                }
+                            }
+                            dispatch(static function (CallQueuedClosure $job) use ($matchId, $onlyIncidents, $key, $owner, $needsHistory, $repairTimeline, $expectedGoals): void {
                                 $retrying = false;
                                 $writeTimeline = static function (?string $channel, array $payload, ?float $requestedAt = null) use ($matchId): void {
                                     withRedisLock('Football:matches', static function () use ($matchId, $channel, $payload, $requestedAt): void {
@@ -594,6 +604,17 @@ class FootballSyncController extends Controller
                                         $writeTimeline('match:'.$matchId.($suffix === '' ? '' : ':incidents'), $payload, $requestedAt);
                                     }
                                     Event::dispatch(new FootballSportsScoreUpdated);
+                                    if ($expectedGoals !== [] && $job->attempts() < 3) {
+                                        $stored = json_decode(DB::table('football_timeline')->where('match_id', $matchId)->value('timeline') ?? '[]', true) ?? [];
+                                        foreach ($expectedGoals as $group => $score) {
+                                            $confirmed = count(array_filter($stored[$group] ?? [], static fn (array $event): bool => ($event['time_known'] ?? false) && ! ($event['time_estimated'] ?? false)));
+                                            if ($confirmed < min($score, (int) ($stored['reported_counts'][$group] ?? $score))) {
+                                                $job->release(60 * $job->attempts());
+                                                $retrying = true;
+                                                break;
+                                            }
+                                        }
+                                    }
                                 } catch (LockTimeoutException) {
                                     $job->release(2);
                                     $retrying = true;
