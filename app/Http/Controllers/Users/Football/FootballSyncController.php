@@ -1882,7 +1882,18 @@ class FootballSyncController extends Controller
 
                 $tempArray = [];
                 $uniqueKey = $this->generateUniqueKey($homeTeam, $awayTeam, (string) $startTimestamp);
-                $checkIsExists = $this->checkIfRecordExistsOnAnotherApi($uniqueKey, $homeTeam, $awayTeam, $startTimestamp, $getExistingRecords, sportsApiMatchId: $payload['id']);
+                $homeShortName = $payload['homeTeam']['shortName'] ?? null;
+                $awayShortName = $payload['awayTeam']['shortName'] ?? null;
+                $checkIsExists = $this->checkIfRecordExistsOnAnotherApi(
+                    $uniqueKey,
+                    $homeTeam,
+                    $awayTeam,
+                    $startTimestamp,
+                    $getExistingRecords,
+                    sportsApiMatchId: $payload['id'],
+                    homeShortName: is_string($homeShortName) ? $homeShortName : null,
+                    awayShortName: is_string($awayShortName) ? $awayShortName : null,
+                );
                 $existingRecord = $checkIsExists === null ? [] : ($getExistingRecords[$checkIsExists] ?? []);
 
                 if (($existingRecord['result_status'] ?? null) === 'Finished') {
@@ -2370,8 +2381,17 @@ class FootballSyncController extends Controller
         return str_replace(' ', '_', $name);
     }
 
-    private function checkIfRecordExistsOnAnotherApi(string $uniqueKey, string $team1, string $team2, string|int $timestamp, ?array $existingRecords = null, int|string|null $sportsApiMatchId = null, int|string|null $betfairMatchId = null)
-    {
+    private function checkIfRecordExistsOnAnotherApi(
+        string $uniqueKey,
+        string $team1,
+        string $team2,
+        string|int $timestamp,
+        ?array $existingRecords = null,
+        int|string|null $sportsApiMatchId = null,
+        int|string|null $betfairMatchId = null,
+        ?string $homeShortName = null,
+        ?string $awayShortName = null,
+    ): string|int|null {
         $existingRecords ??= getInRedis($this->sports.':matches') ?? [];
 
         foreach ($existingRecords as $key => $record) {
@@ -2386,6 +2406,10 @@ class FootballSyncController extends Controller
             return $uniqueKey;
         }
 
+        $homeShortName = $homeShortName === null ? '' : $this->normalizeTeamName($homeShortName);
+        $awayShortName = $awayShortName === null ? '' : $this->normalizeTeamName($awayShortName);
+        $shortNameMatch = null;
+        $ambiguousShortNameMatch = false;
         foreach ($existingRecords as $key => $record) {
             if ($sportsApiMatchId !== null && ! empty($record['sportsApiPro_match_id']) && (string) $record['sportsApiPro_match_id'] !== (string) $sportsApiMatchId) {
                 continue;
@@ -2405,9 +2429,17 @@ class FootballSyncController extends Controller
             if ($team1Score >= 80 && $team2Score >= 80) {
                 return $key;
             }
+
+            if (! $ambiguousShortNameMatch && $homeShortName !== '' && $awayShortName !== ''
+                && ! empty($record['betfair_match_id'])
+                && $this->normalizeTeamName($record['team1'] ?? '') === $homeShortName
+                && $this->normalizeTeamName($record['team2'] ?? '') === $awayShortName) {
+                $ambiguousShortNameMatch = $shortNameMatch !== null;
+                $shortNameMatch = $key;
+            }
         }
 
-        return null;
+        return $ambiguousShortNameMatch ? null : $shortNameMatch;
     }
 
     /** @param array<string, array<string, mixed>> $matches

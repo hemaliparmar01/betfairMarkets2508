@@ -161,6 +161,44 @@ class SportsPipelineTest extends TestCase
         $this->assertCount(2, getInRedis('Football:matches'));
     }
 
+    #[TestWith(['Leeds', 'Tottenham', 0, false, true])]
+    #[TestWith(['Leeds', 'Tottenham', 60, false, false])]
+    #[TestWith(['Leeds', 'Spurs', 0, false, false])]
+    #[TestWith(['Leeds', 'Tottenham', 0, true, false])]
+    public function test_football_short_names_require_one_betfair_fixture_with_the_same_kickoff(string $homeShortName, string $awayShortName, int $kickoffOffset, bool $ambiguous, bool $merges): void
+    {
+        $sync = $this->sync('Football');
+        $start = time() + 3600;
+        $fixture = $this->betfair('Football', ['team1' => 'Leeds', 'team2' => 'Tottenham', 'openTimestamp' => gmdate('c', $start)]);
+        (new ReflectionMethod($sync, 'readBetFairData'))->invoke($sync, ['liveMap' => ['456' => $fixture]], 'Football:matches', false, 10);
+        $matches = getInRedis('Football:matches');
+        $betfairKey = 'leeds|tottenham|'.$start;
+        if ($ambiguous) {
+            $duplicateKey = $betfairKey.'|789';
+            $matches[$duplicateKey] = array_replace($matches[$betfairKey], ['unique_key' => $duplicateKey, 'betfair_match_id' => '789']);
+            storeInRedis('Football:matches', $matches, 10, false, replace: true);
+        }
+        $event = $this->sportsEvent([
+            'homeTeam' => ['name' => 'Leeds United', 'shortName' => $homeShortName],
+            'awayTeam' => ['name' => 'Tottenham Hotspur', 'shortName' => $awayShortName],
+            'startTimestamp' => $start + $kickoffOffset,
+        ]);
+
+        $updated = (new ReflectionMethod($sync, 'readsportApiData'))->invoke($sync, ['events' => [$event]], 'Football:matches', false, 10);
+        $sync->persistOddsSnapshots($updated);
+
+        $matches = getInRedis('Football:matches');
+        $this->assertSame($merges, $matches[$betfairKey]['data_sync_complete']);
+        if ($merges) {
+            $this->assertSame([$betfairKey], array_keys($matches));
+            $this->assertSame(123, $matches[$betfairKey]['sportsApiPro_match_id']);
+            $this->assertDatabaseHas('football_matches', ['unique_key' => $betfairKey, 'sports_api_pro_match_id' => 123, 'betfair_match_id' => 456, 'data_sync_complete' => true]);
+        } else {
+            $this->assertArrayNotHasKey('sportsApiPro_match_id', $matches[$betfairKey]);
+            $this->assertDatabaseHas('football_matches', ['sports_api_pro_match_id' => 123, 'betfair_match_id' => null, 'data_sync_complete' => false]);
+        }
+    }
+
     public function test_football_prematch_snapshots_preserve_live_state_and_true_prematch_hides_stale_events(): void
     {
         config(['services.football_fixture_index' => true]);
