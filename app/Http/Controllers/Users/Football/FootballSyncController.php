@@ -1134,18 +1134,26 @@ class FootballSyncController extends Controller
         return true;
     }
 
+    /** @return list<string> */
+    public static function prematchStatisticsSections(?string $status): array
+    {
+        return $status === 'Prematch'
+            ? self::PREMATCH_STATISTICS_SECTIONS
+            : array_values(array_diff(self::PREMATCH_STATISTICS_SECTIONS, ['pregame-form', 'h2h']));
+    }
+
     public function queueMatchStatistics(): void
     {
         $queued = [];
         $index = getInRedis('Football:matches', fixtureIndex: true, marketActivityIndex: true);
-        $indexed = ($index['statistics_schedule'] ?? null) === 1;
+        $indexed = ($index['statistics_schedule'] ?? null) === 2;
         foreach ($indexed ? $index['matches'] : (json_decode(Redis::get('Football:matches') ?? '[]', true) ?? []) as $match) {
             $matchId = (string) ($match['sportsApiPro_match_id'] ?? '');
             if (! ctype_digit($matchId) || (int) $matchId <= 0 || isset($queued[$matchId]) || ! in_array($match['result_status'] ?? '', ['Prematch', 'Live'], true) || MatchBackup::isHidden($match, 'football')) {
                 continue;
             }
             $queued[$matchId] = true;
-            $due = $indexed ? ($match['_statistics_due_at'] ?? 0) <= microtime(true) : array_any(self::PREMATCH_STATISTICS_SECTIONS, static function (string $section) use ($match): bool {
+            $due = $indexed ? ($match['_statistics_due_at'] ?? 0) <= microtime(true) : array_any(self::prematchStatisticsSections($match['result_status'] ?? null), static function (string $section) use ($match): bool {
                 $attempt = $match['statistics_requests'][$section] ?? [];
 
                 return ($attempt['at'] ?? 0) <= microtime(true) - (($attempt['available'] ?? false) ? 1800 : 120);
@@ -1198,7 +1206,7 @@ class FootballSyncController extends Controller
         try {
             $responses = [];
             $attempts = [];
-            $sections = $includePrematch ? self::PREMATCH_STATISTICS_SECTIONS : [];
+            $sections = $includePrematch ? self::prematchStatisticsSections($match['result_status'] ?? null) : [];
             if (! $includePrematch && ($match['result_status'] ?? '') !== 'Prematch') {
                 $sections[] = 'statistics';
             }

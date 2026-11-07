@@ -1015,7 +1015,7 @@ if (! function_exists('storeInRedis')) {
             unset($data);
         }
         if ($indexed) {
-            $index = ['format' => 3, 'market_activity' => 1, 'statistics_schedule' => 1, 'matches' => [], 'positions' => [], 'ids' => [], 'orders' => []];
+            $index = ['format' => 3, 'market_activity' => 1, 'statistics_schedule' => 2, 'matches' => [], 'positions' => [], 'ids' => [], 'orders' => []];
             $fields = array_flip(['unique_key', 'sportsApiPro_match_id', 'betfair_match_id', 'timestamp', 'result_status', 'minutes_status', 'current_period_start_timestamp', 'added_time', 'tournament', 'tournament_country', 'tournament_id', 'tournament_logo', 'country_id', 'internal_backup', 'provider_lifecycle', 'pinnacle_drop_triggered', 'pinnacle_market_shock_detected_at']);
             $visibleFields = array_flip(['unique_key', 'team1', 'team2', 'home_team_id', 'away_team_id', 'home_team_logo', 'away_team_logo', 'betfair_match_id', 'sportsApiPro_match_id', 'timestamp', 'result_status', 'minutes_status', 'current_period_start_timestamp', 'added_time', 'home_score', 'away_score', 'timeline', 'live_stats', 'live_stats_meta', 'statistics_periods', 'prematch_statistics', 'statistics_requests', 'predictions']);
             $controller = app(FootballController::class);
@@ -1069,10 +1069,10 @@ if (! function_exists('storeInRedis')) {
                     }
                 }
                 $entry['_market_activity'] ??= prepareMatchOddsMonitoring($match, marketActivitySummary: true);
-                if (! $reused || ($previousIndex['statistics_schedule'] ?? null) !== 1) {
+                if (! $reused || ($previousIndex['statistics_schedule'] ?? null) !== 2) {
                     if (! empty($match['statistics_requests'])) {
                         $nextDue = PHP_FLOAT_MAX;
-                        foreach (FootballSyncController::PREMATCH_STATISTICS_SECTIONS as $section) {
+                        foreach (FootballSyncController::prematchStatisticsSections($match['result_status'] ?? null) as $section) {
                             $attempt = $match['statistics_requests'][$section] ?? [];
                             $nextDue = min($nextDue, ($attempt['at'] ?? 0) + (($attempt['available'] ?? false) ? 1800 : 120));
                         }

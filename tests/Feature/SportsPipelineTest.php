@@ -1406,7 +1406,7 @@ class SportsPipelineTest extends TestCase
         $this->assertSame($prematch['markets'], $loaded['markets']);
         $this->assertSame($live, getInRedis('Football:matches', readOnly: true, matchIds: ['123'])['live']);
         if ($indexed) {
-            $this->assertSame(1, getInRedis('Football:matches', fixtureIndex: true)['statistics_schedule']);
+            $this->assertSame(2, getInRedis('Football:matches', fixtureIndex: true)['statistics_schedule']);
             $this->assertSame($loaded, getInRedis('Football:matches', readOnly: true, matchIds: ['124'])['prematch']);
         }
         Http::assertNothingSent();
