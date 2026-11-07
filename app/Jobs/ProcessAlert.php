@@ -104,6 +104,7 @@ class ProcessAlert implements ShouldBeUnique, ShouldQueue
         } elseif ($this->task === 'pinnacle') {
             foreach ($this->data['alerts'] ?? [] as $drop) {
                 if (is_array($drop)) {
+                    $drop['archive_parent'] ??= $this->data['parents'][$drop['sport'] ?? 'other'][$drop['parent_id'] ?? ''] ?? null;
                     $alerts->process('prematch_drops', [], ['pinnacle' => $drop]);
                 }
             }

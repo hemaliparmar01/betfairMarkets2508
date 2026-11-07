@@ -415,10 +415,12 @@ if (! function_exists('recordSportsApiProRestRequest')) {
 local total = tonumber(redis.call('GET', KEYS[1]) or '0')
 local remaining = tonumber(redis.call('GET', KEYS[2]) or '-1')
 local limit = math.min(tonumber(redis.call('GET', KEYS[3]) or ARGV[2]), tonumber(ARGV[2]))
+if total >= limit or remaining == 0 or tonumber(redis.call('GET', KEYS[5]) or '0') > tonumber(ARGV[6]) then
+    return 0
+end
 if ARGV[1] == '1' and (total >= limit - tonumber(ARGV[3])
     or (remaining >= 0 and remaining <= tonumber(ARGV[3]))
-    or tonumber(redis.call('GET', KEYS[4]) or '0') >= tonumber(ARGV[4])
-    or tonumber(redis.call('GET', KEYS[5]) or '0') > tonumber(ARGV[6])) then
+    or tonumber(redis.call('GET', KEYS[4]) or '0') >= tonumber(ARGV[4])) then
     return 0
 end
 total = redis.call('INCR', KEYS[1])
@@ -439,7 +441,7 @@ LUA, 5, 'SportsAPIPro:rest-requests:'.$date, 'SportsAPIPro:rest-remaining:'.$dat
 
         if ($requestCount === 0) {
             if (Cache::store('redis')->add('SportsAPIPro:v6-budget-notice:'.$date, true, 3600)) {
-                Log::notice('Football V6 polling paused for API quota reserve or backoff; cached statistics retained');
+                Log::notice('SportsAPI Pro REST requests paused for quota or provider backoff');
             }
 
             return 0;
@@ -480,10 +482,18 @@ LUA, 2, 'SportsAPIPro:rest-requests:'.$date, 'SportsAPIPro:rest-remaining:'.$dat
         if ($status === 429) {
             $retryAt = is_numeric($headers['retry-after'] ?? null) ? time() + (int) $headers['retry-after']
                 : (strtotime($headers['retry-after'] ?? '') ?: time() + 300);
-            if (isset($headers['x-ratelimit-remaining']) && (int) $headers['x-ratelimit-remaining'] === 0) {
-                $retryAt = strtotime($headers['x-ratelimit-reset'] ?? '') ?: strtotime('tomorrow 00:00 UTC');
+            $reset = $headers['x-ratelimit-reset'] ?? null;
+            $resetAt = is_numeric($reset) ? (int) $reset : strtotime($reset ?? '');
+            if ($resetAt !== false && $resetAt > time()) {
+                $retryAt = max($retryAt, $resetAt);
+            } elseif (isset($headers['x-ratelimit-remaining']) && (int) $headers['x-ratelimit-remaining'] === 0) {
+                $retryAt = max($retryAt, strtotime('tomorrow 00:00 UTC'));
             }
-            Redis::setex('SportsAPIPro:rest-backoff:'.$date, $expiresAt - time(), max(time() + 60, $retryAt));
+            Redis::eval(<<<'LUA'
+local previous = tonumber(redis.call('GET', KEYS[1]) or '0')
+redis.call('SET', KEYS[1], math.max(previous, tonumber(ARGV[1])))
+redis.call('EXPIREAT', KEYS[1], ARGV[2])
+LUA, 1, 'SportsAPIPro:rest-backoff:'.$date, max(time() + 60, $retryAt), $expiresAt);
         }
     }
 }
@@ -550,7 +560,9 @@ if (! function_exists('ApiCall')) {
             if ($requestNumber === 0) {
                 $diagnostics = apiResponseLogContext(['url' => $url, 'http_status' => null, 'skipped' => 'quota_reserve']);
 
-                return null;
+                return ($options['raw_response'] ?? false)
+                    ? ['body' => '', 'status' => 0, 'content_type' => '', 'successful' => false]
+                    : null;
             }
         }
 
@@ -599,15 +611,18 @@ if (! function_exists('ApiCall')) {
                 if ($curlError === '' && $curlErrorCode !== 0) {
                     $curlError = curl_strerror($curlErrorCode);
                 }
-                if ($isSportsApiPro) {
-                    recordSportsApiProRestResponse($responseHeaders, $requestNumber, $status);
-                }
                 $rawResponse = $options['raw_response'] ?? false;
                 $data = null;
                 $jsonError = null;
                 if ($body !== false && (! $rawResponse || str_contains(strtolower($contentType), 'json'))) {
                     $data = json_decode($body, true);
                     $jsonError = json_last_error() === JSON_ERROR_NONE ? null : json_last_error_msg();
+                }
+                if ($isSportsApiPro) {
+                    if ($status === 429 && is_string($data['reset_at'] ?? null)) {
+                        $responseHeaders['x-ratelimit-reset'] ??= $data['reset_at'];
+                    }
+                    recordSportsApiProRestResponse($responseHeaders, $requestNumber, $status);
                 }
                 $failed = $body === false || $status < 200 || $status >= 300 || $jsonError !== null
                     || (is_array($data) && ($data['success'] ?? true) === false);
@@ -729,8 +744,7 @@ if (! function_exists('queueSportsSynchronization')) {
                 try {
                     app($controller)->{$method}();
                 } catch (LockTimeoutException) {
-                    $job->release(2);
-                    $retrying = true;
+                    $retrying = releaseSportsJobAfterLockContention($job);
                 } finally {
                     if (! $retrying) {
                         Cache::store('redis')->restoreLock($key, $owner)->release();
@@ -835,8 +849,7 @@ if (! function_exists('getSportsApiProImage')) {
                         return $updated;
                     }, 0);
                     if ($updated === null) {
-                        $job->release(2);
-                        $retrying = true;
+                        $retrying = releaseSportsJobAfterLockContention($job);
 
                         return;
                     }
@@ -852,7 +865,7 @@ if (! function_exists('getSportsApiProImage')) {
                         $lock->release();
                     }
                 }
-            })->onQueue('sports-images')->catch(static function (Throwable $e) use ($lockName, $owner, $missingKey): void {
+            })->name('SportsAPI Pro image '.$sport.' '.$type.' '.$entityId)->onQueue('sports-images')->catch(static function (Throwable $e) use ($lockName, $owner, $missingKey): void {
                 Cache::store('redis')->restoreLock($lockName, $owner)->release();
                 Cache::store('redis')->put($missingKey, true, 300);
             });
@@ -1290,6 +1303,23 @@ if (! function_exists('getVisibleSportsMatches')) {
         $matches = getInRedis($cacheKey) ?? [];
 
         return $sport === null ? $matches : array_filter($matches, static fn (array $match): bool => ! MatchBackup::isHidden($match, $sport));
+    }
+}
+
+if (! function_exists('releaseSportsJobAfterLockContention')) {
+    function releaseSportsJobAfterLockContention(CallQueuedClosure $job): bool
+    {
+        $attempt = $job->attempts();
+        // These sports workers allow three attempts. Leave the pending lock cleanup to the caller on the last one.
+        if ($attempt >= 3) {
+            Log::warning('Sports queue job deferred until the next sync because its write lock remained busy', ['job' => $job->displayName()]);
+
+            return false;
+        }
+
+        $job->release(10 * max(1, $attempt));
+
+        return true;
     }
 }
 

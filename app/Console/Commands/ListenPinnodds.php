@@ -61,7 +61,9 @@ class ListenPinnodds extends Command
             try {
                 $this->storeDrops($pending, $feeds);
             } catch (Throwable $e) {
-                Log::warning('Pinnodds cache update or alert dispatch failed', ['exception' => $e::class]);
+                Log::warning('Pinnodds cache update or alert dispatch failed', [
+                    'exception' => $e::class, 'code' => $e->getCode(), 'pending_alerts' => count($pending),
+                ]);
 
                 return;
             }
@@ -253,15 +255,23 @@ class ListenPinnodds extends Command
         withRedisLock('Pinnacle:drops', function () use ($pending, $feeds, &$parents): void {
             $cached = getInRedis('Pinnacle:drops') ?? [];
             $alerts = [];
-            foreach ($cached['signals'] ?? $cached['alerts'] ?? [] as $alert) {
+            foreach ([...($cached['signals'] ?? []), ...($cached['alerts'] ?? [])] as $alert) {
                 $mode = $alert['feed'] ?? (($alert['is_live'] ?? false) ? 'live' : 'prematch');
                 $alerts = array_replace($alerts, $this->normalizeDrops([$alert], $mode));
             }
-            $alerts = array_filter(array_replace($alerts, $pending), static fn (array $alert): bool => (int) ($alert['alerted'] ?? 0) >= time() - 10800);
+            $receivedAt = microtime(true);
+            $monitorDrops = $pending;
+            foreach ($monitorDrops as $key => &$drop) {
+                $drop['monitor_received_at'] = $alerts[$key]['monitor_received_at'] ?? $alerts[$key]['alerted'] ?? $receivedAt;
+            }
+            unset($drop);
+            $alerts = array_filter(array_replace($alerts, $monitorDrops), static fn (array $alert): bool => (int) ($alert['alerted'] ?? 0) >= time() - 10800);
             uasort($alerts, static fn (array $left, array $right): int => (int) $right['alerted'] <=> (int) $left['alerted']);
             $signals = array_values(array_slice($alerts, 0, 5000, true));
-            $dashboardCutoff = time() - 420;
-            $dashboardAlerts = array_values(array_slice(array_filter($alerts, static fn (array $alert): bool => $alert['drop_pct'] >= 5 && (int) $alert['alerted'] > $dashboardCutoff), 0, 1000, true));
+            $dashboardCutoff = $receivedAt - 420;
+            $dashboardAlerts = array_values(array_filter($alerts, static fn (array $alert): bool => $alert['drop_pct'] >= 5
+                && ($alert['monitor_received_at'] ?? $alert['alerted']) > $dashboardCutoff));
+            usort($dashboardAlerts, static fn (array $left, array $right): int => ($right['monitor_received_at'] ?? $right['alerted']) <=> ($left['monitor_received_at'] ?? $left['alerted']));
             Redis::set('Pinnacle:drops', json_encode(['alerts' => $dashboardAlerts, 'signals' => $signals, 'feeds' => $feeds, 'updated_at' => time()], JSON_THROW_ON_ERROR));
             Redis::expire('Pinnacle:drops', 10800);
             $parentIds = [];
@@ -274,13 +284,21 @@ class ListenPinnodds extends Command
                 foreach ($signals as $event) {
                     if (isset($parentIds[$event['sport']][$event['id']]) && ! isset($parents[$event['sport']][$event['id']])
                         && ! (in_array(strtolower(trim($event['home'])), ['yes', 'no'], true) && in_array(strtolower(trim($event['away'])), ['yes', 'no'], true))) {
-                        $parents[$event['sport']][$event['id']] = array_intersect_key($event, array_flip(['id', 'sport', 'home', 'away', 'league', 'starts', 'start', 'alerted']));
+                        $parents[$event['sport']][$event['id']] = array_intersect_key($event, array_flip(['id', 'sport', 'home', 'away', 'country', 'league', 'starts', 'start', 'alerted']));
                     }
                 }
             }
         });
-        if ($pending !== []) {
-            ProcessAlert::dispatch('pinnacle', ['alerts' => array_values($pending), 'parents' => $parents]);
+        foreach (array_chunk($pending, 100) as $batch) {
+            $batchParents = [];
+            foreach ($batch as $drop) {
+                $sport = $drop['sport'];
+                $parentId = $drop['parent_id'] ?? null;
+                if (isset($parents[$sport][$parentId])) {
+                    $batchParents[$sport][$parentId] = $parents[$sport][$parentId];
+                }
+            }
+            ProcessAlert::dispatch('pinnacle', ['alerts' => $batch, 'parents' => $batchParents]);
         }
     }
 }

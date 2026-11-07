@@ -64,8 +64,7 @@ class FootballV6Stats
                             app(self::class)->pollMatch($matchId);
                         }
                     } catch (LockTimeoutException) {
-                        $job->release(2);
-                        $retrying = true;
+                        $retrying = releaseSportsJobAfterLockContention($job);
                     } finally {
                         if (! $retrying) {
                             $lock->release();

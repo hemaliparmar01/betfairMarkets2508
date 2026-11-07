@@ -21,7 +21,12 @@ function harness(alerts = [base], options = {}) {
     };
     const output = { innerHTML: '', textContent: '' };
     const state = { alerts, view: 'advanced', mode: 'prematch', sport: 'all', collapsedGroups: new Set(), flashes: new Map() };
-    const context = vm.createContext({ state, matchStartLabels, URL, root: { dataset: { timezone: options.timezone ?? 'UTC' }, querySelectorAll: () => [], querySelector: () => output }, Date: { now: () => now }, document: { documentElement: { lang: options.locale ?? 'en' }, createElement: () => ({ set textContent(value) { this.innerHTML = String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;'); } }) } });
+    const context = vm.createContext({ state, matchStartLabels, URL, root: { dataset: { timezone: options.timezone ?? 'UTC' }, querySelectorAll: () => [], querySelector: selector => ({
+        '[data-pinnacle-higher]': options.higher ? { checked: true } : null,
+        '[data-pinnacle-league-picker]': options.leagues ? {
+                querySelectorAll: () => options.leagues.map(value => ({ value })),
+        } : null,
+    })[selector] ?? (selector === '[data-pinnacle-league-picker]' ? null : output) }, Date: { now: () => now }, document: { documentElement: { lang: options.locale ?? 'en' }, createElement: () => ({ set textContent(value) { this.innerHTML = String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;'); } }) } });
     vm.runInContext(helpers + renderer, context);
     return { state, output, evaluate: code => vm.runInContext(code, context), advance: ms => { now += ms; } };
 }
@@ -113,7 +118,7 @@ test('prematch and live drops expire at seven minutes while archive history rema
         {...base, alert_key: 'older', alerted: now / 1000 - 421},
         {...base, alert_key: 'missing', alerted: null},
     ], {now});
-    assert.equal(app.evaluate('filtered().map(alert => alert.alert_key).join(",")'), 'edge,first');
+    assert.equal(app.evaluate('filtered().map(alert => alert.alert_key).join(",")'), 'first,edge');
     app.advance(1);
     assert.equal(app.evaluate('filtered().map(alert => alert.alert_key).join(",")'), 'first');
     app.advance(419999);
@@ -334,4 +339,35 @@ test('start countdown appears below the league in both languages and views and a
         app.evaluate('render()');
         assert.ok(!app.output.innerHTML.includes(locale === 'en' ? ' · Starts in ' : ' · იწყება '));
     }
+});
+
+test('Pinnacle filters require a selected league and Betfair strictly above the new price', () => {
+    const drop = { ...base, league_filter_key: 'selected' };
+    const app = harness([
+        drop,
+        { ...drop, alert_key: 'equal', bf_back: drop.to_price },
+        { ...drop, alert_key: 'missing', bf_back: null },
+        { ...drop, alert_key: 'other', league_filter_key: 'other' },
+    ], { higher: true, leagues: ['selected'] });
+
+    assert.equal(app.evaluate("filtered().map(alert => alert.alert_key).join(',')"), 'first');
+});
+
+test('Pinnacle league filter turns off when no leagues are checked', () => {
+    const app = harness([base], { leagues: [] });
+    assert.equal(app.evaluate('filtered().length'), 1);
+});
+
+test('late provider alerts sort by monitor arrival and keep their full seven minutes', () => {
+    const now = 1800000000000;
+    const app = harness([
+        { ...base, alerted: now / 1000 - 30, monitor_received_at: now / 1000 - 10 },
+    ], { now });
+    app.evaluate('receiveAlerts([...state.alerts, {...state.alerts[0], alert_key: "late", alerted: 1799999400, monitor_received_at: 1800000000}])');
+
+    assert.equal(app.evaluate('filtered().map(alert => alert.alert_key).join(",")'), 'late,first');
+    app.advance(419999);
+    assert.equal(app.evaluate('filtered().map(alert => alert.alert_key).join(",")'), 'late');
+    app.advance(1);
+    assert.equal(app.evaluate('filtered().length'), 0);
 });

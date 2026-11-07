@@ -616,8 +616,7 @@ class FootballSyncController extends Controller
                                         }
                                     }
                                 } catch (LockTimeoutException) {
-                                    $job->release(2);
-                                    $retrying = true;
+                                    $retrying = releaseSportsJobAfterLockContention($job);
                                 } catch (Throwable $exception) {
                                     Log::warning('Football timeline history unavailable', ['match_id' => $matchId, 'exception' => $exception::class]);
                                     throw $exception;
@@ -713,7 +712,8 @@ class FootballSyncController extends Controller
     {
         $cacheKey = $this->sports.':matches';
         $key = 'x-api-key: '.$this->getsportsAPIProKeys;
-        $scheduleData = ApiCall('https://api.sportsapipro.com/v2/football/api/today', $key, ['connect_timeout' => 3, 'timeout' => 15], $apiDiagnostics);
+        $date = Carbon::now('UTC')->format('Y-m-d');
+        $scheduleData = ApiCall("https://api.sportsapipro.com/v2/football/schedule/{$date}", $key, ['connect_timeout' => 3, 'timeout' => 15], $apiDiagnostics);
         $scheduleData = is_array($scheduleData['data'] ?? null) ? $scheduleData['data'] : ($scheduleData ?? []);
         if (! is_array($scheduleData['events'] ?? null)) {
             Log::warning('Football SportsAPI Pro schedule snapshot unavailable; existing matches retained', $apiDiagnostics ?? []);
@@ -900,8 +900,7 @@ class FootballSyncController extends Controller
                         Event::dispatch(new FootballSportsScoreUpdated);
                     }
                 } catch (LockTimeoutException) {
-                    $job->release(2);
-                    $retrying = true;
+                    $retrying = releaseSportsJobAfterLockContention($job);
                 } catch (Throwable $e) {
                     $retryAfter = in_array($status, [404, 410], true) ? 3600 : 300;
                     if (in_array($status, [404, 410], true)) {
@@ -1167,8 +1166,7 @@ class FootballSyncController extends Controller
                     try {
                         app(self::class)->loadMatchStatistics($matchId);
                     } catch (LockTimeoutException) {
-                        $job->release(2);
-                        $retrying = true;
+                        $retrying = releaseSportsJobAfterLockContention($job);
                     } finally {
                         if (! $retrying) {
                             $lock->release();
@@ -1274,7 +1272,7 @@ class FootballSyncController extends Controller
                                 $payload = array_intersect_key($payload, array_flip($expectedKeys));
                             }
                             $responses[$section] = ['data' => $payload, 'at' => $requestedAt];
-                        } else {
+                        } elseif (($diagnostics['skipped'] ?? null) !== 'quota_reserve') {
                             Log::warning('Football statistics response unavailable', ['match_id' => $matchId, 'section' => $section, 'api' => $diagnostics]);
                         }
                     } catch (Throwable $exception) {

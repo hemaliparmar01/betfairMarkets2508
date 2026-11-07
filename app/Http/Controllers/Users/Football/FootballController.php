@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Users\Football;
 
 use App\Http\Controllers\Controller;
 use App\Models\PredictionVote;
+use App\Services\AlertService;
 use App\Services\MatchBackup;
 use App\Traits\FootballTrait;
 use Illuminate\Contracts\View\View;
@@ -30,7 +31,7 @@ class FootballController extends Controller
     }
 
     /** @param array{alerts: list<array<string, mixed>>, signals?: list<array<string, mixed>>}|null $pinnacleSnapshot */
-    public function marketActivity(?array $pinnacleSnapshot = null): View|JsonResponse|Response|array
+    public function marketActivity(?array $pinnacleSnapshot = null, bool $currentPinnacleQuote = false): View|JsonResponse|Response|array
     {
         $capture = $pinnacleSnapshot !== null;
         $checkAuthAndSubscription = $capture ? null : checkAuthAndSubscription();
@@ -127,8 +128,8 @@ class FootballController extends Controller
             $pinnacleAlerts = $pinnacleAlerts['alerts'] ?? $pinnacleAlerts['data'] ?? $pinnacleAlerts;
             $pinnacleAlerts = is_array($pinnacleAlerts) ? array_values($pinnacleAlerts) : [];
             if (! $pinnacleArchive && ! $capture) {
-                $cutoff = time() - 420;
-                $pinnacleAlerts = array_values(array_filter($pinnacleAlerts, static fn (array $alert): bool => (int) ($alert['alerted'] ?? 0) > $cutoff));
+                $cutoff = microtime(true) - 420;
+                $pinnacleAlerts = array_values(array_filter($pinnacleAlerts, static fn (array $alert): bool => (float) ($alert['monitor_received_at'] ?? $alert['alerted'] ?? 0) > $cutoff));
             }
             $pinnacleFeeds = [];
             foreach (['live', 'prematch'] as $mode) {
@@ -143,7 +144,7 @@ class FootballController extends Controller
 
                 return trim(str_replace([' utd ', ' ath ', ' st '], [' united ', ' athletic ', ' saint '], $name));
             };
-            $sportsmeldKey = $pinnacleArchive || $capture ? '' : (string) config('services.sportsmeld.key');
+            $sportsmeldKey = $pinnacleArchive || ($capture && ! $currentPinnacleQuote) ? '' : (string) config('services.sportsmeld.key');
             $sportKeys = ['soccer' => 'football', 'tennis' => 'tennis', 'basketball' => 'basketball', 'ice-hockey' => 'ice_hockey', 'american-football' => 'american_football', 'baseball' => 'baseball', 'cricket' => 'cricket'];
             $eventIds = [];
             foreach ($pinnacleAlerts as $alert) {
@@ -176,8 +177,8 @@ class FootballController extends Controller
                 }
             }
             $remainingLookups = 1;
-            $legacyFootballMatches = ! $pinnacleArchive && ! $capture && $sportsmeldKey === '' && isset($eventIds['soccer']) ? (getInRedis('Football:matches', readOnly: true) ?? []) : [];
-            $footballIndex = $sportsmeldKey !== '' && isset($eventIds['soccer']) ? getInRedis('Football:matches', fixtureIndex: true, marketActivityIndex: true) : null;
+            $legacyFootballMatches = ! $pinnacleArchive && (! $capture || $currentPinnacleQuote) && $sportsmeldKey === '' && isset($eventIds['soccer']) ? (getInRedis('Football:matches', readOnly: true) ?? []) : [];
+            $footballIndex = ($sportsmeldKey !== '' || $currentPinnacleQuote) && isset($eventIds['soccer']) ? getInRedis('Football:matches', fixtureIndex: true, marketActivityIndex: true) : null;
 
             foreach ($pinnacleAlerts as &$alert) {
                 $alert['bf_back'] = $pinnacleArchive ? ($alert['bf_at_drop'] ?? null) : null;
@@ -194,6 +195,8 @@ class FootballController extends Controller
                 if ($parent !== null) {
                     $alert['home'] = $parent['home'];
                     $alert['away'] = $parent['away'];
+                    $alert['country'] = $parent['country'] ?? $alert['country'] ?? null;
+                    $alert['league'] = $parent['league'] ?? $alert['league'] ?? null;
                 }
                 $eventId = (string) (($alert['parent_id'] ?? null) ?: ($alert['id'] ?? ''));
                 $starts = $parent['starts'] ?? $parent['start'] ?? $alert['starts'] ?? $alert['start'] ?? null;
@@ -421,7 +424,7 @@ class FootballController extends Controller
                 };
                 $matchingRunners = array_values(array_filter($runners, static fn (array $runner): bool => $matchesOutcome($runner, $outcome) || (str_starts_with($outcome, 'over ') && $matchesOutcome($runner, 'over')) || (str_starts_with($outcome, 'under ') && $matchesOutcome($runner, 'under'))));
                 $selectedRunner = count($matchingRunners) === 1 ? $matchingRunners[0] : null;
-                if ($capture) {
+                if ($capture && ! $currentPinnacleQuote) {
                     $at = (int) ($alert['alerted'] ?? 0);
                     $quoteKey = 'quote:'.json_encode([$sport, $eventId, $status, $period, $marketType, $line, $outcome, $at]);
                     if (array_key_exists($quoteKey, $marketSnapshots)) {
@@ -464,6 +467,9 @@ class FootballController extends Controller
                     $alert['bf_back_size'] = $selectedRunner['backSize'] ?? null;
                     $alert['bf_lay_size'] = $selectedRunner['laySize'] ?? null;
                 }
+                if ($currentPinnacleQuote) {
+                    continue;
+                }
                 $pinnaclePrices = match (true) {
                     in_array($section, ['moneyline', 'money line', '1x2', 'match odds', 'draw no bet', 'dnb', 'spread', 'spreads', 'asian handicap'], true) => ['home' => $alert['price_x'] ?? null, 'away' => $alert['price_y'] ?? null, 'draw' => $alert['price_z'] ?? null],
                     preg_match('/^(total|totals|o\/u|teamtotal)/', $section) === 1 => ['over' => $alert['price_x'] ?? null, 'under' => $alert['price_y'] ?? null],
@@ -488,6 +494,11 @@ class FootballController extends Controller
                 return $pinnacleAlerts;
             }
 
+            foreach ($pinnacleAlerts as &$alert) {
+                $alert['league_filter_key'] = AlertService::pinnacleLeague($alert)[2];
+            }
+            unset($alert);
+
             if (request()->expectsJson()) {
                 return response()->json([
                     'data' => $pinnacleAlerts,
@@ -497,7 +508,11 @@ class FootballController extends Controller
                 ]);
             }
 
-            return view('users.sports.Football.marketActivity', compact('pinnacleAlerts', 'pinnacleFeedConnected', 'pinnacleFeeds', 'pinnacleArchive', 'pinnacleArchiveHasMore', 'pinnacleArchiveCursor', 'pinnacleArchiveStart', 'pinnacleArchiveEnd', 'pinnacleArchiveStats'));
+            $pinnacleLeagueOptions = app(AlertService::class)->pinnacleLeagueOptions([
+                ...($pinnaclePayload['signals'] ?? []), ...$pinnacleAlerts,
+            ]);
+
+            return view('users.sports.Football.marketActivity', compact('pinnacleLeagueOptions', 'pinnacleAlerts', 'pinnacleFeedConnected', 'pinnacleFeeds', 'pinnacleArchive', 'pinnacleArchiveHasMore', 'pinnacleArchiveCursor', 'pinnacleArchiveStart', 'pinnacleArchiveEnd', 'pinnacleArchiveStats'));
         }
 
         $marketActivites = $this->getMarketActivites();

@@ -14,6 +14,7 @@ use Database\Factories\CustomerFactory;
 use Illuminate\Broadcasting\AnonymousEvent;
 use Illuminate\Broadcasting\BroadcastManager;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Queue\CallQueuedClosure;
 use Illuminate\Support\Facades\Broadcast;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
@@ -94,6 +95,19 @@ class AlertSystemTest extends TestCase
         app(AlertService::class)->fanout($alertId);
 
         return (int) DB::table('alert_deliveries')->where('alert_id', $alertId)->where('customer_id', $customer->id)->where('channel', $channel)->value('id');
+    }
+
+    public function test_sports_lock_contention_does_not_requeue_after_the_last_worker_attempt(): void
+    {
+        $job = \Mockery::mock(CallQueuedClosure::class);
+        $job->shouldReceive('attempts')->andReturn(1, 2, 3);
+        $job->shouldReceive('displayName')->once()->andReturn('Sports test');
+        $job->shouldReceive('release')->once()->with(10);
+        $job->shouldReceive('release')->once()->with(20);
+
+        $this->assertTrue(releaseSportsJobAfterLockContention($job));
+        $this->assertTrue(releaseSportsJobAfterLockContention($job));
+        $this->assertFalse(releaseSportsJobAfterLockContention($job));
     }
 
     public function test_notifications_require_auth_and_new_preferences_have_document_defaults(): void
@@ -202,7 +216,7 @@ class AlertSystemTest extends TestCase
         $this->actingAs($customer, 'customers')->patchJson('/notifications', ['preferences' => array_fill_keys(AlertService::FILTERS, true)])->assertOk();
         $this->patchJson('/notifications', ['popup_enabled' => false])->assertOk()->assertJsonPath('preferences.ht00', true)->assertJsonPath('popup_enabled', false);
         $this->patchJson('/notifications', ['preferences' => ['admin' => true]])->assertUnprocessable();
-        $this->assertTrue($customer->fresh()->tg_market_shock);
+        $this->assertFalse($customer->fresh()->tg_market_shock);
     }
 
     public function test_ltd_source_uses_existing_match_similarity_and_real_half_time_draw_lay_odds(): void
@@ -218,6 +232,26 @@ class AlertSystemTest extends TestCase
         $this->assertSame($id, app(AlertService::class)->source($this->source()));
         $this->assertDatabaseCount('alerts', 1);
         Bus::assertDispatched(ProcessAlert::class, fn ($job) => $job->task === 'fanout');
+    }
+
+    public function test_ltd_parses_image_card_text_and_drops_the_promotional_footer(): void
+    {
+        $this->fixture(['team1' => 'Leeds', 'team2' => 'Tottenham', 'tournament' => 'English Premier League']);
+        $customer = $this->customer(['popup_enabled' => false]);
+        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 45]])]);
+        $text = "Football. England. Premier League\nLeeds United 0:0 Tottenham\nHotspur\n0:0\nTotal. Over (0.5). 1st half\n👉 Goal in the first half\nRegistration link on the 1xbet website\nhttps://example.test\nCODE POMO: HNV3";
+
+        $id = app(AlertService::class)->source($this->source($text));
+        $this->assertNotNull($id);
+        $alert = DB::table('alerts')->find($id);
+        $this->assertSame('ltd', $alert->type);
+        $this->assertStringNotContainsString('1xbet', $alert->payload);
+        $this->assertStringNotContainsString('HNV3', $alert->payload);
+        app(AlertService::class)->deliver($this->delivery($id, $customer));
+        Http::assertSent(fn ($request): bool => $request['chat_id'] === $customer->telegram_chat_id
+            && str_contains($request['text'], '1st Half Draw Odds: 2.25')
+            && ! str_contains($request['text'], '1xbet'));
+        $this->assertNull(app(AlertService::class)->source($this->source(str_replace('Over (0.5)', 'Over (1.5)', $text))));
     }
 
     public function test_source_rejects_ads_other_markets_ambiguous_matches_and_missing_or_stale_odds(): void
@@ -283,7 +317,7 @@ class AlertSystemTest extends TestCase
     #[TestWith(['cricket'])]
     #[TestWith(['esports'])]
     #[TestWith(['snooker'])]
-    public function test_pinnacle_main_market_drops_reach_telegram_for_each_sport_without_a_football_fixture(string $sport): void
+    public function test_unmatched_pinnacle_drops_do_not_reach_telegram_even_with_legacy_preferences(string $sport): void
     {
         $customer = $this->customer(['tg_prematch_drops' => true, 'popup_enabled' => false]);
         Http::fake(['https://api.telegram.org/bottest-token/sendMessage' => Http::response(['ok' => true, 'result' => ['message_id' => 321]])]);
@@ -303,16 +337,47 @@ class AlertSystemTest extends TestCase
         $this->assertSame($sport, $payload['context']['sport']);
         $this->assertSame('Home Team vs Away Team', $payload['match']);
         $this->assertSame(100, $payload['context']['pinnacle_event_id']);
-        $delivery = $this->delivery($alert->id, $customer);
-        app(AlertService::class)->deliver($delivery);
-        app(AlertService::class)->deliver($delivery);
+        $this->assertSame(0, $this->delivery($alert->id, $customer));
         $job->handle(app(AlertService::class));
 
         $this->assertDatabaseCount('alerts', 1);
-        $this->assertDatabaseHas('alert_deliveries', ['id' => $delivery, 'status' => 'sent', 'remote_id' => '321']);
+        Http::assertNothingSent();
+    }
+
+    public function test_pinnacle_telegram_filters_use_selected_league_and_current_back_odds(): void
+    {
+        config(['services.sportsmeld.key' => null, 'services.football_fixture_index' => false]);
+        Redis::shouldReceive('get')->with('Football:matches')->andReturn(null);
+        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 99]])]);
+        $customer = $this->customer(['tg_prematch_drops' => true, 'popup_enabled' => false]);
+        $starts = time() + 3600;
+        $fixture = $this->fixture(['result_status' => 'Prematch', 'timestamp' => $starts]);
+        $fixture->forceFill(['betfair_match_id' => '900', 'data_sync_complete' => true])->save();
+        $market = FootballMarket::query()->create([
+            'selection_key' => hash('sha256', 'current-pinnacle-quote'), 'football_match_unique_key' => $fixture->unique_key,
+            'market_id' => 'main', 'market_type' => 'MATCH_ODDS', 'runner' => 'Torino',
+            'payload' => ['marketType' => 'MATCH_ODDS', 'runner' => 'Torino', 'currentBackOdds' => 1.8, 'market_status' => 'OPEN'],
+        ]);
+        $drop = ['id' => 100, 'sport' => 'soccer', 'home' => 'Torino', 'away' => 'Monza 1912', 'league' => 'Italy - Coppa Italia',
+            'sect' => 'Moneyline', 'outcome' => 'Home', 'starts' => $starts, 'from_price' => 2.5, 'to_price' => 1.8, 'alerted' => time()];
+        $league = AlertService::pinnacleLeague($drop)[2];
+        $this->actingAs($customer, 'customers')->patchJson('/notifications', [
+            'pinnacle_filters' => ['higher' => true, 'leagues' => [$league]],
+        ])->assertOk()->assertJsonPath('pinnacle_filters.leagues.0', $league);
+
+        $alerts = app(AlertService::class);
+        foreach (['equal' => [], 'different-league' => ['league' => 'England - Coppa Italia'], 'suspended' => [], 'higher' => []] as $key => $fields) {
+            $market->forceFill(['payload' => array_replace($market->payload, [
+                'currentBackOdds' => $key === 'equal' ? 1.8 : 2.1,
+                'market_status' => $key === 'suspended' ? 'SUSPENDED' : 'OPEN',
+            ])])->save();
+            $id = $alerts->process('prematch_drops', [], ['pinnacle' => array_replace($drop, ['alert_key' => $key], $fields)]);
+            $delivery = $this->delivery($id, $customer);
+            $alerts->deliver($delivery);
+            $this->assertDatabaseHas('alert_deliveries', ['id' => $delivery, 'status' => $key === 'higher' ? 'sent' : 'skipped']);
+        }
+
         Http::assertSentCount(1);
-        Http::assertSent(fn ($request): bool => $request['chat_id'] === $customer->telegram_chat_id
-            && str_contains($request['text'], 'PREMATCH DROP ALERT') && str_contains($request['text'], '3.20 📉 2.75'));
     }
 
     public function test_pinnacle_drops_respect_saved_preferences_access_and_disconnect_at_delivery(): void
@@ -331,6 +396,11 @@ class AlertSystemTest extends TestCase
         ] as $attributes) {
             $excluded[] = $this->customer(['tg_prematch_drops' => true, 'popup_enabled' => false, ...$attributes]);
         }
+        foreach ([$allowed, $lifetime, ...array_slice($excluded, 2)] as $customer) {
+            $this->actingAs($customer, 'customers')->patchJson('/notifications', [
+                'pinnacle_filters' => ['higher' => true, 'leagues' => null],
+            ])->assertOk();
+        }
         $id = app(AlertService::class)->process('prematch_drops', [], ['pinnacle' => [
             'id' => 100, 'home' => 'Sokol Prazsky', 'away' => 'Basketbal Polabi', 'league' => '1. Liga', 'sport' => 'basketball',
             'sect' => 'Moneyline', 'outcome' => 'Home', 'from_price' => 1.76, 'to_price' => 1.67,
@@ -344,7 +414,9 @@ class AlertSystemTest extends TestCase
         }
         $this->assertDatabaseHas('alert_deliveries', ['alert_id' => $id, 'customer_id' => $lifetime->id, 'channel' => 'telegram']);
         $delivery = DB::table('alert_deliveries')->where('alert_id', $id)->where('customer_id', $allowed->id)->value('id');
-        $allowed->forceFill(['tg_prematch_drops' => false])->save();
+        $this->actingAs($allowed, 'customers')->patchJson('/notifications', [
+            'pinnacle_filters' => ['higher' => false, 'leagues' => null],
+        ])->assertOk();
         app(AlertService::class)->deliver($delivery);
         $this->assertDatabaseHas('alert_deliveries', ['id' => $delivery, 'status' => 'skipped']);
         Http::assertNothingSent();
@@ -804,34 +876,21 @@ class AlertSystemTest extends TestCase
         $this->assertFalse($customer->fresh()->telegram_available);
         $this->assertTrue($customer->fresh()->tg_ltd);
 
-        $sent = Http::recorded()->count();
         foreach (['prematch_drops', 'market_shock'] as $type) {
-            foreach ([
-                ['moneyline', null, 0, true],
-                ['Total', 2.5, 0, true],
-                ['Total', null, 0, true],
-                ['BTTS', null, 0, true],
-                ['Asian Handicap', -1.5, 0, false],
-                ['Total', 2.75, 0, false],
-                ['Moneyline', null, 1, false],
-            ] as [$market, $point, $period, $expected]) {
-                $recipient = $this->customer(['tg_'.$type => true]);
-                $payload = ['alert_type' => $type, 'match' => 'Torino vs Monza 1912', 'league' => 'Coppa Italia',
-                    'context' => ['movement' => ['market' => $market, 'selection' => 'Over 2.5', 'point' => $point, 'period' => $period, 'from' => 4.0, 'to' => 3.5]]];
-                $queued = DB::table('alerts')->insertGetId(['event_key' => (string) Str::uuid(), 'type' => $type,
-                    'match_id' => '12345', 'payload' => json_encode($payload), 'created_at' => now()]);
-                $pending = $this->delivery($queued, $recipient);
-                if ($expected) {
-                    $responses->push(['ok' => true, 'result' => ['message_id' => 43]]);
-                    $sent++;
-                }
+            $recipient = $this->customer(['tg_'.$type => true]);
+            $payload = ['alert_type' => $type, 'context' => ['movement' => ['market' => 'moneyline']]];
+            $queued = DB::table('alerts')->insertGetId(['event_key' => (string) Str::uuid(), 'type' => $type,
+                'match_id' => '12345', 'payload' => json_encode($payload), 'created_at' => now()]);
+            $this->assertSame(0, $this->delivery($queued, $recipient));
+            $pending = DB::table('alert_deliveries')->insertGetId([
+                'alert_id' => $queued, 'customer_id' => $recipient->id, 'channel' => 'telegram',
+                'destination' => $recipient->telegram_chat_id, 'status' => 'pending', 'created_at' => now(), 'updated_at' => now(),
+            ]);
 
-                app(AlertService::class)->deliver($pending);
-
-                $this->assertDatabaseHas('alert_deliveries', ['id' => $pending, 'status' => $expected ? 'sent' : 'skipped']);
-                Http::assertSentCount($sent);
-            }
+            app(AlertService::class)->deliver($pending);
+            $this->assertDatabaseHas('alert_deliveries', ['id' => $pending, 'status' => 'skipped']);
         }
+        Http::assertSentCount(2);
     }
 
     public function test_rate_limit_retries_and_unknown_outcomes_do_not_duplicate_notifications(): void

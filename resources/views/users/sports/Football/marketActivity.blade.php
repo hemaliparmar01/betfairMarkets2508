@@ -125,6 +125,47 @@
             @endforeach
         </div>
 
+        <div class="mb-4 flex flex-wrap items-start gap-3 text-sm">
+        <div class="pinnacle-higher-filter">
+            <label class="flex cursor-pointer items-center gap-2 font-semibold">
+                <input type="checkbox" data-pinnacle-higher>
+                <span><span class="text-[#FFB800]">Betfair</span> &gt; <span class="text-[#FF6600]">Pinnacle</span> {{ __('Drop') }}</span>
+                @if ($pinnacleArchive) <span>{{ __('(at drop time)') }}</span> @endif
+            </label>
+            <details class="pinnacle-filter-info">
+                <summary aria-label="{{ __('About the Betfair odds filter') }}" aria-describedby="pinnacle-filter-help">i</summary>
+            </details>
+            <span id="pinnacle-filter-help" role="tooltip" class="pinnacle-filter-help">{{ $pinnacleArchive ? __("Shows only alerts where Betfair's odds at the time of the drop were higher than Pinnacle's newly dropped odds for the exact same match and market.") : __("Shows only alerts where Betfair's current odds are higher than Pinnacle's newly dropped odds for the exact same match and market.") }}</span>
+        </div>
+        <details class="pinnacle-league-picker" data-pinnacle-league-picker>
+            <summary class="cursor-pointer font-semibold">{{ __('Country & League') }}</summary>
+            @if ($pinnacleLeagueOptions !== [])
+                <label class="mt-2 flex items-center gap-2 font-semibold">
+                    <input type="checkbox" data-pinnacle-select-all>
+                    {{ __('Select all') }}
+                </label>
+            @endif
+            <div class="mt-2 max-h-64 space-y-2 overflow-y-auto">
+                @forelse ($pinnacleLeagueOptions as $country => $leagues)
+                    <fieldset>
+                        <label class="flex items-center gap-2 font-semibold">
+                            <input type="checkbox" data-pinnacle-country>
+                            {{ $country !== '' ? $country : __('Unknown country') }}
+                        </label>
+                        @foreach ($leagues as $key => $league)
+                            <label class="ms-5 flex items-center gap-2">
+                                <input type="checkbox" value="{{ $key }}" data-pinnacle-league>
+                                {{ $league }}
+                            </label>
+                        @endforeach
+                    </fieldset>
+                @empty
+                    <p>{{ __('No leagues are available yet.') }}</p>
+                @endforelse
+            </div>
+        </details>
+        </div>
+
         <div class="overflow-hidden rounded-2xl border border-[var(--border-neutral-5-6)] bg-[rgb(var(--surface))] dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--surface))]">
             <div class="flex flex-wrap items-center justify-between gap-3 bg-[var(--surface-heading)] px-4 py-3 text-white">
                 <h2 class="flex items-center gap-2 text-sm font-extrabold uppercase tracking-wide"><span class="size-2 rounded-full bg-[var(--surface-danger-0-3)]"></span>{{ $pinnacleArchive ? __('Daily Archive') : __('Real-Time Pinnacle Odds Drops') }}</h2>
@@ -196,6 +237,10 @@
                 const edgeClass = value => value === null || !Number.isFinite(value) ? 'text-[var(--text-slate-400)]' : value > 0 ? 'text-[var(--text-emerald-600)] dark:text-[var(--text-emerald-400)]' : value < 0 ? 'text-[var(--text-danger-edge)] dark:text-[var(--text-red-400)]' : 'text-[var(--text-slate-500)]';
                 const betfairEdgeText = alert => betfairPrice(alert) === null ? 'N/A' : edge(alert) === null ? (globalThis.bfTranslations?.["— (fair price pending)"] ?? "— (fair price pending)") : edgeText(edge(alert));
                 const alertIdentity = alert => alert.alert_key || [matchKey(alert), alert.sect, marketLine(alert), alert.period, alert.outcome, alert.alerted, alert.from_price, alert.to_price].join('|');
+                const monitorTimestamp = alert => {
+                    const timestamp = number(alert.monitor_received_at ?? alert.alerted);
+                    return timestamp && timestamp < 100000000000 ? timestamp * 1000 : timestamp;
+                };
                 const alertVersion = alert => `${alertIdentity(alert)}|${alert.alerted}|${alert.from_price}|${alert.to_price}`;
                 const receiveAlerts = alerts => {
                     if (state.archive) { state.alerts = alerts; state.flashes.clear(); return; }
@@ -221,11 +266,16 @@
                     return /^(spreads?|asian handicap|handicap)(?:\s|$)/.test(section) ? 3 : 4;
                 };
                 const matchesMarketFilter = alert => state.marketFilter === 'all' || (state.marketFilter === 'handicap' ? marketPriority(alert) === 3 : marketPriority(alert) < 3);
+                const leaguePicker = root.querySelector('[data-pinnacle-league-picker]');
+                const higherOnly = root.querySelector('[data-pinnacle-higher]');
                 const filtered = (now = Date.now()) => {
+                    const leagues = new Set(Array.from(leaguePicker?.querySelectorAll('[data-pinnacle-league]:checked') ?? [], input => input.value));
                     const today = state.timeFilter === 'today' || state.timeFilter === 'future' ? matchDayFormat.format(now) : null;
                     return state.alerts.filter(alert => {
-                        const alerted = number(alert.alerted);
-                        if (!state.archive && (!Number.isFinite(alerted) || alerted <= 0 || now - (alerted < 100000000000 ? alerted * 1000 : alerted) >= 420000)) return false;
+                        if (leagues.size && !leagues.has(alert.league_filter_key)) return false;
+                        if (higherOnly?.checked && !(betfairPrice(alert) > number(alert.to_price) && number(alert.to_price) > 1)) return false;
+                        const received = monitorTimestamp(alert);
+                        if (!state.archive && (!Number.isFinite(received) || received <= 0 || now - received >= 420000)) return false;
                         if (!matchesMarketFilter(alert) || !(Math.round(drop(alert) * 100000000) / 100000000 >= 5) || (state.mode === 'live' ? !isLive(alert) : isLive(alert))) return false;
                         if (!state.timeFilter || state.timeFilter === 'all') return true;
                         const start = number(alert.start_timestamp) * 1000;
@@ -234,7 +284,7 @@
                         if (isLive(alert) || start < now) return false;
                         if (state.timeFilter === 'future') return matchDayFormat.format(start) !== today;
                         return start - now <= (state.timeFilter === '1h' ? 3600000 : 10800000);
-                    }).sort((a, b) => (number(b.alerted) || 0) - (number(a.alerted) || 0));
+                    }).sort((a, b) => state.archive ? (number(b.alerted) || 0) - (number(a.alerted) || 0) : monitorTimestamp(b) - monitorTimestamp(a));
                 };
                 const render = () => {
                     const now = Date.now();
@@ -280,7 +330,7 @@
                             }
                         }
                         const collapsed = state.collapsedGroups.has(groupKey);
-                        const rows = alerts.sort((a, b) => marketPriority(a) - marketPriority(b)).map(alert => {
+                        const rows = (state.archive ? alerts.sort((a, b) => marketPriority(a) - marketPriority(b)) : alerts).map(alert => {
                             const alertIndex = state.alerts.indexOf(alert);
                             const from = number(alert.from_price); const to = number(alert.to_price);
                             const betfairOdds = betfairPrice(alert);
@@ -435,6 +485,9 @@
                     window.Echo.channel('sports.pinnacle.drops').listen('.drops.updated', scheduleRefresh);
                     window.Echo.channel('sports.football.live').listen('.score.updated', scheduleRefresh);
                 };
+                root.addEventListener('change', event => {
+                    if (event.target === higherOnly || leaguePicker?.contains(event.target)) render();
+                });
                 root.addEventListener('click', event => { if (event.target.closest('[data-mode]')) updateStatus(); });
                 updateStatus();
                 render();

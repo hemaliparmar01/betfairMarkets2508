@@ -132,6 +132,18 @@ class SportsPipelineTest extends TestCase
         }
     }
 
+    public function test_provider_rate_limit_pauses_standard_rest_requests_and_preserves_raw_response_contract(): void
+    {
+        recordSportsApiProRestResponse(['x-ratelimit-reset' => (string) (time() + 120)], 1, 429);
+        recordSportsApiProRestResponse(['retry-after' => '60'], 2, 429);
+
+        $this->assertGreaterThanOrEqual(time() + 115, (int) Redis::get('SportsAPIPro:rest-backoff:'.gmdate('Y-m-d')));
+        $this->assertSame(0, recordSportsApiProRestRequest('/v2/football/schedule/{$date}'));
+        $response = ApiCall('https://api.sportsapipro.com/v2/football/schedule/{$date}', 'test', ['raw_response' => true], $diagnostics);
+        $this->assertFalse($response['successful']);
+        $this->assertSame('quota_reserve', $diagnostics['skipped']);
+    }
+
     public function test_football_provider_name_changes_reuse_existing_ids_and_keys(): void
     {
         $sync = $this->sync('Football');
@@ -1644,7 +1656,7 @@ class SportsPipelineTest extends TestCase
         } finally {
             DB::swap($manager);
         }
-        $job->assertReleased(2);
+        $job->assertReleased(10);
         $this->assertFalse(Cache::store('redis')->lock('Football:timeline-backfill:123:pending', 3600)->get());
         $this->assertSame($encoded, Redis::get('Football:matches'));
 

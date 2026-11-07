@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Http\Controllers\Users\Football\FootballController;
 use App\Http\Controllers\Users\Football\FootballSyncController;
 use App\Jobs\ProcessAlert;
 use App\Models\Customer;
@@ -15,14 +16,16 @@ use Illuminate\Support\Facades\Broadcast;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
+use RedisException;
 use Throwable;
 
 class AlertService
 {
     use FootballTrait;
 
-    public const FILTERS = ['ht00', '00_70', 'fav_losing', 'ltd', 'prematch_drops', 'market_shock'];
+    public const FILTERS = ['ht00', '00_70', 'fav_losing', 'ltd'];
 
     private const MAIN_MARKETS = ['moneyline', 'money line', '1x2', 'match odds', 'btts', 'both teams to score',
         'over under 05', 'over under 15', 'over under 25', 'over under 35', 'over under 45'];
@@ -43,8 +46,88 @@ class AlertService
             'username' => $customer->telegram_username,
             'error' => $customer->telegram_error,
             'popup_enabled' => $customer->popup_enabled ?? true,
+            'pinnacle_filters' => $this->pinnacleFilters($customer),
             'preferences' => collect(self::FILTERS)->mapWithKeys(fn (string $type): array => [$type => (bool) $customer->{'tg_'.$type}])->all(),
         ];
+    }
+
+    public function pinnacleFilters(Customer $customer): array
+    {
+        $stored = DB::table('site_settings')->where('key', 'customer.pinnacle_filters.'.$customer->id)->value('value');
+
+        return (json_decode($stored ?? '', true) ?? []) + ['higher' => false, 'leagues' => null];
+    }
+
+    public static function pinnacleLeague(array $drop): array
+    {
+        $parent = $drop['archive_parent'] ?? [];
+        $label = trim((string) ($parent['league'] ?? $drop['league'] ?? ''));
+        $parts = explode(' - ', $label, 2);
+        $country = $parent['country'] ?? $drop['country'] ?? null;
+        $country = trim((string) (is_array($country) ? ($country['name'] ?? '') : $country));
+        $hasCountryPrefix = isset($parts[1]) && ($country === '' || strcasecmp(trim($parts[0]), $country) === 0);
+        $league = $hasCountryPrefix ? trim($parts[1]) : $label;
+        $country = $country !== '' ? $country : ($hasCountryPrefix ? trim($parts[0]) : '');
+        $key = substr(hash('sha256', mb_strtolower($country.'|'.$league)), 0, 16);
+
+        return [$country, $league, $key];
+    }
+
+    public function pinnacleLeagueOptions(?array $drops = null): array
+    {
+        $catalog = config('services.pinnodds.leagues', []);
+        if ($catalog !== []) {
+            $drops = [];
+        }
+        foreach ($catalog as $country => $leagues) {
+            foreach ($leagues as $league) {
+                $drops[] = ['country' => $country, 'league' => $league];
+            }
+        }
+        if ($drops === null) {
+            try {
+                $feed = getInRedis('Pinnacle:drops', readOnly: true) ?? [];
+                $drops = $feed['signals'] ?? $feed['alerts'] ?? [];
+            } catch (RedisException) {
+                $drops = [];
+            }
+        }
+        $options = [];
+        foreach ($drops as $drop) {
+            [$country, $league, $key] = self::pinnacleLeague($drop);
+            if ($league !== '') {
+                $options[$country][$key] = $league;
+            }
+        }
+        ksort($options);
+        foreach ($options as &$leagues) {
+            asort($leagues);
+        }
+
+        return $options;
+    }
+
+    private function allowsPinnacleDrop(Customer $customer, array $context): bool
+    {
+        $filters = $this->pinnacleFilters($customer);
+        if (! $filters['higher']) {
+            return false;
+        }
+        $drop = $context['pinnacle_drop'] ?? [];
+        if ($drop === [] && isset($context['movement']['pinnacle_alert_key'])) {
+            $feed = getInRedis('Pinnacle:drops', readOnly: true) ?? [];
+            $drop = array_find($feed['signals'] ?? $feed['alerts'] ?? [], fn (array $item): bool => ($item['alert_key'] ?? null) === $context['movement']['pinnacle_alert_key']) ?? [];
+        }
+        if ($filters['leagues'] !== null && ($drop === [] || ! in_array(self::pinnacleLeague($drop)[2], $filters['leagues'], true))) {
+            return false;
+        }
+        if ($drop === [] || ! is_numeric($drop['to_price'] ?? null) || (float) $drop['to_price'] <= 1) {
+            return false;
+        }
+        $resolved = app(FootballController::class)->marketActivity(['alerts' => [$drop]], currentPinnacleQuote: true);
+        $quote = $resolved[0]['bf_back'] ?? null;
+
+        return is_numeric($quote) && is_finite((float) $quote) && (float) $quote > (float) $drop['to_price'];
     }
 
     public function connectionChanged(Customer $customer): void
@@ -164,23 +247,35 @@ class AlertService
             || ! is_numeric($message['sent_at'] ?? null) || abs(time() - (int) $message['sent_at']) > 300) {
             return null;
         }
-        $text = trim((string) ($message['text'] ?? ''));
-        $context = trim($text."\n".($message['reply_text'] ?? ''));
-        if (preg_match('/\b(1xbet|promo(?:tion|\s*code)?|register|bonus|deposit|referral|advertisement)\b/i', $context)) {
-            return null;
-        }
-        $goal = preg_match('/\bgo+a+l+\b/i', $text) === 1;
+        $clean = static function (string $text): string {
+            $lines = preg_split('/\R/u', $text);
+
+            return trim(implode("\n", array_filter($lines, static fn (string $line): bool => ! preg_match(
+                '~https?://|t\.me/|\b(?:1xbet|promo(?:tion|\s*code)?|code\s+pomo|register|registration|bonus|deposit|referral|advertisement)\b~i', $line
+            ))));
+        };
+        $text = $clean((string) ($message['text'] ?? ''));
+        $context = trim($text."\n".$clean((string) ($message['reply_text'] ?? '')));
+        $goal = preg_match('/(?:^|\n)\s*(?:⚽\s*)?go+a+l+(?:!+(?=\s|$)|(?=\h+(?:Score:|[^\n]+\h+\d{1,2}\h*[-:]\h*\d{1,2})))/iu', $text) === 1;
         if (! $goal && (! preg_match('/\b(?:1st\s*half|first\s*half|HT)\b/i', $text)
             || ! preg_match('/\bOver\s*\(?0[.,]5\)?(?:\s*Goals)?\b/i', $text)
             || preg_match('/\b(?:Over\s*\(?[1-9]|Full\s*Time|Full\s*Match|Asian\s*Handicap)\b/i', $text))) {
             return null;
         }
-        $context = preg_replace('~https?://\S+|t\.me/\S+~i', '', $context);
         $hasTeams = preg_match('/(?:^|\n)\s*(?:⚽\s*)?(?:Match\s*:\s*)?([^\n:]+?)\s+(?:vs\.?|v\.?|—)\s+([^\n]+?)(?=\s+[|@]|\s+-\s+(?:Over|Under)|\n|$)/iu', $context, $teams);
         if (! $hasTeams && $goal) {
             $hasTeams = preg_match('/\bgo+a+l+!?\s*([^\n]+?)\s+\d{1,2}\s*[-:]\s*\d{1,2}\s+([^\n]+?)(?=\s+@|\n|$)/iu', $text, $teams);
         }
         $hasLeague = preg_match('/(?:League|Competition|Tournament)\s*:\s*([^\n|]+)/iu', $context, $league);
+        if (! $goal && ! $hasTeams) {
+            $hasTeams = preg_match('/^\h*([\p{L}][^\n:]+?)\h+\d{1,2}\h*[:–-]\h*\d{1,2}\h+([\p{L}][^\n:]+?)(?:\n([\p{L}][\p{L} .-]+)(?=\n\h*\d))?\h*$/mu', $text, $teams);
+            if ($hasTeams && isset($teams[3])) {
+                $teams[2] .= ' '.$teams[3];
+            }
+        }
+        if (! $goal && ! $hasLeague) {
+            $hasLeague = preg_match('/^\h*Football[.\h]+[^\n.]+\.\h+([^\n]+)$/mi', $text, $league);
+        }
         if (! $hasTeams || (! $goal && ! $hasLeague)) {
             return null;
         }
@@ -188,12 +283,24 @@ class AlertService
         $away = trim($teams[2]);
         $competition = $hasLeague ? trim($league[1]) : null;
         $resolver = app(FootballSyncController::class);
+        $normalizeTeam = static fn (string $name): string => match (strtolower(trim($name))) {
+            'leeds' => 'Leeds United',
+            'tottenham' => 'Tottenham Hotspur',
+            default => $name,
+        };
+        $normalizeLeague = static fn (string $name): string => match (strtolower(trim($name))) {
+            'english premier league', 'england premier league' => 'Premier League',
+            default => $name,
+        };
         $candidates = FootballMatch::query()->where('result_status', 'Live')->whereBetween('start_timestamp', [time() - 4 * 3600, time()])
             ->select(['id', 'sports_api_pro_match_id', 'team1', 'team2', 'tournament', 'unique_key'])->get()
-            ->filter(fn (FootballMatch $match): bool => $resolver->teamSimilarity($match->team1, $home) >= 80
-                && $resolver->teamSimilarity($match->team2, $away) >= 80
-                && ($competition === null ? DB::table('alerts')->where('match_id', $match->sports_api_pro_match_id)->where('type', 'ltd')->exists() : $resolver->teamSimilarity($match->tournament ?? '', $competition) >= 80));
+            ->filter(fn (FootballMatch $match): bool => $resolver->teamSimilarity($normalizeTeam($match->team1), $normalizeTeam($home)) >= 80
+                && $resolver->teamSimilarity($normalizeTeam($match->team2), $normalizeTeam($away)) >= 80
+                && ($competition === null ? DB::table('alerts')->where('match_id', $match->sports_api_pro_match_id)->where('type', 'ltd')->exists()
+                    : $resolver->teamSimilarity($normalizeLeague($match->tournament ?? ''), $normalizeLeague($competition)) >= 80));
         if ($candidates->count() !== 1) {
+            Log::debug('Telegram source fixture could not be resolved uniquely.', ['message_id' => $message['message_id'], 'matches' => $candidates->count()]);
+
             return null;
         }
         $record = $candidates->first()->refresh();
@@ -224,8 +331,10 @@ class AlertService
         }
         $record->load(['markets' => fn ($query) => $query->where('market_type', 'HALF_TIME')]);
         $draws = $record->markets->filter(fn ($runner): bool => in_array(strtolower(trim($runner->runner ?? '')), ['the draw', 'draw', 'x'], true)
-            && $runner->lay_odds > 1 && $runner->lay_odds <= 1000 && empty($runner->payload['suspended']) && $runner->updated_at->gt(now()->subMinutes(2)));
+            && $runner->lay_odds > 1 && $runner->lay_odds <= 1000 && empty($runner->payload['suspended']) && ! in_array($runner->payload['market_status'] ?? 'OPEN', ['SUSPENDED', 'CLOSED'], true) && $runner->updated_at->gt(now()->subMinutes(2)));
         if ($draws->count() !== 1) {
+            Log::debug('Telegram LTD source has no unique current half-time draw lay quote.', ['message_id' => $message['message_id'], 'match_id' => $record->sports_api_pro_match_id]);
+
             return null;
         }
 
@@ -235,7 +344,7 @@ class AlertService
     /** @param array<string, mixed> $match @param array<string, mixed> $context */
     public function process(string $type, array $match, array $context = [], ?int $customerId = null): ?int
     {
-        if (! config('services.telegram.enabled') || ! in_array($type, [...self::FILTERS, 'goal', 'test', 'expired'], true)) {
+        if (! config('services.telegram.enabled') || ! in_array($type, [...self::FILTERS, 'prematch_drops', 'market_shock', 'goal', 'test', 'expired'], true)) {
             return null;
         }
         $pinnacle = $context['pinnacle'] ?? null;
@@ -261,11 +370,13 @@ class AlertService
             }
             $match = ['team1' => $pinnacle['home'], 'team2' => $pinnacle['away'], 'tournament' => $pinnacle['league'] ?? null,
                 'timestamp' => $starts > 0 ? $starts : null, 'result_status' => 'Prematch'];
-            $context = ['provider' => 'pinnacle', 'sport' => $sport, 'pinnacle_event_id' => $pinnacle['id'], 'movement' => [
-                'market' => $pinnacle['sect'] ?? '', 'selection' => $pinnacle['outcome'] ?? '',
-                'point' => $pinnacle['point'] ?? $pinnacle['points'] ?? $pinnacle['hdp'] ?? null, 'period' => $pinnacle['period'] ?? 0,
-                'from' => $from, 'to' => $to, 'at' => $at, 'sport' => $sport, 'pinnacle_alert_key' => $pinnacle['alert_key'],
-            ]];
+            $context = ['provider' => 'pinnacle', 'sport' => $sport, 'pinnacle_event_id' => $pinnacle['id'],
+                'pinnacle_drop' => array_intersect_key($pinnacle, array_flip(['id', 'sport', 'home', 'away', 'country', 'league', 'starts', 'start', 'parent_id', 'archive_parent', 'sect', 'outcome', 'point', 'points', 'hdp', 'period', 'to_price'])),
+                'movement' => [
+                    'market' => $pinnacle['sect'] ?? '', 'selection' => $pinnacle['outcome'] ?? '',
+                    'point' => $pinnacle['point'] ?? $pinnacle['points'] ?? $pinnacle['hdp'] ?? null, 'period' => $pinnacle['period'] ?? 0,
+                    'from' => $from, 'to' => $to, 'at' => $at, 'sport' => $sport, 'pinnacle_alert_key' => $pinnacle['alert_key'],
+                ]];
         }
         if (! in_array($type, ['test', 'expired'], true)) {
             if ($pinnacle === null && (empty($matchId) || empty($match['team1']) || empty($match['team2']) || empty($match['tournament'])
@@ -389,6 +500,12 @@ class AlertService
             return 5;
         }
         $payload = json_decode($alert->payload, true);
+        $pinnacle = $alert->type === 'prematch_drops' && ($payload['context']['provider'] ?? null) === 'pinnacle';
+        if ($alert->type === 'market_shock' || ($alert->type === 'prematch_drops' && ! $pinnacle)) {
+            DB::table('alerts')->where('id', $alertId)->update(['fanned_out_at' => now()]);
+
+            return 0;
+        }
         foreach (['telegram', 'platform'] as $channel) {
             if ($channel === 'platform' && ! in_array($alert->type, ['ltd', 'goal'], true)) {
                 continue;
@@ -434,11 +551,18 @@ class AlertService
                     return 5;
                 }
             }
-            $query->select(['id', 'telegram_chat_id'])->lazyById(100)->each(function (Customer $customer) use ($alert, $channel): void {
-                DB::table('alert_deliveries')->insertOrIgnore(['alert_id' => $alert->id, 'customer_id' => $customer->id, 'channel' => $channel,
-                    'destination' => $channel === 'telegram' ? $customer->telegram_chat_id : null, 'status' => 'pending', 'created_at' => now(), 'updated_at' => now()]);
-                $id = DB::table('alert_deliveries')->where(['alert_id' => $alert->id, 'customer_id' => $customer->id, 'channel' => $channel])->value('id');
-                ProcessAlert::dispatch('deliver', ['delivery_id' => $id])->onQueue($channel === 'platform' ? 'alerts-platform' : 'alerts-telegram')->afterCommit();
+            $query->select(['id', 'telegram_chat_id'])->chunkById(100, function ($customers) use ($alert, $channel, $pinnacle): void {
+                if ($pinnacle) {
+                    $keys = $customers->mapWithKeys(fn (Customer $customer): array => [$customer->id => 'customer.pinnacle_filters.'.$customer->id]);
+                    $preferences = DB::table('site_settings')->whereIn('key', $keys->values()->all())->pluck('value', 'key');
+                    $customers = $customers->filter(fn (Customer $customer): bool => (bool) (json_decode($preferences[$keys[$customer->id]] ?? '', true)['higher'] ?? false));
+                }
+                foreach ($customers as $customer) {
+                    DB::table('alert_deliveries')->insertOrIgnore(['alert_id' => $alert->id, 'customer_id' => $customer->id, 'channel' => $channel,
+                        'destination' => $channel === 'telegram' ? $customer->telegram_chat_id : null, 'status' => 'pending', 'created_at' => now(), 'updated_at' => now()]);
+                    $id = DB::table('alert_deliveries')->where(['alert_id' => $alert->id, 'customer_id' => $customer->id, 'channel' => $channel])->value('id');
+                    ProcessAlert::dispatch('deliver', ['delivery_id' => $id])->onQueue($channel === 'platform' ? 'alerts-platform' : 'alerts-telegram')->afterCommit();
+                }
             });
         }
         DB::table('alerts')->where('id', $alertId)->update(['fanned_out_at' => now()]);
@@ -470,7 +594,10 @@ class AlertService
                     $allowed = $customer->telegram_available && $customer->telegram_chat_id === $delivery->destination
                         && (! in_array($alert->type, self::FILTERS, true) || $customer->{'tg_'.$alert->type})
                         && ($alert->type !== 'goal' || $customer->tg_ltd);
-                    if ($allowed && in_array($alert->type, ['prematch_drops', 'market_shock'], true)) {
+                    if ($alert->type === 'market_shock' || ($alert->type === 'prematch_drops' && ($payload['context']['provider'] ?? null) !== 'pinnacle')) {
+                        $allowed = false;
+                    }
+                    if ($allowed && $alert->type === 'prematch_drops') {
                         $movement = $payload['context']['movement'] ?? [];
                         $market = strtolower(str_replace('_', ' ', trim((string) ($movement['market'] ?? ''))));
                         $line = $movement['point'] ?? null;
@@ -479,6 +606,9 @@ class AlertService
                         }
                         $allowed = (int) ($movement['period'] ?? 0) === 0 && (in_array($market, self::MAIN_MARKETS, true)
                             || (preg_match('/^(total|totals|o\/u)(?:\s|$)/', $market) === 1 && is_numeric($line) && in_array((float) $line, [0.5, 1.5, 2.5, 3.5, 4.5], true)));
+                    }
+                    if ($allowed && $alert->type === 'prematch_drops') {
+                        $allowed = $this->allowsPinnacleDrop($customer, $payload['context']);
                     }
                 } elseif ($allowed) {
                     $allowed = $customer->popup_enabled;
@@ -596,7 +726,7 @@ class AlertService
             $shock = $type === 'market_shock';
             $line = is_numeric($m['point'] ?? null) ? ' '.$m['point'] : '';
             $text = ($shock ? '⚡️ BF MARKETS | MARKET SHOCK DETECTED' : '📉 BF MARKETS | PREMATCH DROP ALERT')
-                ."\n\n🎯 Filter: ".($shock ? 'Market Shock Detector' : 'Prematch Drops')."\n{$base}\n⏰ Kickoff: {$kickoff}\n\n📊 Market: ".str_replace('_', ' ', $m['market']).$line.' ('.$m['selection'].")\n📈 Odds Movement: {$from} 📉 {$to}".($drop === null ? '' : " (-{$drop}% Drop)");
+                ."\n\n🎯 Filter: ".($shock ? 'Market Shock Detector' : 'Betfair > Pinnacle Drop')."\n{$base}\n⏰ Kickoff: {$kickoff}\n\n📊 Market: ".str_replace('_', ' ', $m['market']).$line.' ('.$m['selection'].")\n📈 Odds Movement: {$from} 📉 {$to}".($drop === null ? '' : " (-{$drop}% Drop)");
 
             return $text.($shock ? "\n💥 Volume Surge: ".($m['volume'] ?? 'No data available') : "\n🔥 Price Drop: ".($drop === null ? '—' : "-{$drop}%"));
         }

@@ -146,22 +146,47 @@
         </div>
 
         <div class="notif-list flex flex-col [gap:10px]">
-            <div class="notif-item flex items-start [gap:14px] [padding:16px_18px] [border-radius:14px] bg-[rgb(var(--surface))] [border:2px_solid_var(--border-neutral-5)] cursor-pointer [transition:0.25s] dark:[background:rgb(var(--surface-soft))] dark:[border-color:rgb(var(--border))] [&:hover]:[border-color:var(--border-brand-5-2)] [&:hover]:[transform:translateY(-2px)] [&:hover]:[box-shadow:0_6px_16px_var(--shadow-brand-40-3)] dark:[&:hover]:[border-color:rgb(var(--border))] dark:[&:hover]:[box-shadow:0_6px_16px_rgb(0 0 0 / 0.12)] max-[768px]:[padding:14px_14px] max-[768px]:[gap:12px] max-[480px]:[flex-direction:row]" data-filter="prematch_drops">
-                <input type="checkbox" aria-label="{{ __('Prematch Drops') }}" data-notification-filter="prematch_drops" @checked($notificationState['preferences']['prematch_drops']) class="notif-checkbox mt-0.5 size-[22px] shrink-0 cursor-pointer rounded-md accent-[rgb(var(--primary))]">
-                <div class="notif-content [flex:1]">
-                    <div class="notif-title [font-size:15px] font-bold [color:rgb(var(--text-main))] [margin-bottom:4px] flex items-center [gap:8px] flex-wrap [transition:color_0.3s] dark:[color:var(--text-on-primary)] [&_.notif-badge]:[font-size:10.5px] [&_.notif-badge]:[font-weight:800] [&_.notif-badge]:[padding:2px_8px] [&_.notif-badge]:[border-radius:20px] [&_.notif-badge]:[text-transform:uppercase] [&_.notif-badge]:[letter-spacing:0.3px] max-[768px]:[font-size:14px] max-[480px]:[font-size:13.5px]">{{ __('Prematch Drops') }}</div>
-                    <div class="notif-desc [font-size:13px] [color:rgb(var(--text-muted))] [line-height:1.5] [transition:color_0.3s] dark:[color:rgb(var(--text-soft))] max-[768px]:[font-size:12.5px] max-[480px]:[font-size:12px]">{{ __('Early warning for significant pre-match odds movement.') }}</div>
-                </div>
+
+            <div class="space-y-3 rounded-xl border border-[var(--border-control)] p-4 text-sm">
+        <div class="pinnacle-higher-filter">
+            <label class="flex cursor-pointer items-center gap-2 font-semibold">
+                <input type="checkbox" data-pinnacle-higher>
+                <span><span class="text-[#FFB800]">Betfair</span> &gt; <span class="text-[#FF6600]">Pinnacle</span> {{ __('Drop') }}</span>
+            </label>
+            <details class="pinnacle-filter-info">
+                <summary aria-label="{{ __('About the Betfair odds filter') }}" aria-describedby="pinnacle-filter-help">i</summary>
+            </details>
+            <span id="pinnacle-filter-help" role="tooltip" class="pinnacle-filter-help">{{ __("Shows only alerts where Betfair's current odds are higher than Pinnacle's newly dropped odds for the exact same match and market.") }}</span>
+        </div>
+        <details class="pinnacle-league-picker" data-pinnacle-league-picker>
+            <summary class="cursor-pointer font-semibold">{{ __('Country & League') }}</summary>
+            @if ($pinnacleLeagueOptions !== [])
+                <label class="mt-2 flex items-center gap-2 font-semibold">
+                    <input type="checkbox" data-pinnacle-select-all>
+                    {{ __('Select all') }}
+                </label>
+            @endif
+            <div class="mt-2 max-h-64 space-y-2 overflow-y-auto">
+                @forelse ($pinnacleLeagueOptions as $country => $leagues)
+                    <fieldset>
+                        <label class="flex items-center gap-2 font-semibold">
+                            <input type="checkbox" data-pinnacle-country>
+                            {{ $country !== '' ? $country : __('Unknown country') }}
+                        </label>
+                        @foreach ($leagues as $key => $league)
+                            <label class="ms-5 flex items-center gap-2">
+                                <input type="checkbox" value="{{ $key }}" data-pinnacle-league>
+                                {{ $league }}
+                            </label>
+                        @endforeach
+                    </fieldset>
+                @empty
+                    <p>{{ __('No leagues are available yet.') }}</p>
+                @endforelse
+            </div>
+        </details>
             </div>
 
-            <!-- 6. Market Shock Detector -->
-            <div class="notif-item flex items-start [gap:14px] [padding:16px_18px] [border-radius:14px] bg-[rgb(var(--surface))] [border:2px_solid_var(--border-neutral-5)] cursor-pointer [transition:0.25s] dark:[background:rgb(var(--surface-soft))] dark:[border-color:rgb(var(--border))] [&:hover]:[border-color:var(--border-brand-5-2)] [&:hover]:[transform:translateY(-2px)] [&:hover]:[box-shadow:0_6px_16px_var(--shadow-brand-40-3)] dark:[&:hover]:[border-color:rgb(var(--border))] dark:[&:hover]:[box-shadow:0_6px_16px_rgb(0 0 0 / 0.12)] max-[768px]:[padding:14px_14px] max-[768px]:[gap:12px] max-[480px]:[flex-direction:row]" data-filter="market_shock">
-                <input type="checkbox" aria-label="{{ __('Market Shock Detector') }}" data-notification-filter="market_shock" @checked($notificationState['preferences']['market_shock']) class="notif-checkbox mt-0.5 size-[22px] shrink-0 cursor-pointer rounded-md accent-[rgb(var(--primary))]">
-                <div class="notif-content [flex:1]">
-                    <div class="notif-title [font-size:15px] font-bold [color:rgb(var(--text-main))] [margin-bottom:4px] flex items-center [gap:8px] flex-wrap [transition:color_0.3s] dark:[color:var(--text-on-primary)] [&_.notif-badge]:[font-size:10.5px] [&_.notif-badge]:[font-weight:800] [&_.notif-badge]:[padding:2px_8px] [&_.notif-badge]:[border-radius:20px] [&_.notif-badge]:[text-transform:uppercase] [&_.notif-badge]:[letter-spacing:0.3px] max-[768px]:[font-size:14px] max-[480px]:[font-size:13.5px]">{{ __('Market Shock Detector') }} <span class="notif-badge hot [&.hot]:[background:linear-gradient(135deg,_var(--surface-neutral-0),_var(--surface-neutral-0-4))] [&.hot]:[color:var(--text-danger)] dark:[&.hot]:[background:var(--status-danger-surface)] dark:[&.hot]:[color:rgb(var(--danger))] [&.new]:[background:linear-gradient(135deg,_var(--surface-neutral-5),_var(--surface-neutral-5-2))] [&.new]:[color:var(--text-success)] dark:[&.new]:[background:var(--status-success-surface)] dark:[&.new]:[color:rgb(var(--success))]">{{ __('HOT') }}</span></div>
-                    <div class="notif-desc [font-size:13px] [color:rgb(var(--text-muted))] [line-height:1.5] [transition:color_0.3s] dark:[color:rgb(var(--text-soft))] max-[768px]:[font-size:12.5px] max-[480px]:[font-size:12px]">{{ __('Sharp market movement within 1–3 minutes — rapid change detector.') }}</div>
-                </div>
-            </div>
         </div>
     </div>
 

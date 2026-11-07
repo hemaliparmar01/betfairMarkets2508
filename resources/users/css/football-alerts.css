@@ -254,3 +254,78 @@
 .dark-mode .football-alert--shock .football-alert-field-label, .dark-mode [data-shock-league], .dark-mode [data-shock-footer] { color: rgb(var(--text-soft)); }
 .dark-mode .football-alert--shock .football-alert-previous, .dark-mode [data-shock-current] { border-color: rgb(var(--border)); background: rgb(var(--bg)); }
 .dark-mode .football-alert--shock .football-alert-previous { color: var(--text-on-primary); }
+
+.pinnacle-league-picker {
+    border: 1px solid var(--border-control);
+    border-radius: 0.5rem;
+    background: rgb(var(--surface));
+    padding: 0.5rem 0.75rem;
+}
+
+.pinnacle-league-picker label {
+    cursor: pointer;
+    padding-block: 0.25rem;
+}
+
+.pinnacle-league-picker input[type="checkbox"] {
+    width: 1rem;
+    height: 1rem;
+    flex-shrink: 0;
+    cursor: pointer;
+    accent-color: rgb(var(--primary));
+}
+
+.dark-mode .pinnacle-league-picker {
+    border-color: rgb(var(--border));
+    background: rgb(var(--surface-soft));
+}
+
+.pinnacle-higher-filter {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.pinnacle-higher-filter input {
+    accent-color: rgb(var(--primary));
+}
+
+.pinnacle-filter-info summary {
+    display: grid;
+    width: 1.125rem;
+    height: 1.125rem;
+    place-items: center;
+    border: 1px solid var(--border-control);
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 0.75rem;
+    font-weight: 700;
+    list-style: none;
+}
+
+.pinnacle-filter-info summary::-webkit-details-marker {
+    display: none;
+}
+
+.pinnacle-filter-help {
+    display: none;
+    position: absolute;
+    z-index: 20;
+    inset-inline-start: 0;
+    top: calc(100% + 0.25rem);
+    width: min(22rem, 75vw);
+    padding: 0.625rem 0.75rem;
+    border: 1px solid var(--border-control);
+    border-radius: 0.5rem;
+    background: rgb(var(--surface));
+    color: rgb(var(--text-main));
+    font-size: 0.8125rem;
+    box-shadow: 0 4px 12px rgb(0 0 0 / 0.15);
+}
+
+.pinnacle-filter-info:hover + .pinnacle-filter-help,
+.pinnacle-filter-info:focus-within + .pinnacle-filter-help,
+.pinnacle-filter-info[open] + .pinnacle-filter-help {
+    display: block;
+}

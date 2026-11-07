@@ -8,6 +8,7 @@ use App\Services\AlertService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 
@@ -15,7 +16,7 @@ class NotificationController extends Controller
 {
     public function notifications(Request $request, AlertService $alerts): View
     {
-        return view('users.notifications', ['notificationState' => $alerts->status($request->user('customers'))]);
+        return view('users.notifications', ['notificationState' => $alerts->status($request->user('customers')), 'pinnacleLeagueOptions' => $alerts->pinnacleLeagueOptions()]);
     }
 
     public function status(Request $request, AlertService $alerts): JsonResponse
@@ -27,8 +28,12 @@ class NotificationController extends Controller
     {
         $data = $request->validate([
             'popup_enabled' => ['sometimes', 'required', 'boolean'],
-            'preferences' => ['sometimes', 'required', 'array:'.implode(',', AlertService::FILTERS)],
+            'preferences' => ['sometimes', 'required', 'array:'.implode(',', [...AlertService::FILTERS, 'prematch_drops', 'market_shock'])],
             'preferences.*' => ['required', 'boolean'],
+            'pinnacle_filters' => ['sometimes', 'array:higher,leagues'],
+            'pinnacle_filters.higher' => ['required_with:pinnacle_filters', 'boolean'],
+            'pinnacle_filters.leagues' => ['present_with:pinnacle_filters', 'nullable', 'array', 'list', 'max:100'],
+            'pinnacle_filters.leagues.*' => ['required', 'string', 'regex:/^[a-f0-9]{16}$/', 'distinct'],
         ]);
         $customer = $request->user('customers');
         Cache::lock('alerts:customer:'.$customer->id, 30)->block(5, function () use ($customer, $data): void {
@@ -38,9 +43,19 @@ class NotificationController extends Controller
                 $attributes['popup_enabled'] = $data['popup_enabled'];
             }
             foreach ($data['preferences'] ?? [] as $type => $enabled) {
-                $attributes['tg_'.$type] = $enabled;
+                if (in_array($type, AlertService::FILTERS, true)) {
+                    $attributes['tg_'.$type] = $enabled;
+                }
             }
-            $customer->forceFill($attributes)->save();
+            DB::transaction(function () use ($customer, $attributes, $data): void {
+                $customer->forceFill($attributes)->save();
+                if (isset($data['pinnacle_filters'])) {
+                    DB::table('site_settings')->upsert([
+                        'key' => 'customer.pinnacle_filters.'.$customer->id,
+                        'value' => json_encode($data['pinnacle_filters'], JSON_THROW_ON_ERROR),
+                    ], ['key'], ['value']);
+                }
+            });
         });
         $alerts->connectionChanged($customer->refresh());
 

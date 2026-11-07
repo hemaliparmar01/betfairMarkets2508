@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import sys
 import urllib.error
 import urllib.request
@@ -37,13 +38,39 @@ async def main():
         return
     source = os.environ.get('TELEGRAM_SOURCE_CHANNEL', 'wageroddss')
     entity = await client.get_entity(source)
+    ocr = shutil.which('tesseract')
+    if not ocr:
+        print('Tesseract is unavailable. Telegram image alerts require it.', file=sys.stderr)
 
     @client.on(events.NewMessage(chats=entity, incoming=True))
     async def receive(event):
         reply = await event.get_reply_message() if event.is_reply else None
+        text = event.raw_text or ''
+        if ocr and event.photo and ' vs ' not in text.lower():
+            try:
+                photo = await asyncio.wait_for(event.download_media(file=bytes), timeout=10)
+                if photo:
+                    process = await asyncio.create_subprocess_exec(
+                        ocr, 'stdin', 'stdout', '--psm', '6',
+                        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.DEVNULL,
+                    )
+                    try:
+                        extracted, _ = await asyncio.wait_for(process.communicate(photo), timeout=10)
+                    except asyncio.TimeoutError:
+                        if process.returncode is None:
+                            process.kill()
+                        await process.wait()
+                        raise
+                    if process.returncode == 0:
+                        text = extracted.decode('utf-8', errors='replace') + '\n' + text
+            except (OSError, asyncio.TimeoutError):
+                print('Could not read Telegram alert image.', file=sys.stderr)
+        if not text.strip():
+            return
         payload = json.dumps({'source': source, 'message_id': event.id,
                               'sent_at': int(event.date.timestamp()),
-                              'text': event.raw_text or '',
+                              'text': text[:8192],
                               'reply_text': (reply.raw_text or '') if reply else None}).encode()
 
         def submit():

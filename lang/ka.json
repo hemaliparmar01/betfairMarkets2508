@@ -2306,5 +2306,9 @@
     "Alerts where recorded Betfair odds were higher than Pinnacle at the drop.": "შეტყობინებები, რომლებშიც ვარდნის მომენტში დაფიქსირებული Betfair-ის კოეფიციენტი Pinnacle-ისაზე მაღალი იყო.",
     "Compared: :count": "შედარებულია: :count",
     "Drop-time quote unavailable: :count": "ვარდნის მომენტის კოეფიციენტი მიუწვდომელია: :count",
-    "Betfair odds at the time of the drop were unavailable.": "ვარდნის მომენტში Betfair-ის კოეფიციენტი მიუწვდომელი იყო."
+    "Betfair odds at the time of the drop were unavailable.": "ვარდნის მომენტში Betfair-ის კოეფიციენტი მიუწვდომელი იყო.",
+    "Shows only alerts where Betfair's current odds are higher than Pinnacle's newly dropped odds for the exact same match and market.": "აჩვენებს მხოლოდ იმ ალერტებს, სადაც Betfair-ის მიმდინარე კოეფიციენტი უფრო მაღალია, ვიდრე Pinnacle-ის ახლად დაცემული კოეფიციენტი ზუსტად იმავე მატჩსა და მარკეტზე.",
+    "Shows only alerts where Betfair's odds at the time of the drop were higher than Pinnacle's newly dropped odds for the exact same match and market.": "აჩვენებს მხოლოდ იმ ალერტებს, სადაც დაცემის მომენტში Betfair-ის კოეფიციენტი უფრო მაღალი იყო, ვიდრე Pinnacle-ის ახლად დაცემული კოეფიციენტი ზუსტად იმავე მატჩსა და მარკეტზე.",
+    "About the Betfair odds filter": "Betfair-ის კოეფიციენტების ფილტრის შესახებ",
+    "(at drop time)": "(დაცემის მომენტში)"
 }

@@ -59,6 +59,31 @@ document.querySelector('[data-locale-switch]')?.addEventListener('submit', (even
 //     });
 // });
 
+const syncPinnacleCountries = picker => {
+    const selectAll = picker.querySelector('[data-pinnacle-select-all]');
+    if (selectAll) {
+        const leagues = [...picker.querySelectorAll('[data-pinnacle-league]')];
+        selectAll.checked = leagues.length > 0 && leagues.every(league => league.checked);
+        selectAll.indeterminate = !selectAll.checked && leagues.some(league => league.checked);
+    }
+
+    picker.querySelectorAll('[data-pinnacle-country]').forEach(country => {
+        const leagues = [...country.closest('fieldset').querySelectorAll('[data-pinnacle-league]')];
+        country.checked = leagues.every(league => league.checked);
+        country.indeterminate = !country.checked && leagues.some(league => league.checked);
+    });
+};
+
+document.addEventListener('change', event => {
+    const picker = event.target.closest('[data-pinnacle-league-picker]');
+    if (!picker) return;
+    const scope = event.target.matches('[data-pinnacle-select-all]')
+        ? picker
+        : event.target.closest('[data-pinnacle-country]')?.closest('fieldset');
+    scope?.querySelectorAll('[data-pinnacle-league]').forEach(input => { input.checked = event.target.checked; });
+    syncPinnacleCountries(picker);
+}, true);
+
 const alertContainer = document.getElementById('alert-popup-container');
 const notificationPage = document.getElementById('notification-settings');
 const notificationFeedback = document.getElementById('notification-feedback');
@@ -148,6 +173,11 @@ const updateNotificationStatus = (state, preferences = false) => {
     if (preferences) {
         notificationPage.querySelectorAll('[data-notification-filter]').forEach(input => { input.checked = Boolean(state.preferences[input.dataset.notificationFilter]); });
         document.getElementById('popup-enabled').checked = state.popup_enabled;
+        const filters = state.pinnacle_filters;
+        const picker = notificationPage.querySelector('[data-pinnacle-league-picker]');
+        notificationPage.querySelector('[data-pinnacle-higher]').checked = filters.higher;
+        picker.querySelectorAll('[data-pinnacle-league]').forEach(input => { input.checked = filters.leagues?.includes(input.value) ?? false; });
+        syncPinnacleCountries(picker);
     }
 };
 
@@ -191,7 +221,15 @@ if (notificationPage && notificationState) {
             } else if (button.id === 'btnSavePreferences') {
                 button.textContent = (globalThis.bfTranslations?.["Saving..."] ?? "Saving...");
                 const preferences = Object.fromEntries(Array.from(notificationPage.querySelectorAll('[data-notification-filter]'), input => [input.dataset.notificationFilter, input.checked]));
-                updateNotificationStatus(await notificationRequest(alertContainer.dataset.preferencesUrl, 'PATCH', { preferences, popup_enabled: document.getElementById('popup-enabled').checked }));
+                const picker = notificationPage.querySelector('[data-pinnacle-league-picker]');
+                const leagues = Array.from(picker.querySelectorAll('[data-pinnacle-league]:checked'), input => input.value);
+                const pinnacle_filters = {
+                    higher: notificationPage.querySelector('[data-pinnacle-higher]').checked,
+                    leagues: leagues.length ? leagues : null,
+                };
+                updateNotificationStatus(await notificationRequest(alertContainer.dataset.preferencesUrl, 'PATCH', {
+                    preferences, popup_enabled: document.getElementById('popup-enabled').checked, pinnacle_filters,
+                }), true);
                 notificationFeedback.textContent = (globalThis.bfTranslations?.["Notification preferences saved successfully."] ?? "Notification preferences saved successfully.");
             } else if (button.id === 'btnTestNotification') {
                 const data = await notificationRequest(notificationPage.dataset.testUrl, 'POST', { request_id: crypto.randomUUID() });
