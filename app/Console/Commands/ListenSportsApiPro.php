@@ -493,11 +493,14 @@ class ListenSportsApiPro extends Command
             $reconciled++;
             $apiDiagnostics = ['url' => "https://api.sportsapipro.com/v2/{$config['path']}/api/match/{$matchId}", 'http_status' => null, 'response_body' => null];
             try {
+                $requestNumber = recordSportsApiProRestRequest("/v2/{$config['path']}/api/match/{matchId}");
+                if ($requestNumber === 0) {
+                    continue;
+                }
                 if (! app(MatchBackup::class)->recordRecheck($sport, (string) $matchId, null, $pause)) {
                     continue;
                 }
                 Log::warning('SportsAPI Pro match subscription is stale; reconciling from REST', ['sport' => $sport, 'match_id' => $matchId, 'seconds_since_last_frame' => $now - $subscription['last_frame_at']]);
-                recordSportsApiProRestRequest("/v2/{$config['path']}/api/match/{matchId}");
                 $request = new Request("https://api.sportsapipro.com/v2/{$config['path']}/api/match/{$matchId}");
                 $request->setHeader('x-api-key', $key);
                 $request->setTcpConnectTimeout(3);
@@ -506,7 +509,18 @@ class ListenSportsApiPro extends Command
                 $response = $httpClient->request($request, $cancellation);
                 $apiDiagnostics['http_status'] = $response->getStatus();
                 $apiDiagnostics['content_type'] = $response->getHeader('Content-Type');
-                $apiDiagnostics['response_body'] = $response->getBody()->buffer($cancellation, 2_000_000);
+                $headers = array_map(static fn (array $values): string => $values[0], $response->getHeaders());
+                try {
+                    $apiDiagnostics['response_body'] = $response->getBody()->buffer($cancellation, 2_000_000);
+                    if ($response->getStatus() === 429) {
+                        $body = json_decode($apiDiagnostics['response_body'], true);
+                        if (is_string($body['reset_at'] ?? null)) {
+                            $headers['x-ratelimit-reset'] ??= $body['reset_at'];
+                        }
+                    }
+                } finally {
+                    recordSportsApiProRestResponse($headers, $requestNumber, $response->getStatus());
+                }
                 if ($response->getStatus() < 200 || $response->getStatus() >= 300) {
                     throw new \RuntimeException("SportsAPI Pro match endpoint returned HTTP {$response->getStatus()}.");
                 }

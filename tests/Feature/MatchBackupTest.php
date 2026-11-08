@@ -366,6 +366,15 @@ class MatchBackupTest extends TestCase
         $cache = Mockery::mock();
         $cache->shouldReceive('store')->with('redis')->andReturnSelf();
         $cache->shouldReceive('lock')->andReturn($lock);
+        $seasonCache = [];
+        $cache->shouldReceive('get')->andReturnUsing(static function (string $key) use (&$seasonCache): ?array {
+            return $seasonCache[$key] ?? null;
+        });
+        $cache->shouldReceive('put')->andReturnUsing(static function (string $key, array $value, int $ttl) use (&$seasonCache): bool {
+            $seasonCache[$key] = $value;
+
+            return true;
+        });
         Cache::swap($cache);
 
         return new class($responses) extends FootballSyncController
@@ -428,8 +437,9 @@ class MatchBackupTest extends TestCase
         $controller->responses = [];
         $retained = $controller->loadMatchStatistics('123');
         $this->assertSame($loaded['prematch_statistics'], $retained['prematch_statistics']);
-        $this->assertFalse($retained['statistics_requests']['home-season']['available']);
-        $this->assertCount(12, $controller->urls);
+        $this->assertTrue($retained['statistics_requests']['home-season']['available']);
+        $this->assertFalse($retained['statistics_requests']['overview']['available']);
+        $this->assertCount(10, $controller->urls);
     }
 
     public function test_prematch_statistics_reject_another_match_and_do_not_guess_season_identifiers(): void

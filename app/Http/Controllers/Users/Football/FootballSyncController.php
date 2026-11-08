@@ -580,6 +580,10 @@ class FootballSyncController extends Controller
                                         $writeTimeline(null, $repairTimeline);
                                     }
                                     foreach (! $needsHistory ? [] : ($onlyIncidents ? ['/incidents'] : ['', '/incidents', '/odds']) as $suffix) {
+                                        $overviewKey = $key.':overview:'.$owner;
+                                        if ($suffix === '' && Cache::store('redis')->has($overviewKey)) {
+                                            continue;
+                                        }
                                         if ($suffix === '/odds') {
                                             $current = array_find(getInRedis('Football:matches', matchIds: [$matchId]) ?? [], static fn (array $match): bool => (string) ($match['sportsApiPro_match_id'] ?? '') === $matchId);
                                             if (($current['result_status'] ?? '') !== 'Live' || Cache::store('redis')->has('Football:bet365:live:'.$matchId)) {
@@ -602,6 +606,9 @@ class FootballSyncController extends Controller
                                             continue;
                                         }
                                         $writeTimeline('match:'.$matchId.($suffix === '' ? '' : ':incidents'), $payload, $requestedAt);
+                                        if ($suffix === '' && (string) ($payload['id'] ?? '') === $matchId) {
+                                            Cache::store('redis')->put($overviewKey, true, 600);
+                                        }
                                     }
                                     Event::dispatch(new FootballSportsScoreUpdated);
                                     if ($expectedGoals !== [] && $job->attempts() < 3) {
@@ -733,13 +740,17 @@ class FootballSyncController extends Controller
     {
         if ($date === null) {
             $dates = [];
+            $candidates = [];
             foreach (getInRedis('Football:matches') ?? [] as $match) {
-                if (empty($match['sportsApiPro_match_id']) || ! in_array($match['result_status'] ?? '', ['Live', 'Prematch'], true)
-                    || (int) ($match['timestamp'] ?? 0) < time() - 86400 || (int) ($match['timestamp'] ?? 0) > time() + 86400) {
-                    continue;
+                if (! empty($match['sportsApiPro_match_id']) && $this->canFetchBet365Odds($match)) {
+                    $candidates[$this->bet365FixtureMappingKey($match)] = $match;
                 }
-                if (($match['result_status'] ?? '') === 'Live' && isset($match['bet365_prematch']['match_id'])) {
-                    $this->queueBet365MatchOdds($match, (int) $match['bet365_prematch']['match_id']);
+            }
+            $mappings = $candidates === [] ? [] : Cache::store('redis')->many(array_keys($candidates));
+            foreach ($candidates as $mappingKey => $match) {
+                $oddsMatchId = $mappings[$mappingKey] ?? (($match['result_status'] ?? '') === 'Live' ? ($match['bet365_prematch']['match_id'] ?? null) : null);
+                if ((int) $oddsMatchId > 0) {
+                    $this->queueBet365MatchOdds($match, (int) $oddsMatchId);
 
                     continue;
                 }
@@ -769,6 +780,26 @@ class FootballSyncController extends Controller
                     if (! $lock->isOwnedByCurrentProcess()) {
                         return;
                     }
+                    $controller = app(self::class);
+                    $matchesByKickoff = [];
+                    $mappingKeys = [];
+                    foreach (getInRedis('Football:matches') ?? [] as $match) {
+                        $timestamp = (int) ($match['timestamp'] ?? 0);
+                        if (gmdate('Y-m-d', $timestamp) !== $date || empty($match['sportsApiPro_match_id']) || ! $controller->canFetchBet365Odds($match)) {
+                            continue;
+                        }
+                        $matchesByKickoff[$timestamp][] = $match;
+                        if (($match['result_status'] ?? '') !== 'Live' || empty($match['bet365_prematch']['match_id'])) {
+                            $mappingKeys[] = $controller->bet365FixtureMappingKey($match);
+                        }
+                    }
+                    $unmapped = $mappingKeys === [] ? [] : array_filter(
+                        Cache::store('redis')->many($mappingKeys),
+                        static fn (mixed $id): bool => (int) $id <= 0,
+                    );
+                    if ($unmapped === []) {
+                        return;
+                    }
                     $response = ApiCall('https://api.sportsapipro.com/v4/football/matches', ['x-api-key' => GetSportApiProKey()], [
                         'query' => ['sport' => 'football', 'status' => 'all', 'perPage' => 150, 'page' => $page, 'startDate' => $date.'T00:00:00Z', 'endDate' => $date.'T23:59:59Z'],
                         'connect_timeout' => 3, 'timeout' => 15,
@@ -777,8 +808,6 @@ class FootballSyncController extends Controller
                     if (! is_array($payload['matches'] ?? null)) {
                         throw new \RuntimeException('SportsAPI Pro V4 Football catalogue unavailable.');
                     }
-                    $controller = app(self::class);
-                    $matches = getInRedis('Football:matches') ?? [];
                     foreach ($payload['matches'] as $fixture) {
                         if (! is_array($fixture) || (int) ($fixture['sportId'] ?? 1) !== 1 || empty($fixture['id'])
                             || ! is_string($fixture['homeTeam'] ?? null) || ! is_string($fixture['awayTeam'] ?? null) || empty($fixture['matchDate'])) {
@@ -789,17 +818,22 @@ class FootballSyncController extends Controller
                         } catch (Throwable) {
                             continue;
                         }
-                        $candidates = array_filter($matches, static fn (array $match): bool => ! empty($match['sportsApiPro_match_id'])
-                            && in_array($match['result_status'] ?? '', ['Live', 'Prematch'], true)
-                            && (int) ($match['timestamp'] ?? 0) === $timestamp
-                            && $controller->teamSimilarity($match['team1'] ?? '', $fixture['homeTeam']) >= 80
+                        $candidates = array_filter($matchesByKickoff[$timestamp] ?? [], static fn (array $match): bool => $controller->teamSimilarity($match['team1'] ?? '', $fixture['homeTeam']) >= 80
                             && $controller->teamSimilarity($match['team2'] ?? '', $fixture['awayTeam']) >= 80);
                         if (count($candidates) === 1) {
                             $match = reset($candidates);
-                            $controller->queueBet365MatchOdds($match, (int) $fixture['id']);
+                            $mappingKey = $controller->bet365FixtureMappingKey($match);
+                            if (array_key_exists($mappingKey, $unmapped)) {
+                                $oddsMatchId = (int) $fixture['id'];
+                                if ($oddsMatchId > 0) {
+                                    Cache::store('redis')->put($mappingKey, $oddsMatchId, 3600);
+                                    unset($unmapped[$mappingKey]);
+                                    $controller->queueBet365MatchOdds($match, $oddsMatchId);
+                                }
+                            }
                         }
                     }
-                    if ($page < (int) ($payload['totalPages'] ?? 1) && $page < 50) {
+                    if ($unmapped !== [] && $page < (int) ($payload['totalPages'] ?? 1) && $page < 50) {
                         $controller->queueBet365Favorites($date, $page + 1);
                     }
                     Cache::store('redis')->put($cacheKey.':cooldown', true, 900);
@@ -817,6 +851,13 @@ class FootballSyncController extends Controller
             $pending?->release();
             Log::warning('Football bet365 catalogue could not be queued', ['date' => $date, 'exception' => $e::class]);
         }
+    }
+
+    private function bet365FixtureMappingKey(array $match): string
+    {
+        $identity = [$match['sportsApiPro_match_id'], $match['timestamp'] ?? null, $match['team1'] ?? '', $match['team2'] ?? ''];
+
+        return 'Football:bet365:fixture:'.hash('sha256', serialize($identity));
     }
 
     public function queueBet365MatchOdds(array $match, int $oddsMatchId): void
@@ -1203,6 +1244,7 @@ class FootballSyncController extends Controller
         if (! $lock->get()) {
             return $match;
         }
+        $seasonLocks = [];
         try {
             $responses = [];
             $attempts = [];
@@ -1237,20 +1279,42 @@ class FootballSyncController extends Controller
                             continue;
                         }
                         $url = 'https://api.sportsapipro.com/v2/football/teams/'.(int) $teamId.'/tournament/'.(int) $tournamentId.'/season/'.(int) $seasonId.'/statistics?type=overall';
+                        $seasonKey = 'Football:season-statistics:'.hash('sha256', $url);
+                        $cached = Cache::store('redis')->get($seasonKey);
+                        if ($cached === null && ! isset($seasonLocks[$url])) {
+                            $seasonLock = Cache::store('redis')->lock($seasonKey.':fetch', 60);
+                            if ($seasonLock->get()) {
+                                $seasonLocks[$url] = $seasonLock;
+                                $cached = Cache::store('redis')->get($seasonKey);
+                            }
+                        }
+                        if ($cached !== null || ! isset($seasonLocks[$url])) {
+                            $available = isset($cached['data']);
+                            if ($available) {
+                                $responses[$section] = $cached;
+                            }
+                            $attempts[$section] = ['at' => $requestedAt, 'available' => $available];
+
+                            continue;
+                        }
                     }
                     $requests[$section] = $url;
                     $requestedTimes[$section] = $requestedAt;
                 }
+                $uniqueRequests = array_unique($requests);
                 $batchDiagnostics = null;
-                $batchResponses = $this->requestFootballStatistics($requests, $batchDiagnostics);
+                $batchResponses = $uniqueRequests === [] ? [] : $this->requestFootballStatistics($uniqueRequests, $batchDiagnostics);
+                $requestSections = array_flip($uniqueRequests);
                 foreach ($requests as $section => $url) {
                     $requestedAt = $requestedTimes[$section];
+                    $requestSection = $requestSections[$url];
+                    $diagnostics = null;
                     try {
-                        if (($batchResponses[$section]['exception'] ?? null) instanceof Throwable) {
-                            throw $batchResponses[$section]['exception'];
+                        if (($batchResponses[$requestSection]['exception'] ?? null) instanceof Throwable) {
+                            throw $batchResponses[$requestSection]['exception'];
                         }
-                        $response = $batchResponses[$section]['response'] ?? null;
-                        $diagnostics = $batchResponses[$section]['diagnostics'] ?? null;
+                        $response = $batchResponses[$requestSection]['response'] ?? null;
+                        $diagnostics = $batchResponses[$requestSection]['diagnostics'] ?? null;
                         $payload = $response['data'] ?? $response;
                         if ($section === 'overview') {
                             $payload = $response['match'] ?? $payload['match'] ?? $payload['event'] ?? $payload;
@@ -1286,6 +1350,16 @@ class FootballSyncController extends Controller
                     } catch (Throwable $exception) {
                         $available = false;
                         Log::warning('Football statistics request failed', ['match_id' => $matchId, 'section' => $section, 'api' => $diagnostics, 'exception' => $exception::class]);
+                    }
+                    if (isset($seasonLocks[$url]) && $requestSection === $section) {
+                        $seasonKey = 'Football:season-statistics:'.hash('sha256', $url);
+                        if ($available) {
+                            Cache::store('redis')->put($seasonKey, $responses[$section], 21600);
+                        } elseif (in_array($diagnostics['http_status'] ?? null, [404, 410], true)) {
+                            Cache::store('redis')->put($seasonKey, ['unavailable' => true], 21600);
+                        } elseif (($diagnostics['skipped'] ?? null) === null && ($diagnostics['http_status'] ?? null) !== 429) {
+                            Cache::store('redis')->put($seasonKey, ['unavailable' => true], 300);
+                        }
                     }
                     $attempts[$section] = ['at' => $requestedAt, 'available' => $available];
                 }
@@ -1323,6 +1397,9 @@ class FootballSyncController extends Controller
 
             return $updatedMatch;
         } finally {
+            foreach ($seasonLocks as $seasonLock) {
+                $seasonLock->release();
+            }
             $lock->release();
         }
     }
