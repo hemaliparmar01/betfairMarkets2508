@@ -146,10 +146,10 @@
                 </label>
             @endif
             <div class="mt-2 max-h-64 space-y-2 overflow-y-auto">
-                @forelse ($pinnacleLeagueOptions as $country => $leagues)
+                @forelse ($pinnacleLeagueOptions as ['country' => $country, 'leagues' => $leagues])
                     <fieldset>
                         <label class="flex items-center gap-2 font-semibold">
-                            <input type="checkbox" data-pinnacle-country>
+                            <input type="checkbox" data-pinnacle-country="{{ $country }}">
                             {{ $country !== '' ? $country : __('Unknown country') }}
                         </label>
                         @foreach ($leagues as $key => $league)

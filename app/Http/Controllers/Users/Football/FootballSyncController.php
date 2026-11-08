@@ -1497,6 +1497,22 @@ class FootballSyncController extends Controller
         return $changed !== [];
     }
 
+    /** @return array{string, string}|null */
+    public static function pinnacleCompetition(string $country, string $league): ?array
+    {
+        static $competitions = null;
+        if ($competitions === null) {
+            $competitions = [];
+            foreach (config('services.pinnodds.football_priority', []) as [$name, $competition, $aliases]) {
+                foreach ([$name.' - '.$competition, ...$aliases] as $label) {
+                    $competitions[mb_strtolower($label)] = [$name, $competition];
+                }
+            }
+        }
+
+        return $competitions[mb_strtolower($country.' - '.$league)] ?? null;
+    }
+
     /** @param list<array<string, mixed>> $alerts */
     public function mergePinnacleDrops(array $alerts, bool $deferIfBusy = false): bool
     {

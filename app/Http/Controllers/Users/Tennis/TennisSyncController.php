@@ -26,6 +26,32 @@ class TennisSyncController extends Controller
         $this->sports = 'Tennis';
     }
 
+    /** @return array{string, string}|null */
+    public static function pinnacleCompetition(string $label): ?array
+    {
+        static $competitions = null;
+        if ($competitions === null) {
+            $competitions = [];
+            foreach (config('services.pinnodds.tennis_priority', []) as $group => $tournaments) {
+                foreach ($tournaments as $name => $aliases) {
+                    foreach ($aliases as $alias) {
+                        $competitions[mb_strtolower($alias)] = [$group, $name];
+                    }
+                }
+            }
+        }
+
+        $label = preg_replace('/ - (?:R\d+|Round \d+|Qualifiers?|Quarterfinals?|Semifinals?|Finals?|Groups?|Singles|Doubles)$/i', '', $label);
+        if (preg_match('/^ITF (Men|Women) (M15|M25|W15|W35|W50|W75|W100)(?: |$)/i', $label, $matches)) {
+            $men = strcasecmp($matches[1], 'Men') === 0;
+            $level = strtoupper($matches[2]);
+
+            return ($men ? 'M' : 'W') === $level[0] ? [$men ? 'Men’s ITF' : 'Women’s ITF', $level] : null;
+        }
+
+        return $competitions[mb_strtolower($label)] ?? null;
+    }
+
     public function syncBetFairLiveData(): array
     {
         $url = 'https://betfair-odds.com/betfair/v1/livemap?feed=live&sports=tennis';

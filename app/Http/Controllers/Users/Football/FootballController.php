@@ -495,7 +495,11 @@ class FootballController extends Controller
             }
 
             foreach ($pinnacleAlerts as &$alert) {
-                $alert['league_filter_key'] = AlertService::pinnacleLeague($alert)[2];
+                [$country, $league, $alert['league_filter_key']] = AlertService::pinnacleLeague($alert);
+                if (isset($alert['pinnacle_competition'])) {
+                    $alert['country'] = $country;
+                    $alert['league'] = $league;
+                }
             }
             unset($alert);
 
@@ -508,9 +512,7 @@ class FootballController extends Controller
                 ]);
             }
 
-            $pinnacleLeagueOptions = app(AlertService::class)->pinnacleLeagueOptions([
-                ...($pinnaclePayload['signals'] ?? []), ...$pinnacleAlerts,
-            ]);
+            $pinnacleLeagueOptions = app(AlertService::class)->pinnacleMonitorLeagueOptions();
 
             return view('users.sports.Football.marketActivity', compact('pinnacleLeagueOptions', 'pinnacleAlerts', 'pinnacleFeedConnected', 'pinnacleFeeds', 'pinnacleArchive', 'pinnacleArchiveHasMore', 'pinnacleArchiveCursor', 'pinnacleArchiveStart', 'pinnacleArchiveEnd', 'pinnacleArchiveStats'));
         }

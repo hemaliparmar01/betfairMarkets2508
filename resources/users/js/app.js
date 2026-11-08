@@ -59,6 +59,14 @@ document.querySelector('[data-locale-switch]')?.addEventListener('submit', (even
 //     });
 // });
 
+const pinnacleCountryLeagues = (picker, country) => {
+    const group = country.dataset.pinnacleCountry;
+    const countries = group
+        ? [...picker.querySelectorAll('[data-pinnacle-country]')].filter(input => input.dataset.pinnacleCountry === group)
+        : [country];
+    return countries.flatMap(input => [...input.closest('fieldset').querySelectorAll('[data-pinnacle-league]')]);
+};
+
 const syncPinnacleCountries = picker => {
     const selectAll = picker.querySelector('[data-pinnacle-select-all]');
     if (selectAll) {
@@ -68,7 +76,7 @@ const syncPinnacleCountries = picker => {
     }
 
     picker.querySelectorAll('[data-pinnacle-country]').forEach(country => {
-        const leagues = [...country.closest('fieldset').querySelectorAll('[data-pinnacle-league]')];
+        const leagues = pinnacleCountryLeagues(picker, country);
         country.checked = leagues.every(league => league.checked);
         country.indeterminate = !country.checked && leagues.some(league => league.checked);
     });
@@ -77,10 +85,11 @@ const syncPinnacleCountries = picker => {
 document.addEventListener('change', event => {
     const picker = event.target.closest('[data-pinnacle-league-picker]');
     if (!picker) return;
-    const scope = event.target.matches('[data-pinnacle-select-all]')
-        ? picker
-        : event.target.closest('[data-pinnacle-country]')?.closest('fieldset');
-    scope?.querySelectorAll('[data-pinnacle-league]').forEach(input => { input.checked = event.target.checked; });
+    const country = event.target.closest('[data-pinnacle-country]');
+    const leagues = event.target.matches('[data-pinnacle-select-all]')
+        ? picker.querySelectorAll('[data-pinnacle-league]')
+        : country ? pinnacleCountryLeagues(picker, country) : [];
+    leagues.forEach(input => { input.checked = event.target.checked; });
     syncPinnacleCountries(picker);
 }, true);
 

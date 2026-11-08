@@ -6,10 +6,12 @@ use Amp\Http\Client\HttpClientBuilder;
 use Amp\Http\Client\Request;
 use App\Http\Controllers\Users\Football\FootballSyncController;
 use App\Jobs\ProcessAlert;
+use App\Services\AlertService;
 use Illuminate\Console\Command;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Facades\Broadcast;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
 use Revolt\EventLoop;
@@ -25,6 +27,14 @@ class ListenPinnodds extends Command
 
     protected $description = 'Listen to Pinnodds live and prematch drops and share them through Redis';
 
+    /** @var array<string, array<string, array{string, string}>> */
+    private array $leagueMappings = [];
+
+    /** @var array<string, array{competition: array{string, string}, expires: int}> */
+    private array $eligibleParents = [];
+
+    private int $lastParentCleanup = 0;
+
     public function handle(): int
     {
         $key = (string) config('services.pinnodds.key');
@@ -33,6 +43,8 @@ class ListenPinnodds extends Command
 
             return self::FAILURE;
         }
+
+        $this->loadLeagueMappings();
 
         $lockSeconds = 120;
         $listenerLock = Cache::store('redis')->lock('Pinnacle:listener', $lockSeconds);
@@ -179,7 +191,7 @@ class ListenPinnodds extends Command
                                     if (isset($frame['type'])) {
                                         continue;
                                     }
-                                    $drops = $this->normalizeDrops($frame, $mode);
+                                    $drops = $this->filterCompetitions($this->normalizeDrops($frame, $mode));
                                     if ($drops !== []) {
                                         $pending = array_replace($pending, $drops);
                                         $dirty = true;
@@ -248,6 +260,82 @@ class ListenPinnodds extends Command
         return $alerts;
     }
 
+    private function loadLeagueMappings(): void
+    {
+        $this->leagueMappings = [];
+        $mappings = DB::table('pinnacle_league_mappings')->whereNotNull('provider_league_id')->get();
+        foreach ($mappings as $mapping) {
+            $competition = [$mapping->country, $mapping->league];
+            $this->leagueMappings[$mapping->sport]['id:'.$mapping->provider_league_id] = $competition;
+            if ($mapping->provider_league_name !== null) {
+                $this->leagueMappings[$mapping->sport]['name:'.mb_strtolower($mapping->provider_league_name)] = $competition;
+            }
+        }
+    }
+
+    /** @param array<string, array<string, mixed>> $drops
+     * @return array<string, array<string, mixed>>
+     */
+    private function filterCompetitions(array $drops): array
+    {
+        $accepted = [];
+        $children = [];
+        $now = time();
+        if ($now - $this->lastParentCleanup >= 60) {
+            $this->eligibleParents = array_filter($this->eligibleParents, static fn (array $parent): bool => $parent['expires'] > $now);
+            $this->lastParentCleanup = $now;
+        }
+        foreach ($drops as $key => $drop) {
+            $sport = $drop['sport'] === 'football' ? 'soccer' : $drop['sport'];
+            $mappings = $this->leagueMappings[$sport] ?? [];
+            $name = trim((string) ($drop['league_name'] ?? $drop['league'] ?? ''));
+            $competition = AlertService::pinnacleCompetition($drop);
+            $mappedByName = $mappings['name:'.mb_strtolower($name)] ?? null;
+            $mappedById = $mappings['id:'.($drop['league_id'] ?? '')] ?? null;
+            $country = $drop['country'] ?? '';
+            $country = trim((string) (is_array($country) ? ($country['name'] ?? '') : $country));
+            if ($country !== '' && $sport === 'soccer' && $mappedByName !== null
+                && strcasecmp($country, explode(' - ', $name, 2)[0]) !== 0) {
+                continue;
+            }
+
+            $competition ??= $mappedByName;
+            if ($mappedById !== null && $name !== '' && $competition !== $mappedById) {
+                continue;
+            }
+            if ($mappedById !== null && $name === '' && $sport === 'soccer' && $country !== ''
+                && strcasecmp($country, $mappedById[0]) !== 0) {
+                continue;
+            }
+            $competition ??= $mappedById;
+
+            if ($competition === null) {
+                if ($name === '' && ! empty($drop['parent_id']) && empty($drop['league_id'])) {
+                    $children[$key] = $drop;
+                }
+
+                continue;
+            }
+            $drop['pinnacle_competition'] = $competition;
+            $accepted[$key] = $drop;
+            if (empty($drop['parent_id'])) {
+                $this->eligibleParents[$drop['sport'].'|'.$drop['id']] = [
+                    'competition' => $competition, 'expires' => $now + 10800,
+                ];
+            }
+        }
+
+        foreach ($children as $key => $drop) {
+            $parent = $this->eligibleParents[$drop['sport'].'|'.$drop['parent_id']] ?? null;
+            if ($parent !== null && $parent['expires'] > $now) {
+                $drop['pinnacle_competition'] = $parent['competition'];
+                $accepted[$key] = $drop;
+            }
+        }
+
+        return array_replace(array_intersect_key($drops, $accepted), $accepted);
+    }
+
     /** @param array<string, array<string, mixed>> $pending */
     private function storeDrops(array $pending, array $feeds): void
     {
@@ -259,6 +347,8 @@ class ListenPinnodds extends Command
                 $mode = $alert['feed'] ?? (($alert['is_live'] ?? false) ? 'live' : 'prematch');
                 $alerts = array_replace($alerts, $this->normalizeDrops([$alert], $mode));
             }
+            $legacyAlerts = array_filter($alerts, static fn (array $alert): bool => ! isset($alert['pinnacle_competition']));
+            $alerts = array_replace(array_diff_key($alerts, $legacyAlerts), $this->filterCompetitions($legacyAlerts));
             $receivedAt = microtime(true);
             $monitorDrops = $pending;
             foreach ($monitorDrops as $key => &$drop) {

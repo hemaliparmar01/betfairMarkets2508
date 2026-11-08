@@ -461,14 +461,65 @@ class AlertSystemTest extends TestCase
         Http::assertNothingSent();
     }
 
+    public function test_pinnacle_listener_only_admits_allowlisted_competitions_and_their_child_markets(): void
+    {
+        $command = app(ListenPinnodds::class);
+        (new ReflectionMethod(ListenPinnodds::class, 'loadLeagueMappings'))->invoke($command);
+        $filter = new ReflectionMethod(ListenPinnodds::class, 'filterCompetitions');
+        $drops = $filter->invoke($command, [
+            'child' => ['id' => 7, 'sport' => 'soccer', 'parent_id' => 1],
+            'serie-a' => ['id' => 1, 'sport' => 'soccer', 'league' => 'Italy - Serie A'],
+            'wrong-country' => ['id' => 2, 'sport' => 'soccer', 'league' => 'Congo - Serie A'],
+            'contradictory-country' => ['id' => 3, 'sport' => 'soccer', 'country' => 'Congo', 'league' => 'Italy - Serie A'],
+            'championship' => ['id' => 4, 'sport' => 'soccer', 'league' => 'England - Championship'],
+            'unlisted' => ['id' => 5, 'sport' => 'soccer', 'league' => 'England - National League'],
+            'tennis' => ['id' => 6, 'sport' => 'tennis', 'league' => 'ATP Paris - Doubles'],
+            'other-sport' => ['id' => 8, 'sport' => 'basketball', 'league' => 'Italy - Serie A'],
+            'unverified-itf' => ['id' => 9, 'sport' => 'tennis', 'league' => 'ITF Men Orlando - Final'],
+            'verified-id' => ['id' => 10, 'sport' => 'soccer', 'league_id' => 2436],
+            'contradictory-id' => ['id' => 11, 'sport' => 'soccer', 'league_id' => 2436, 'league' => 'England - Premier League'],
+            'itf-with-level' => ['id' => 12, 'sport' => 'tennis', 'league' => 'ITF Women W35 Test City - Final'],
+        ]);
+
+        $this->assertSame(['child', 'serie-a', 'championship', 'tennis', 'verified-id', 'itf-with-level'], array_keys($drops));
+        $this->assertSame(['Italy', 'Serie A'], $drops['child']['pinnacle_competition']);
+        $this->assertSame(['England', 'EFL Championship'], $drops['championship']['pinnacle_competition']);
+        $this->assertSame(['ATP Masters 1000', 'Paris Masters'], $drops['tennis']['pinnacle_competition']);
+        $this->assertSame(['Italy', 'Serie A'], $drops['verified-id']['pinnacle_competition']);
+        $this->assertSame(['Women’s ITF', 'W35'], $drops['itf-with-level']['pinnacle_competition']);
+        $this->assertSame(75, DB::table('pinnacle_league_mappings')->where('sport', 'soccer')->distinct()->get(['country', 'league'])->count());
+        $this->assertDatabaseHas('pinnacle_league_mappings', [
+            'provider_league_id' => 2436, 'provider_league_name' => 'Italy - Serie A', 'country' => 'Italy', 'league' => 'Serie A',
+        ]);
+    }
+
+    public function test_pinnacle_monitor_preserves_priority_across_repeated_countries(): void
+    {
+        $options = collect(app(AlertService::class)->pinnacleMonitorLeagueOptions())->flatMap(
+            fn (array $group): array => array_values($group['leagues']),
+        )->all();
+
+        $this->assertSame('FIFA World Cup', $options[0]);
+        $this->assertSame('Premier League', $options[14]);
+        $this->assertSame('Israeli Premier League', $options[36]);
+        $this->assertSame('EFL Championship', $options[37]);
+        $this->assertSame('Qatar Stars League', $options[74]);
+        $this->assertSame('Australian Open', $options[75]);
+        $this->assertLessThan(array_search('Rotterdam Open', $options, true), array_search('ATP Finals', $options, true));
+    }
+
     public function test_pinnacle_listener_queues_the_existing_alert_job_after_persisting_drops(): void
     {
         config(['cache.stores.redis.driver' => 'array']);
         $command = app(ListenPinnodds::class);
-        $pending = (new ReflectionMethod(ListenPinnodds::class, 'normalizeDrops'))->invoke($command, [
-            'id' => 100, 'home' => 'Home', 'away' => 'Away', 'league' => 'League', 'sport' => 'snooker',
+        $drop = [
+            'id' => 100, 'home' => 'Home', 'away' => 'Away', 'league' => 'Italy - Serie A', 'sport' => 'soccer',
             'sect' => 'Moneyline', 'outcome' => 'Away', 'from_price' => 2.0, 'to_price' => 1.8, 'alerted' => time(),
+        ];
+        $normalized = (new ReflectionMethod(ListenPinnodds::class, 'normalizeDrops'))->invoke($command, [
+            $drop, array_replace($drop, ['id' => 101, 'league' => 'Congo - Serie A']),
         ], 'prematch');
+        $pending = (new ReflectionMethod(ListenPinnodds::class, 'filterCompetitions'))->invoke($command, $normalized);
         $stored = null;
         Redis::shouldReceive('get')->with('Pinnacle:drops')->andReturnNull();
         Redis::shouldReceive('set')->times(3)->with('Pinnacle:drops', \Mockery::capture($stored))->andReturnTrue();
@@ -476,7 +527,7 @@ class AlertSystemTest extends TestCase
 
         (new ReflectionMethod(ListenPinnodds::class, 'storeDrops'))->invoke($command, $pending, []);
 
-        $this->assertSame('snooker', json_decode($stored, true)['alerts'][0]['sport']);
+        $this->assertSame([100], array_column(json_decode($stored, true)['alerts'], 'id'));
         Bus::assertDispatched(ProcessAlert::class, fn (ProcessAlert $job): bool => $job->task === 'pinnacle'
             && $job->queue === 'alerts' && $job->data['alerts'] === array_values($pending));
         Bus::fake([ProcessAlert::class]);
@@ -499,11 +550,12 @@ class AlertSystemTest extends TestCase
         $now = time();
         $drops = [];
         foreach ([1 => 60, 2 => 420, 3 => 600] as $id => $age) {
-            $drops[] = ['id' => $id, 'sport' => 'snooker', 'home' => 'Home', 'away' => 'Away', 'sect' => 'Moneyline',
+            $drops[] = ['id' => $id, 'sport' => 'soccer', 'league' => 'Italy - Serie A', 'home' => 'Home', 'away' => 'Away', 'sect' => 'Moneyline',
                 'from_price' => 2, 'to_price' => 1.8, 'alerted' => $now - $age];
         }
         $cached = json_encode(['alerts' => $drops, 'signals' => $drops]);
         Redis::shouldReceive('get')->with('Pinnacle:drops')->andReturn($cached);
+        Redis::shouldReceive('get')->with('Football:matches')->andReturnNull();
         Redis::shouldReceive('set')->with('Pinnacle:drops', \Mockery::capture($stored))->once()->andReturnTrue();
         Redis::shouldReceive('expire')->with('Pinnacle:drops', 10800)->once()->andReturnTrue();
 

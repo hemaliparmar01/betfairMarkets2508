@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Http\Controllers\Users\Football\FootballController;
 use App\Http\Controllers\Users\Football\FootballSyncController;
+use App\Http\Controllers\Users\Tennis\TennisSyncController;
 use App\Jobs\ProcessAlert;
 use App\Models\Customer;
 use App\Models\FootballMatch;
@@ -58,9 +59,72 @@ class AlertService
         return (json_decode($stored ?? '', true) ?? []) + ['higher' => false, 'leagues' => null];
     }
 
+    /** @return array{string, string}|null */
+    public static function pinnacleCompetition(array $drop): ?array
+    {
+        $label = trim((string) ($drop['league_name'] ?? $drop['league'] ?? ''));
+        $sport = match ((int) ($drop['sport_id'] ?? 0)) {
+            1 => 'soccer',
+            2 => 'tennis',
+            0 => strtolower((string) ($drop['sport'] ?? '')),
+            default => '',
+        };
+        if ($sport === 'tennis') {
+            return TennisSyncController::pinnacleCompetition($label);
+        }
+        if (! in_array($sport, ['soccer', 'football'], true)) {
+            return null;
+        }
+
+        $country = $drop['country'] ?? '';
+        $country = trim((string) (is_array($country) ? ($country['name'] ?? '') : $country));
+        $parts = explode(' - ', $label, 2);
+        if (isset($parts[1])) {
+            if ($country !== '' && strcasecmp($country, trim($parts[0])) !== 0) {
+                return null;
+            }
+            [$country, $label] = array_map('trim', $parts);
+        }
+
+        return FootballSyncController::pinnacleCompetition($country, $label);
+    }
+
+    /** @return list<array{country: string, leagues: array<string, string>}> */
+    public function pinnacleMonitorLeagueOptions(): array
+    {
+        $options = [];
+        $groups = config('services.pinnodds.football_priority', []);
+        foreach (config('services.pinnodds.tennis_priority', []) as $group => $tournaments) {
+            foreach (array_keys($tournaments) as $tournament) {
+                $groups[] = [$group, $tournament];
+            }
+        }
+        foreach ($groups as [$country, $league]) {
+            $last = array_key_last($options);
+            if ($last === null || $options[$last]['country'] !== $country) {
+                $options[] = ['country' => $country, 'leagues' => []];
+                $last = array_key_last($options);
+            }
+            $options[$last]['leagues'][self::pinnacleLeagueKey($country, $league)] = $league;
+        }
+
+        return $options;
+    }
+
+    private static function pinnacleLeagueKey(string $country, string $league): string
+    {
+        return substr(hash('sha256', mb_strtolower($country.'|'.$league)), 0, 16);
+    }
+
     public static function pinnacleLeague(array $drop): array
     {
         $parent = $drop['archive_parent'] ?? [];
+        $competition = $drop['pinnacle_competition'] ?? $parent['pinnacle_competition'] ?? self::pinnacleCompetition($parent + $drop);
+        if ($competition !== null) {
+            [$country, $league] = $competition;
+
+            return [$country, $league, self::pinnacleLeagueKey($country, $league)];
+        }
         $label = trim((string) ($parent['league'] ?? $drop['league'] ?? ''));
         $parts = explode(' - ', $label, 2);
         $country = $parent['country'] ?? $drop['country'] ?? null;
@@ -68,19 +132,17 @@ class AlertService
         $hasCountryPrefix = isset($parts[1]) && ($country === '' || strcasecmp(trim($parts[0]), $country) === 0);
         $league = $hasCountryPrefix ? trim($parts[1]) : $label;
         $country = $country !== '' ? $country : ($hasCountryPrefix ? trim($parts[0]) : '');
-        $key = substr(hash('sha256', mb_strtolower($country.'|'.$league)), 0, 16);
+        $key = self::pinnacleLeagueKey($country, $league);
 
         return [$country, $league, $key];
     }
 
     public function pinnacleLeagueOptions(?array $drops = null): array
     {
-        $catalog = config('services.pinnodds.leagues', []);
+        $catalog = config('services.pinnodds.football_priority', []);
         if ($catalog !== []) {
             $drops = [];
-        }
-        foreach ($catalog as $country => $leagues) {
-            foreach ($leagues as $league) {
+            foreach ($catalog as [$country, $league]) {
                 $drops[] = ['country' => $country, 'league' => $league];
             }
         }
@@ -371,7 +433,7 @@ class AlertService
             $match = ['team1' => $pinnacle['home'], 'team2' => $pinnacle['away'], 'tournament' => $pinnacle['league'] ?? null,
                 'timestamp' => $starts > 0 ? $starts : null, 'result_status' => 'Prematch'];
             $context = ['provider' => 'pinnacle', 'sport' => $sport, 'pinnacle_event_id' => $pinnacle['id'],
-                'pinnacle_drop' => array_intersect_key($pinnacle, array_flip(['id', 'sport', 'home', 'away', 'country', 'league', 'starts', 'start', 'parent_id', 'archive_parent', 'sect', 'outcome', 'point', 'points', 'hdp', 'period', 'to_price'])),
+                'pinnacle_drop' => array_intersect_key($pinnacle, array_flip(['id', 'sport', 'home', 'away', 'country', 'league', 'starts', 'start', 'parent_id', 'archive_parent', 'pinnacle_competition', 'sect', 'outcome', 'point', 'points', 'hdp', 'period', 'to_price'])),
                 'movement' => [
                     'market' => $pinnacle['sect'] ?? '', 'selection' => $pinnacle['outcome'] ?? '',
                     'point' => $pinnacle['point'] ?? $pinnacle['points'] ?? $pinnacle['hdp'] ?? null, 'period' => $pinnacle['period'] ?? 0,
