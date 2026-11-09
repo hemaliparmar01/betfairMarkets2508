@@ -144,6 +144,7 @@ class ListenSportsApiPro extends Command
         $socket = null;
         $lockTimer = null;
         $connectionFailure = null;
+        $lockWarningLogged = false;
         $release = static function () use ($sport, $listenerLock, &$socket, &$lockTimer): void {
             if ($lockTimer !== null) {
                 EventLoop::cancel($lockTimer);
@@ -165,16 +166,26 @@ class ListenSportsApiPro extends Command
         $releases[$sport] = $release;
 
         try {
-            $lockTimer = EventLoop::repeat(30, function () use ($sport, $listenerLock, &$hasListenerLock, &$connectionFailure): void {
+            $lockTimer = EventLoop::repeat(30, function () use ($sport, $listenerLock, &$hasListenerLock, &$connectionFailure, &$lockWarningLogged): void {
+                $renewalStartedAt = hrtime(true);
+                $reason = 'renewal_exception';
                 try {
                     $hasListenerLock = $listenerLock->refresh(300) || $listenerLock->get();
                     if (! $hasListenerLock) {
+                        $reason = 'ownership_not_confirmed';
                         throw new \RuntimeException('The sport listener no longer owns its singleton lock.');
                     }
+                    $lockWarningLogged = false;
                 } catch (Throwable $e) {
                     $hasListenerLock = false;
                     $connectionFailure?->cancel($e);
-                    Log::warning('SportsAPI Pro listener lock unavailable; waiting to reacquire', ['sport' => $sport, 'exception' => $e::class]);
+                    if (! $lockWarningLogged) {
+                        Log::warning('SportsAPI Pro listener lock unavailable; waiting to reacquire', [
+                            'sport' => $sport, 'reason' => $reason, 'exception' => $e::class,
+                            'renewal_ms' => round((hrtime(true) - $renewalStartedAt) / 1e6, 2),
+                        ]);
+                        $lockWarningLogged = true;
+                    }
                 }
             });
             $httpClient = (new HttpClientBuilder)->retry(0)->build();
@@ -183,7 +194,11 @@ class ListenSportsApiPro extends Command
 
             while (! $shutdown->isRequested()) {
                 while (! $hasListenerLock && ! $shutdown->isRequested()) {
-                    $hasListenerLock = $listenerLock->get();
+                    try {
+                        $hasListenerLock = $listenerLock->get();
+                    } catch (Throwable) {
+                        $hasListenerLock = false;
+                    }
                     if (! $hasListenerLock) {
                         delay(5, cancellation: $shutdown);
                     }
@@ -236,6 +251,9 @@ class ListenSportsApiPro extends Command
                         try {
                             $this->refreshMatchSubscriptions($sport, $config, $key, $socket, $httpClient, $matchSubscriptions, $cancellation);
                         } catch (Throwable $e) {
+                            if ($cancellation->isRequested()) {
+                                return;
+                            }
                             Log::warning('SportsAPI Pro subscription watchdog failed', ['sport' => $sport, 'exception' => $e::class, 'message' => $e->getMessage()]);
                             $connectionFailure->cancel($e);
                         }
@@ -367,8 +385,9 @@ class ListenSportsApiPro extends Command
             return;
         }
         $frameData = $frame['data'] ?? null;
-        $context = ['sport' => $sport, 'type' => $type, 'channel' => $channel, 'timestamp' => $frame['timestamp'] ?? null];
-        Log::debug('SportsAPI Pro WebSocket event received', $context);
+        if (config('services.sports_api_pro.log_websocket_frames')) {
+            Log::debug('SportsAPI Pro WebSocket event received', ['sport' => $sport, 'type' => $type, 'channel' => $channel, 'timestamp' => $frame['timestamp'] ?? null]);
+        }
         if (! is_array($frameData)) {
             return;
         }
@@ -493,11 +512,14 @@ class ListenSportsApiPro extends Command
             $reconciled++;
             $apiDiagnostics = ['url' => "https://api.sportsapipro.com/v2/{$config['path']}/api/match/{$matchId}", 'http_status' => null, 'response_body' => null];
             try {
-                $requestNumber = recordSportsApiProRestRequest("/v2/{$config['path']}/api/match/{matchId}");
-                if ($requestNumber === 0) {
+                $backup = app(MatchBackup::class);
+                if (! $backup->recordRecheck($sport, (string) $matchId, null, $pause)) {
                     continue;
                 }
-                if (! app(MatchBackup::class)->recordRecheck($sport, (string) $matchId, null, $pause)) {
+                $requestNumber = recordSportsApiProRestRequest("/v2/{$config['path']}/api/match/{matchId}");
+                if ($requestNumber === 0) {
+                    $backup->recordRecheck($sport, (string) $matchId, null, $pause, cancel: true);
+
                     continue;
                 }
                 Log::warning('SportsAPI Pro match subscription is stale; reconciling from REST', ['sport' => $sport, 'match_id' => $matchId, 'seconds_since_last_frame' => $now - $subscription['last_frame_at']]);

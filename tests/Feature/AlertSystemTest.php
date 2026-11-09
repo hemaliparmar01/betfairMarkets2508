@@ -294,7 +294,8 @@ class AlertSystemTest extends TestCase
         $match = $this->fixture();
         $telegram = $this->customer(['popup_enabled' => false]);
         $platform = $this->customer(['telegram_chat_id' => null, 'telegram_available' => false, 'tg_ltd' => false]);
-        $neither = $this->customer(['popup_enabled' => false, 'tg_ltd' => false]);
+        $allUnchecked = $this->customer(['popup_enabled' => false, 'tg_ltd' => false]);
+        $otherFilter = $this->customer(['popup_enabled' => false, 'tg_ltd' => false, 'tg_ht00' => true]);
         $expired = $this->customer(['trial_ends_at' => now()->subDay()]);
         $id = app(AlertService::class)->source($this->source());
         app(AlertService::class)->fanout($id);
@@ -302,7 +303,8 @@ class AlertSystemTest extends TestCase
         $this->assertDatabaseMissing('alert_deliveries', ['alert_id' => $id, 'customer_id' => $telegram->id, 'channel' => 'platform']);
         $this->assertDatabaseHas('alert_deliveries', ['alert_id' => $id, 'customer_id' => $platform->id, 'channel' => 'platform']);
         $this->assertDatabaseMissing('alert_deliveries', ['alert_id' => $id, 'customer_id' => $platform->id, 'channel' => 'telegram']);
-        $this->assertDatabaseMissing('alert_deliveries', ['alert_id' => $id, 'customer_id' => $neither->id]);
+        $this->assertDatabaseHas('alert_deliveries', ['alert_id' => $id, 'customer_id' => $allUnchecked->id, 'channel' => 'telegram']);
+        $this->assertDatabaseMissing('alert_deliveries', ['alert_id' => $id, 'customer_id' => $otherFilter->id]);
         $this->assertDatabaseMissing('alert_deliveries', ['alert_id' => $id, 'customer_id' => $expired->id]);
         Bus::assertDispatched(ProcessAlert::class, static fn (ProcessAlert $job): bool => $job->task === 'deliver' && $job->queue === 'alerts-platform');
         Bus::assertDispatched(ProcessAlert::class, static fn (ProcessAlert $job): bool => $job->task === 'deliver' && $job->queue === 'alerts-telegram');
@@ -890,7 +892,7 @@ class AlertSystemTest extends TestCase
     public function test_delivery_rechecks_expiry_disconnect_and_preferences_before_sending(): void
     {
         $match = $this->fixture();
-        foreach (['expired', 'disconnected', 'unchecked'] as $reason) {
+        foreach (['expired', 'disconnected', 'other_filter_selected'] as $reason) {
             $customer = $this->customer();
             $id = app(AlertService::class)->process('ltd', $match->payload, ['draw_lay' => 2.25]);
             $delivery = $this->delivery($id, $customer);
@@ -899,7 +901,7 @@ class AlertSystemTest extends TestCase
                 $delivery = $this->delivery($id, $customer);
             }
             $customer->forceFill(match ($reason) {
-                'expired' => ['trial_ends_at' => now()->subDay()], 'disconnected' => ['telegram_available' => false, 'telegram_chat_id' => null], default => ['tg_ltd' => false]
+                'expired' => ['trial_ends_at' => now()->subDay()], 'disconnected' => ['telegram_available' => false, 'telegram_chat_id' => null], default => ['tg_ltd' => false, 'tg_ht00' => true]
             })->save();
             app(AlertService::class)->deliver($delivery);
             $this->assertDatabaseHas('alert_deliveries', ['id' => $delivery, 'status' => 'skipped']);

@@ -173,11 +173,11 @@ class MatchBackup
     }
 
     /** Count existing REST reconciliation attempts, never issue another API call. */
-    public function recordRecheck(string $sport, string $matchId, ?bool $reliable, ?callable $pause = null): bool
+    public function recordRecheck(string $sport, string $matchId, ?bool $reliable, ?callable $pause = null, bool $cancel = false): bool
     {
         $cacheKey = self::SPORTS[$sport][0].':matches';
 
-        return withRedisLock($cacheKey, function () use ($matchId, $reliable, $cacheKey): bool {
+        return withRedisLock($cacheKey, function () use ($matchId, $reliable, $cacheKey, $cancel): bool {
             $matches = getInRedis($cacheKey) ?? [];
             $existingMatches = $matches;
             foreach ($matches as &$match) {
@@ -185,7 +185,9 @@ class MatchBackup
                     continue;
                 }
                 $health = $match['provider_lifecycle'] ?? [];
-                if ($reliable === null) {
+                if ($cancel) {
+                    unset($health['recheck_until']);
+                } elseif ($reliable === null) {
                     $health['recheck_until'] = time() + 30;
                 } else {
                     unset($health['recheck_until']);
@@ -193,7 +195,7 @@ class MatchBackup
                     $health['failed_checks'] = $reliable ? 0 : (int) ($health['failed_checks'] ?? 0) + 1;
                 }
                 $match['provider_lifecycle'] = $health;
-                if ($reliable !== null && ! empty($match['internal_backup']) && ($match['result_status'] ?? '') !== 'Finished') {
+                if (! $cancel && $reliable !== null && ! empty($match['internal_backup']) && ($match['result_status'] ?? '') !== 'Finished') {
                     $match['internal_backup']['checks'] = (int) ($match['internal_backup']['checks'] ?? 0) + 1;
                 }
                 unset($match);

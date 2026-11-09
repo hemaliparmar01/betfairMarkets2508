@@ -178,7 +178,7 @@
                                             {{ __('Email Support') }}
                                         </p>
                                         <a href="mailto:office@bfmarketsanalytics.com" class="mt-2 inline-flex text-base font-semibold theme-text-main hover:opacity-80">
-                                            {{ __('📧 office') }}@betfairmarkets{{ __('.com') }}
+                                            office@bfmarketsanalytics.com
                                         </a>
                                     </div>
 

@@ -169,19 +169,32 @@ class AlertService
         return $options;
     }
 
-    private function allowsPinnacleDrop(Customer $customer, array $context): bool
+    private function allowsTelegramFilter(Customer $customer, string $type, array $pinnacleFilters): bool
     {
-        $filters = $this->pinnacleFilters($customer);
-        if (! $filters['higher']) {
-            return false;
+        $pinnacleSelected = ! empty($pinnacleFilters['higher']) || ! empty($pinnacleFilters['leagues']);
+        $selected = $type === 'prematch_drops' ? $pinnacleSelected : $customer->{'tg_'.($type === 'goal' ? 'ltd' : $type)};
+        if ($selected) {
+            return true;
+        }
+
+        return ! $pinnacleSelected && ! array_any(self::FILTERS, fn (string $filter): bool => (bool) $customer->{'tg_'.$filter});
+    }
+
+    private function allowsPinnacleDrop(array $filters, array $context): bool
+    {
+        if (empty($filters['higher']) && empty($filters['leagues'])) {
+            return true;
         }
         $drop = $context['pinnacle_drop'] ?? [];
         if ($drop === [] && isset($context['movement']['pinnacle_alert_key'])) {
             $feed = getInRedis('Pinnacle:drops', readOnly: true) ?? [];
             $drop = array_find($feed['signals'] ?? $feed['alerts'] ?? [], fn (array $item): bool => ($item['alert_key'] ?? null) === $context['movement']['pinnacle_alert_key']) ?? [];
         }
-        if ($filters['leagues'] !== null && ($drop === [] || ! in_array(self::pinnacleLeague($drop)[2], $filters['leagues'], true))) {
+        if (! empty($filters['leagues']) && ($drop === [] || ! in_array(self::pinnacleLeague($drop)[2], $filters['leagues'], true))) {
             return false;
+        }
+        if (empty($filters['higher'])) {
+            return true;
         }
         if ($drop === [] || ! is_numeric($drop['to_price'] ?? null) || (float) $drop['to_price'] <= 1) {
             return false;
@@ -575,11 +588,6 @@ class AlertService
             $query = Customer::query()->where('is_verified', true)->where('is_blocked', false)->where('is_suspended', false);
             if ($channel === 'telegram') {
                 $query->where('telegram_available', true)->whereNotNull('telegram_chat_id');
-                if (in_array($alert->type, self::FILTERS, true)) {
-                    $query->where('tg_'.$alert->type, true);
-                } elseif ($alert->type === 'goal') {
-                    $query->where('tg_ltd', true);
-                }
             } else {
                 $query->where('popup_enabled', true);
             }
@@ -613,11 +621,20 @@ class AlertService
                     return 5;
                 }
             }
-            $query->select(['id', 'telegram_chat_id'])->chunkById(100, function ($customers) use ($alert, $channel, $pinnacle): void {
-                if ($pinnacle) {
+            $filterTelegram = $channel === 'telegram' && ($pinnacle || in_array($alert->type, [...self::FILTERS, 'goal'], true));
+            $columns = ['id', 'telegram_chat_id'];
+            if ($filterTelegram) {
+                foreach (self::FILTERS as $filter) {
+                    $columns[] = 'tg_'.$filter;
+                }
+            }
+            $query->select($columns)->chunkById(100, function ($customers) use ($alert, $channel, $filterTelegram): void {
+                if ($filterTelegram) {
                     $keys = $customers->mapWithKeys(fn (Customer $customer): array => [$customer->id => 'customer.pinnacle_filters.'.$customer->id]);
                     $preferences = DB::table('site_settings')->whereIn('key', $keys->values()->all())->pluck('value', 'key');
-                    $customers = $customers->filter(fn (Customer $customer): bool => (bool) (json_decode($preferences[$keys[$customer->id]] ?? '', true)['higher'] ?? false));
+                    $customers = $customers->filter(fn (Customer $customer): bool => $this->allowsTelegramFilter(
+                        $customer, $alert->type, json_decode($preferences[$keys[$customer->id]] ?? '', true) ?? [],
+                    ));
                 }
                 foreach ($customers as $customer) {
                     DB::table('alert_deliveries')->insertOrIgnore(['alert_id' => $alert->id, 'customer_id' => $customer->id, 'channel' => $channel,
@@ -653,9 +670,12 @@ class AlertService
                 $payload = json_decode($alert->payload, true);
                 $allowed = $customer !== null && ($alert->type === 'expired' ? (! $this->eligible($customer) && $customer->is_verified && ! $customer->is_blocked && ! $customer->is_suspended) : $this->eligible($customer));
                 if ($allowed && $delivery->channel === 'telegram') {
-                    $allowed = $customer->telegram_available && $customer->telegram_chat_id === $delivery->destination
-                        && (! in_array($alert->type, self::FILTERS, true) || $customer->{'tg_'.$alert->type})
-                        && ($alert->type !== 'goal' || $customer->tg_ltd);
+                    $allowed = $customer->telegram_available && $customer->telegram_chat_id === $delivery->destination;
+                    $pinnacleFilters = [];
+                    if ($allowed && in_array($alert->type, [...self::FILTERS, 'goal', 'prematch_drops'], true)) {
+                        $pinnacleFilters = $this->pinnacleFilters($customer);
+                        $allowed = $this->allowsTelegramFilter($customer, $alert->type, $pinnacleFilters);
+                    }
                     if ($alert->type === 'market_shock' || ($alert->type === 'prematch_drops' && ($payload['context']['provider'] ?? null) !== 'pinnacle')) {
                         $allowed = false;
                     }
@@ -670,7 +690,7 @@ class AlertService
                             || (preg_match('/^(total|totals|o\/u)(?:\s|$)/', $market) === 1 && is_numeric($line) && in_array((float) $line, [0.5, 1.5, 2.5, 3.5, 4.5], true)));
                     }
                     if ($allowed && $alert->type === 'prematch_drops') {
-                        $allowed = $this->allowsPinnacleDrop($customer, $payload['context']);
+                        $allowed = $this->allowsPinnacleDrop($pinnacleFilters, $payload['context']);
                     }
                 } elseif ($allowed) {
                     $allowed = $customer->popup_enabled;

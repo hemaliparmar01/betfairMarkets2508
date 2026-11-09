@@ -64,14 +64,30 @@ class ListenBetfairOdds extends Command
             }
         }
 
-        EventLoop::repeat(60, function () use ($listenerLock, $lockSeconds): void {
-            if (! $listenerLock->refresh($lockSeconds)) {
-                Log::critical('Betfair Odds listener lost its singleton lock and is stopping.');
+        $lastRenewedAt = hrtime(true);
+        $ownsListenerLock = true;
+        EventLoop::repeat(60, function () use ($listenerLock, $lockSeconds, &$lastRenewedAt, &$ownsListenerLock): void {
+            $renewalStartedAt = hrtime(true);
+            $exception = null;
+            try {
+                $ownsListenerLock = $listenerLock->refresh($lockSeconds);
+            } catch (Throwable $e) {
+                $ownsListenerLock = false;
+                $exception = $e::class;
+            }
+            if (! $ownsListenerLock) {
+                Log::critical('Betfair Odds listener lost its singleton lock and is stopping.', [
+                    'reason' => $exception === null ? 'ownership_not_confirmed' : 'renewal_exception',
+                    'exception' => $exception,
+                    'seconds_since_renewal' => round(($renewalStartedAt - $lastRenewedAt) / 1e9, 2),
+                    'renewal_ms' => round((hrtime(true) - $renewalStartedAt) / 1e6, 2),
+                ]);
                 exit(self::FAILURE);
             }
+            $lastRenewedAt = $renewalStartedAt;
         });
         $socket = null;
-        register_shutdown_function(static function () use ($listenerLock, &$socket): void {
+        register_shutdown_function(static function () use ($listenerLock, &$socket, &$ownsListenerLock): void {
             try {
                 $socket?->close();
             } catch (Throwable $e) {
@@ -79,8 +95,17 @@ class ListenBetfairOdds extends Command
                     'message' => $e->getMessage(),
                 ]);
             } finally {
-                Cache::store('redis')->put('Betfair:racing:connection', ['state' => 'disconnected', 'at' => time()], 86400);
-                $listenerLock->release();
+                try {
+                    if ($ownsListenerLock) {
+                        Cache::store('redis')->put('Betfair:racing:connection', ['state' => 'disconnected', 'at' => time()], 86400);
+                    }
+                } finally {
+                    try {
+                        $listenerLock->release();
+                    } catch (Throwable $e) {
+                        Log::warning('Betfair Odds listener singleton lock release failed', ['exception' => $e::class]);
+                    }
+                }
             }
         });
 

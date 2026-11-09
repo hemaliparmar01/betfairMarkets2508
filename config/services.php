@@ -290,6 +290,7 @@ return [
     ],
 
     'sports_api_pro' => [
+        'log_websocket_frames' => (bool) env('SPORTS_API_PRO_LOG_WEBSOCKET_FRAMES', false),
         'http_concurrency' => (int) env('SPORTS_HTTP_CONCURRENCY', 2),
         'daily_rest_limit' => (int) env('SPORTS_API_PRO_DAILY_REST_LIMIT', 75000),
         'rest_reserve' => (int) env('SPORTS_API_PRO_REST_RESERVE', 7500),
