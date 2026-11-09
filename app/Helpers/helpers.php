@@ -506,6 +506,12 @@ if (! function_exists('apiResponseLogContext')) {
      */
     function apiResponseLogContext(array $response, array $secrets = []): array
     {
+        $contentType = strtolower(trim((string) ($response['content_type'] ?? '')));
+        if (str_starts_with($contentType, 'image/')
+            || str_contains((string) parse_url((string) ($response['url'] ?? ''), PHP_URL_PATH), '/images/')) {
+            unset($response['response_body']);
+        }
+
         if (isset($response['url'])) {
             $response['url'] = preg_replace_callback('/([?&](?:x[-_]?api[-_]?key|x[-_]?portal[-_]?api[-_]?key|api[-_]?key|key|token|access_token|auth_key|auth_signature|signature|password|secret)=)([^&#]*)/i', static function (array $match) use (&$secrets): string {
                 $secrets[] = urldecode($match[2]);
