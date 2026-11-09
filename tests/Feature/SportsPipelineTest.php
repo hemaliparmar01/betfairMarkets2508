@@ -1973,6 +1973,42 @@ PYTHON;
         Http::assertNothingSent();
     }
 
+    public function test_football_live_frame_defers_on_a_busy_write_lock_and_can_be_replayed(): void
+    {
+        config(['services.football_fixture_index' => true]);
+        $fixture = ['sportsApiPro_match_id' => 123, 'unique_key' => 'known', 'timestamp' => time() - 120,
+            'result_status' => 'Prematch', 'minutes_status' => 'Prematch', 'home_score' => 0, 'away_score' => 0,
+            'team1' => 'Home', 'team2' => 'Away', 'tournament' => 'Test League', 'markets' => []];
+        storeInRedis('Football:matches', ['known' => $fixture, 'other' => [...$fixture, 'unique_key' => 'other', 'sportsApiPro_match_id' => 124]]);
+        $listener = app(ListenSportsApiPro::class);
+        $config = (new ReflectionClass($listener))->getConstant('SPORTS')['football'];
+        $socket = Mockery::mock(WebsocketConnection::class);
+        $subscriptions = [];
+        $method = new ReflectionMethod($listener, 'processSportsFrame');
+        $frame = ['type' => 'update', 'channel' => 'match:123', 'data' => [
+            'id' => 123, 'status.code' => 6, 'status.type' => 'inprogress', 'homeScore.current' => 1,
+            'changes.changeTimestamp' => time(),
+        ]];
+        $arguments = ['football', $config, $frame, $socket, &$subscriptions, null, true];
+        $lock = Cache::store('redis')->lock('Football:matches:write-lock', 30);
+        $this->assertTrue($lock->get());
+        try {
+            $this->assertThrows(fn () => $method->invokeArgs($listener, $arguments), LockTimeoutException::class);
+            $this->assertSame('Prematch', getInRedis('Football:matches', readOnly: true, matchIds: [123])['known']['result_status']);
+        } finally {
+            $lock->release();
+        }
+
+        $method->invokeArgs($listener, $arguments);
+        $method->invokeArgs($listener, $arguments);
+
+        $matches = getInRedis('Football:matches', readOnly: true, matchIds: [123, 124]);
+        $this->assertSame('Live', $matches['known']['result_status']);
+        $this->assertSame(1, $matches['known']['home_score']);
+        $this->assertCount(1, $matches['known']['timeline']['home_goals']);
+        $this->assertSame('Prematch', $matches['other']['result_status']);
+    }
+
     public function test_restart_snapshots_and_score_only_updates_recover_missing_goal_history(): void
     {
         $this->actingAs(CustomerFactory::new()->create(['trial_ends_at' => now()->addDay()]), 'customers');

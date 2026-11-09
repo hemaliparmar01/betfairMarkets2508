@@ -259,15 +259,60 @@ class ListenSportsApiPro extends Command
                         }
                     });
 
+                    $footballFrames = new \SplQueue;
+                    $bufferedBytes = 0;
+                    if ($sport === 'football') {
+                        $draining = false;
+                        $timers[] = EventLoop::repeat(0.25, function () use ($sport, $config, $socket, $cancellation, $connectionFailure, $footballFrames, &$matchSubscriptions, &$bufferedBytes, &$draining): void {
+                            if ($draining || $footballFrames->isEmpty() || $cancellation->isRequested()) {
+                                return;
+                            }
+                            $draining = true;
+                            try {
+                                for ($processed = 0; $processed < 4 && ! $footballFrames->isEmpty(); $processed++) {
+                                    $payload = $footballFrames->bottom();
+                                    $frame = json_decode($payload, true, flags: JSON_THROW_ON_ERROR);
+                                    $this->processSportsFrame($sport, $config, $frame, $socket, $matchSubscriptions, $cancellation, deferOnContention: true);
+                                    $footballFrames->dequeue();
+                                    $bufferedBytes -= strlen($payload);
+                                }
+                            } catch (LockTimeoutException) {
+                                // Keep the frame at the head of the buffer for the next retry.
+                            } catch (Throwable $e) {
+                                $connectionFailure->cancel($e);
+                            } finally {
+                                $draining = false;
+                            }
+                        });
+                    }
+
                     while (($message = $socket->receive($cancellation)) !== null) {
-                        $frame = json_decode($message->buffer($cancellation), true);
+                        $payload = $message->buffer($cancellation);
+                        $frame = json_decode($payload, true);
                         if (! is_array($frame)) {
-                            unset($frame, $message);
+                            unset($frame, $message, $payload);
 
                             continue;
                         }
-                        $this->processSportsFrame($sport, $config, $frame, $socket, $matchSubscriptions, $cancellation);
-                        unset($frame, $message);
+                        $deferred = $sport === 'football' && ! $footballFrames->isEmpty();
+                        if (! $deferred) {
+                            try {
+                                $this->processSportsFrame($sport, $config, $frame, $socket, $matchSubscriptions, $cancellation, deferOnContention: $sport === 'football');
+                            } catch (LockTimeoutException $e) {
+                                if ($sport !== 'football') {
+                                    throw $e;
+                                }
+                                $deferred = true;
+                            }
+                        }
+                        if ($deferred) {
+                            $bufferedBytes += strlen($payload);
+                            if ($footballFrames->count() >= 128 || $bufferedBytes > 8_388_608) {
+                                throw new \RuntimeException('Football live update buffer is full; reconnecting for recovery.');
+                            }
+                            $footballFrames->enqueue($payload);
+                        }
+                        unset($frame, $message, $payload);
                         delay(0, cancellation: $cancellation);
                     }
                     throw new \RuntimeException('The remote WebSocket closed the connection.');
@@ -374,7 +419,7 @@ class ListenSportsApiPro extends Command
      * @param  array{prefix: string, controller: class-string, event: class-string, detail: string, finished_codes: list<int>, finished_types: list<string>}  $config
      * @param  array<string|int, array{last_frame_at: int, last_reconciled_at: int, reconciling: bool}>  $subscriptions
      */
-    private function processSportsFrame(string $sport, array $config, array $frame, WebsocketConnection $socket, array &$subscriptions, ?Cancellation $cancellation = null): void
+    private function processSportsFrame(string $sport, array $config, array $frame, WebsocketConnection $socket, array &$subscriptions, ?Cancellation $cancellation = null, bool $deferOnContention = false): void
     {
         $type = $frame['type'] ?? 'unknown';
         $channel = (string) ($frame['channel'] ?? '');
@@ -414,13 +459,11 @@ class ListenSportsApiPro extends Command
                 }
             }
         }
-        $syncedIds = $sport === 'football' && $frameIds !== [] ? $this->syncedMatchIds($cacheKey, $frameIds) : [];
+        $syncedIds = [];
         $tennisScores = [];
         $updated = withRedisLock($cacheKey, function () use ($sport, $config, $channel, $frameData, $type, $frame, $frameIds, $cacheKey, &$syncedIds, &$tennisScores): bool {
             if ($sport === 'football') {
-                $this->updateFootballCache($channel, $frameData, $type);
-
-                return true;
+                return $this->updateFootballCache($channel, $frameData, $type, $syncedIds);
             }
 
             $cachedMatches = $frameIds === [] ? null : (getInRedis($cacheKey) ?? []);
@@ -432,9 +475,12 @@ class ListenSportsApiPro extends Command
             }
 
             return app($config['controller'])->mergeSportsWebSocketData($channel, $frameData, cachedMatches: $cachedMatches);
-        }, $sport === 'football' ? 30 : 5, pause: $cancellation !== null
+        }, $deferOnContention ? 0 : ($sport === 'football' ? 30 : 5), pause: ! $deferOnContention && $cancellation !== null
             ? static fn () => delay(0.2, cancellation: $cancellation)
             : null);
+        if ($deferOnContention && $updated === null) {
+            throw new LockTimeoutException;
+        }
         foreach ($events as $event) {
             $matchId = $event['id'] ?? $event['eventId'] ?? null;
             if ($matchId === null || ! isset($syncedIds[(string) $matchId])) {
@@ -644,25 +690,48 @@ class ListenSportsApiPro extends Command
         return $channels;
     }
 
-    private function updateFootballCache(string $channel, mixed $frameData, string $frameType = 'update'): void
+    private function updateFootballCache(string $channel, array $frameData, string $frameType = 'update', array &$syncedIds = []): bool
     {
-        $matches = getInRedis('Football:matches');
-        if (empty($matches) || ! is_array($frameData)) {
-            return;
+        $liveScores = str_starts_with($channel, 'live-scores');
+        $events = $liveScores ? $this->normalizeLiveEvents($frameData) : [];
+        if ($liveScores) {
+            $ids = array_values(array_filter(array_map(static fn (mixed $event): mixed => is_array($event) ? ($event['id'] ?? $event['eventId'] ?? null) : null, $events)));
+        } elseif (preg_match('/^match:(\d+)(?::(?:incidents|stats))?$/', $channel, $channelMatch)) {
+            $ids = [$channelMatch[1]];
+        } else {
+            $ids = null;
+        }
+        if ($ids === []) {
+            return false;
         }
 
+        $cacheKey = 'Football:matches';
+        $index = $ids === null ? null : getInRedis($cacheKey, fixtureIndex: true);
+        $matches = $index === null ? null : getInRedis($cacheKey, readOnly: true, matchIds: $ids, snapshot: $index);
+        $fallbackSnapshot = null;
+        if ($matches === null) {
+            $index = null;
+            $fallbackSnapshot = getInRedis($cacheKey) ?? [];
+            $requested = $ids === null ? null : array_fill_keys($ids, true);
+            $matches = $requested === null ? $fallbackSnapshot : array_filter(
+                $fallbackSnapshot, static fn (array $match): bool => isset($requested[$match['sportsApiPro_match_id'] ?? '']),
+            );
+        }
+        if ($matches === []) {
+            return false;
+        }
         $existingMatches = $matches;
 
-        if (str_starts_with($channel, 'live-scores')) {
-            foreach ($this->normalizeLiveEvents($frameData) as $event) {
+        if ($liveScores) {
+            foreach ($events as $event) {
                 $this->updateLiveMatch($matches, $event, $channel, $frameType);
             }
-        } elseif (preg_match('/^match:(\d+)$/', $channel)) {
+        } elseif (str_ends_with($channel, ':incidents')) {
+            $this->updateMatchIncidents($matches, $ids[0], $frameData, $channel, $frameType);
+        } elseif (str_ends_with($channel, ':stats')) {
+            $this->updateMatchStats($matches, $ids[0], $frameData, $channel);
+        } elseif ($ids !== null) {
             $this->updateLiveMatch($matches, $frameData, $channel, $frameType);
-        } elseif (preg_match('/^match:(\d+):incidents$/', $channel, $channelMatch)) {
-            $this->updateMatchIncidents($matches, $channelMatch[1], $frameData, $channel, $frameType);
-        } elseif (preg_match('/^match:(\d+):stats$/', $channel, $channelMatch)) {
-            $this->updateMatchStats($matches, $channelMatch[1], $frameData, $channel);
         }
 
         $legacyFields = ['events' => true, 'goals' => true, 'goal_counts' => true, 'status_description' => true];
@@ -702,7 +771,30 @@ class ListenSportsApiPro extends Command
             }
         }
 
-        storeInRedis('Football:matches', $matches, 10, false, $existingMatches);
+        if ($liveScores) {
+            $syncedIds = $this->syncedMatchIds($cacheKey, $ids, $matches)
+                + $this->syncedMatchIds($cacheKey, $ids, $existingMatches);
+        }
+        $changed = array_filter($matches, static fn (array $match, string|int $key): bool => $match !== $existingMatches[$key], ARRAY_FILTER_USE_BOTH);
+        if ($changed === []) {
+            return false;
+        }
+        if ($index !== null) {
+            $controller = app(FootballSyncController::class);
+            foreach ($changed as $key => &$match) {
+                $previous = $existingMatches[$key];
+                foreach (['last_goal', 'goal_highlight_until'] as $field) {
+                    if (($match['timeline'][$field] ?? null) !== ($previous['timeline'][$field] ?? null)) {
+                        $controller->storeTimeline($match, frameType: 'persist', previous: $previous);
+                        break;
+                    }
+                }
+            }
+            unset($match);
+        }
+        storeInRedis($cacheKey, $changed, 10, false, $fallbackSnapshot, replace: $index !== null, fixtureSnapshot: $index);
+
+        return true;
     }
 
     private function updateLiveMatch(array &$matches, array $event, string $channel, string $frameType = 'update'): bool

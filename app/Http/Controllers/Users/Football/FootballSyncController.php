@@ -2075,7 +2075,10 @@ class FootballSyncController extends Controller
                         'added_time' => $addedTime !== [] ? array_replace($getExistingRecords[$checkIsExists]['added_time'] ?? [], $addedTime) : null,
                         // 'status_type' => $payload['status']['type'] ?? null,
                     ], static fn (mixed $value): bool => $value !== null);
-                    if (! $isLive && ($existingRecord['result_status'] ?? '') === 'Live') {
+                    $existingLive = ($existingRecord['result_status'] ?? '') === 'Live';
+                    $staleLiveSnapshot = $isLive && $resultStatus !== 'Finished'
+                        && (MatchBackup::isOlderEvent($existingRecord, $payload) || ($existingLive && $statusType === 'notstarted'));
+                    if ((! $isLive && $existingLive) || $staleLiveSnapshot) {
                         $additionalData = array_diff_key($additionalData, array_flip([
                             'home_score', 'away_score', 'minutes_status', 'result_status',
                             'current_period_start_timestamp', 'last_period_end_timestamp', 'added_time',

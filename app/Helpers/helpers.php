@@ -1037,6 +1037,23 @@ if (! function_exists('storeInRedis')) {
             foreach ($rows as $matchKey => &$row) {
                 if ($stream) {
                     [$offset, $length] = $row;
+                    if ($replace && ! isset($data[$matchKey]) && ($previousIndex['statistics_schedule'] ?? null) === 2
+                        && isset($previousIndex['matches'][$matchKey]['_market_activity'])) {
+                        $entry = $previousIndex['matches'][$matchKey];
+                        $serialized .= ($number++ > 0 ? ',' : '').($isList ? '' : json_encode((string) $matchKey).':');
+                        $index['positions'][$matchKey] = [strlen($serialized), $length];
+                        $serialized .= substr($cachedData, $offset, $length);
+                        $index['matches'][$matchKey] = $entry;
+                        $id = (string) ($entry['sportsApiPro_match_id'] ?? '');
+                        if (ctype_digit($id) && (int) $id > 0) {
+                            $canonical = $canonical && ! isset($index['ids'][$id]);
+                            $index['ids'][$id] = $matchKey;
+                        }
+                        $sortFields[$matchKey] = [$entry['_fixture_priority'], $entry['timestamp'] ?? 0, $entry['tournament_id'] ?? null, $entry['tournament_country'] ?? null, $entry['tournament'] ?? ''];
+                        unset($rows[$matchKey]);
+
+                        continue;
+                    }
                     $previous = json_decode(substr($cachedData, $offset, $length), true, flags: JSON_THROW_ON_ERROR);
                     $match = $data[$matchKey] ?? $previous;
                     if (! $replace) {
@@ -1337,9 +1354,13 @@ if (! function_exists('withRedisLock')) {
             return $lock->block($waitSeconds, $callback);
         }
 
+        $deadline = hrtime(true) + max(0, $waitSeconds) * 1_000_000_000;
         while (! $lock->get()) {
             if ($pause === null) {
                 return null;
+            }
+            if (hrtime(true) >= $deadline) {
+                throw new LockTimeoutException;
             }
             $pause();
         }
