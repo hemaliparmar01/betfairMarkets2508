@@ -62,28 +62,28 @@
                 <span class="flex min-w-0 items-center gap-1.5 text-left">@if ($event['status'] === 'Live' && ($event['serving_side'] ?? null) === 'away')<span class="shrink-0 text-[10px] text-[var(--text-amber-500)]" title="{{ __('Serving') }}">●</span>@endif<span class="break-words">{{ $event['team2'] }}</span>@if ($event['away_team_logo'] ?? null)<img src="{{ $event['away_team_logo'] }}" alt="" class="size-5 shrink-0 object-contain" onerror="this.remove()">@endif</span>
             </button>
             <div class="flex items-center justify-center gap-3">
-                <button type="button" class="cursor-pointer text-[var(--text-red-500)] disabled:cursor-not-allowed disabled:opacity-30"
+                <button type="button" class="live-stat-icon bg-transparent border-0 [color:var(--text-live)] [font-size:15px] [padding:4px_4px] cursor-pointer [border-radius:8px] [width:28px] text-center [transition:0.2s] disabled:cursor-not-allowed disabled:opacity-30 dark:[color:rgb(var(--primary))] dark:[&:hover]:[background:rgb(var(--surface))] dark:[&:hover]:[color:var(--text-on-primary)] [&:hover]:[background:var(--surface-neutral-5-7)] [&:hover]:[color:var(--text-danger-30)]"
                     @if ($checkAuthAndSubscription['display_odds'])
                         data-action="stats" title="{{ __('Live Statistics') }}"
                     @else
                         disabled title="{{ __('Live Statistics (requires subscription)') }}"
                     @endif
-                    @disabled($event['status'] !== 'Live')><i class="fas fa-wave-square"></i></button>
-                <button type="button" data-action="chart" title="{{ __('Chart') }}" class="text-[var(--text-brand-40-2)]"><i class="fas fa-chart-line"></i></button>
-                <button type="button" class="cursor-pointer text-[var(--text-brand-40-2)] disabled:cursor-not-allowed disabled:opacity-30"
+                    @disabled($event['status'] !== 'Live')><i class="fas fa-wave-square" aria-hidden="true"></i></button>
+                <button type="button" data-action="chart" title="{{ __('Chart') }}" class="action-icon bg-transparent border-0 [color:var(--text-brand-45)] [font-size:15px] [padding:4px_4px] cursor-pointer [border-radius:8px] [width:28px] text-center [transition:0.2s] disabled:cursor-not-allowed disabled:opacity-30 dark:[color:rgb(var(--primary))] dark:[&:hover]:[background:rgb(var(--surface))] dark:[&:hover]:[color:var(--text-on-primary)] [&:hover]:[background:var(--surface-neutral-5-7)] [&:hover]:[color:rgb(var(--text-main))]"><i class="fas fa-chart-simple" aria-hidden="true"></i></button>
+                <button type="button" class="action-icon bg-transparent border-0 [color:var(--text-brand-45)] [font-size:15px] [padding:4px_4px] cursor-pointer [border-radius:8px] [width:28px] text-center [transition:0.2s] disabled:cursor-not-allowed disabled:opacity-30 dark:[color:rgb(var(--primary))] dark:[&:hover]:[background:rgb(var(--surface))] dark:[&:hover]:[color:var(--text-on-primary)] [&:hover]:[background:var(--surface-neutral-5-7)] [&:hover]:[color:rgb(var(--text-main))]"
                     @if ($checkAuthAndSubscription['display_odds'])
                         data-action="stats" title="{{ __('Statistics') }}"
                     @else
                         disabled title="{{ __('Statistics (requires subscription)') }}"
                     @endif
-                    ><i class="fas fa-chart-bar"></i></button>
-                <button type="button" class="cursor-pointer text-[var(--text-brand-40-2)] disabled:cursor-not-allowed disabled:opacity-30"
+                    ><i class="fas fa-chart-bar" aria-hidden="true"></i></button>
+                <button type="button" class="action-icon bg-transparent border-0 [color:var(--text-brand-45)] [font-size:15px] [padding:4px_4px] cursor-pointer [border-radius:8px] [width:28px] text-center [transition:0.2s] disabled:cursor-not-allowed disabled:opacity-30 dark:[color:rgb(var(--primary))] dark:[&:hover]:[background:rgb(var(--surface))] dark:[&:hover]:[color:var(--text-on-primary)] [&:hover]:[background:var(--surface-neutral-5-7)] [&:hover]:[color:rgb(var(--text-main))]"
                     @if ($checkAuthAndSubscription['display_odds'])
                         data-action="prediction" data-requires-login="{{ $authenticated ? 'false' : 'true' }}" data-login-url="{{ route('login') }}" title="{{ __('Predictions') }}"
                     @else
                         disabled title="{{ __('Prediction (requires subscription)') }}"
                     @endif
-                    @disabled($event['status'] !== 'Prematch')><i class="fas fa-brain"></i></button>
+                    @disabled($event['status'] !== 'Prematch')><i class="fas fa-brain" aria-hidden="true"></i></button>
             </div>
             <div class="flex min-w-0 gap-2 overflow-x-auto [scrollbar-width:thin]">
                 @foreach ($event['markets'] !== [] ? $event['markets'] : [[], []] as $runner)

@@ -37,7 +37,7 @@
                 }
             }
         @endphp
-        <div data-icehockey-match-url="{{ route('icehockey.matches.show', $event['sportsApiPro_match_id']) }}" data-match-id="{{ $event['sportsApiPro_match_id'] }}" data-match-status="{{ __($event['status']) }}" data-icehockey-stats="{{ json_encode(['team1' => $event['team1'], 'team2' => $event['team2'], 'home' => $event['home_score_data'] ?? [], 'away' => $event['away_score_data'] ?? [], 'statistics' => $event['live_stats'] ?? []]) }}" data-icehockey-prediction="{{ json_encode($prediction) }}" @if ($highlight) data-incident-highlight-until="{{ $event['incident_highlight_until'] }}" @endif
+        <div data-icehockey-match-url="{{ route('icehockey.matches.show', $event['sportsApiPro_match_id']) }}" data-match-id="{{ $event['sportsApiPro_match_id'] }}" data-match-status="{{ __($event['status']) }}" data-icehockey-stats="{{ json_encode(['team1' => $event['team1'], 'team2' => $event['team2'], 'home' => $event['home_score_data'] ?? [], 'away' => $event['away_score_data'] ?? [], 'score' => $event['score'], 'status' => $event['minutes_status'] ?? $event['minutes'], 'statistics' => $event['live_stats'] ?? []]) }}" data-icehockey-prediction="{{ json_encode($prediction) }}" @if ($highlight) data-incident-highlight-until="{{ $event['incident_highlight_until'] }}" @endif
             @class(['event-row my-2 grid min-w-[1060px] grid-cols-[28px_100px_minmax(460px,1fr)_82px_310px] items-center gap-3 rounded-xl border border-[var(--border-neutral-5)] bg-[var(--surface-row)] px-3 py-2.5 text-[var(--text-brand-70)] hover:bg-[var(--surface-neutral-0-16)] dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--surface))] dark:text-[var(--text-on-primary)]', '!bg-[var(--surface-goal)] dark:!bg-[var(--status-accent-surface)]' => $highlight])>
             <button type="button" data-action="favorite" data-requires-login="{{ $authenticated ? 'false' : 'true' }}" data-login-url="{{ route('login') }}" data-sport="icehockey" data-event-key="{{ $event['unique_key'] }}" data-event-id="{{ $event['sportsApiPro_match_id'] }}" data-team1="{{ $event['team1'] }}" data-team2="{{ $event['team2'] }}" data-start-timestamp="{{ $event['timestamp'] }}" aria-pressed="{{ $event['is_favorite'] ? 'true' : 'false' }}" @class(['fav-star cursor-pointer border-0 bg-transparent text-lg text-[var(--text-brand-15-2)]', '!text-[var(--text-warning)]' => $event['is_favorite']])><i class="fas fa-star"></i></button>
             <span class="text-center text-xs font-semibold {{ $event['status'] === 'Live' ? 'text-[var(--text-danger-15-2)]' : 'text-[rgb(var(--text-muted))]' }}">{{ __($event['minutes']) }}@if ($highlight)<strong class="block text-[var(--text-red-600)]" data-incident-indicator>{{ $event['last_incident']['text'] ?? 'Update' }}</strong>@endif</span>
@@ -48,20 +48,20 @@
                 @if ($periodScores !== [])<span aria-label="{{ __('Completed period scores') }}" class="col-span-3 whitespace-nowrap text-center text-[11px] font-normal leading-3 text-[var(--text-strong)]">{{ implode(' | ', $periodScores) }}</span>@endif
             </button>
             <div class="flex items-center justify-center gap-4">
-                <button type="button" class="cursor-pointer text-[var(--text-brand-40-2)] disabled:cursor-not-allowed disabled:opacity-30"
+                <button type="button" class="live-stat-icon bg-transparent border-0 [color:var(--text-live)] [font-size:15px] [padding:4px_4px] cursor-pointer [border-radius:8px] [width:28px] text-center [transition:0.2s] disabled:cursor-not-allowed disabled:opacity-30 dark:[color:rgb(var(--primary))] dark:[&:hover]:[background:rgb(var(--surface))] dark:[&:hover]:[color:var(--text-on-primary)] [&:hover]:[background:var(--surface-neutral-5-7)] [&:hover]:[color:var(--text-danger-30)]"
                     @if ($checkAuthAndSubscription['display_odds'])
                         data-action="stats" title="{{ __('Live match statistics') }}"
                     @else
                         disabled title="{{ __('Statistics (requires subscription)') }}"
                     @endif
-                    ><i class="fas fa-chart-bar"></i></button>
-                <button type="button" class="cursor-pointer text-[var(--text-brand-40-2)] disabled:cursor-not-allowed disabled:opacity-30"
+                    ><i class="fas fa-wave-square" aria-hidden="true"></i></button>
+                <button type="button" class="action-icon bg-transparent border-0 [color:var(--text-brand-45)] [font-size:15px] [padding:4px_4px] cursor-pointer [border-radius:8px] [width:28px] text-center [transition:0.2s] disabled:cursor-not-allowed disabled:opacity-30 dark:[color:rgb(var(--primary))] dark:[&:hover]:[background:rgb(var(--surface))] dark:[&:hover]:[color:var(--text-on-primary)] [&:hover]:[background:var(--surface-neutral-5-7)] [&:hover]:[color:rgb(var(--text-main))]"
                     @if ($checkAuthAndSubscription['display_odds'])
                         data-action="prediction" data-requires-login="{{ $authenticated ? 'false' : 'true' }}" data-login-url="{{ route('login') }}" title="{{ __('Predictions') }}"
                     @else
                         disabled title="{{ __('Prediction (requires subscription)') }}"
                     @endif
-                    @disabled($event['status'] !== 'Prematch')><i class="fas fa-brain"></i></button>
+                    @disabled($event['status'] !== 'Prematch')><i class="fas fa-brain" aria-hidden="true"></i></button>
             </div>
             <div class="flex min-w-0 gap-2 overflow-x-auto [scrollbar-width:thin]">
                 @foreach ($event['markets'] !== [] ? $event['markets'] : [[], [], []] as $runner)
@@ -84,5 +84,5 @@
 @endforelse
 @if (! $append)
 </div>
-<div id="icehockeyModal" class="fixed inset-0 z-[10000] hidden items-center justify-center overflow-hidden bg-black/60 p-4" role="dialog" aria-modal="true" aria-labelledby="icehockeyModalTitle"><div class="max-h-[calc(100dvh-2rem)] w-full max-w-3xl overflow-x-hidden overflow-y-auto overscroll-contain rounded-2xl bg-[rgb(var(--surface))] p-5 text-[var(--text-brand-70)] shadow-xl dark:bg-[rgb(var(--surface))] dark:text-[var(--text-on-primary)]" data-icehockey-modal-panel></div></div>
+<div id="icehockeyModal" data-statistics-translations="{{ json_encode(collect(['Ice Hockey', '1st Period', '2nd Period', '3rd Period', 'Statistics period', 'Statistics for this period are not available yet.', 'Shots on goal', 'Saves', 'Puck possession', 'Penalties', 'Penalty minutes', 'Power play %'])->mapWithKeys(fn ($label) => [$label => __($label)])) }}" class="fixed inset-0 z-[10000] hidden items-center justify-center overflow-hidden bg-black/60 p-4" role="dialog" aria-modal="true" aria-labelledby="icehockeyModalTitle"><div class="max-h-[calc(100dvh-2rem)] w-full max-w-3xl overflow-x-hidden overflow-y-auto overscroll-contain rounded-2xl bg-[rgb(var(--surface))] p-5 text-[var(--text-brand-70)] shadow-xl dark:bg-[rgb(var(--surface))] dark:text-[var(--text-on-primary)]" data-icehockey-modal-panel></div></div>
 @endif

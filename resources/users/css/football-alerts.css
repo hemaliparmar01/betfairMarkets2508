@@ -130,6 +130,16 @@
 .football-alert--prematch.event-row { position: relative; align-items: start; row-gap: 0; border-bottom: 1px solid var(--border-neutral-5-16); color: var(--text-brand-85-4); }
 [data-prematch-status] { display: flex; align-items: center; gap: 8px; padding-top: 7px; color: var(--text-brand-45-2); font-size: 12px; }
 [data-prematch-status] > span { font-size: 18px; }
+[data-prematch-status="new"] > span { color: var(--text-green-600); }
+[data-prematch-status="active"] > span { color: var(--text-amber-500); }
+[data-prematch-status="weak"] > span { color: var(--text-red-600); }
+@keyframes prematch-drop-arrow {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(3px); }
+}
+@media (prefers-reduced-motion: no-preference) {
+    .football-alert--prematch .prematch-drop-arrow { animation: prematch-drop-arrow 900ms ease-in-out infinite; }
+}
 .football-alert--prematch.event-row .event-left { grid-column: 2; grid-row: 1; position: relative; grid-template-columns: 24px minmax(0, 1fr); gap: 32px; padding-top: 4px; }
 .football-alert--prematch .fav-star { position: absolute; right: 0; top: -8px; width: 18px; opacity: 0; }
 .football-alert--prematch:hover .fav-star, .football-alert--prematch .fav-star:focus-visible, .football-alert--prematch .fav-star.active-fav { opacity: 1; }
@@ -202,11 +212,14 @@
 
 .fixtures-container:has(> .football-alert--prematch) .football-alert-heading h2 { font-size: 22px; font-weight: 800; }
 .fixtures-container:has(> .football-alert--prematch) .football-alert-heading p { font-size: 13px; }
-.football-alert--prematch.event-row .event-actions { position: absolute; top: 56px; right: 0; grid-row: 1; opacity: 0; }
+.football-alert--prematch.event-row .event-actions { opacity: 0; }
 .football-alert--prematch:hover .event-actions, .football-alert--prematch .event-actions:focus-within { opacity: 1; }
+@media (hover: none) {
+    .football-alert--prematch.event-row .event-actions { opacity: 1; }
+}
 [data-prematch-toggle]:disabled { opacity: .3; cursor: default; }
 @container (max-width: 620px) {
-    .football-alert--prematch.event-row .event-actions { position: static; grid-row: 2; opacity: 1; }
+    .football-alert--prematch.event-row .event-actions { opacity: 1; }
     .football-alert--prematch .fav-star { opacity: 1; }
 }
 

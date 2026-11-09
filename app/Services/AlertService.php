@@ -180,7 +180,7 @@ class AlertService
         return ! $pinnacleSelected && ! array_any(self::FILTERS, fn (string $filter): bool => (bool) $customer->{'tg_'.$filter});
     }
 
-    private function allowsPinnacleDrop(array $filters, array $context): bool
+    private function allowsPinnacleDrop(array $filters, array $context, ?float &$betfairBack): bool
     {
         if (empty($filters['higher']) && empty($filters['leagues'])) {
             return true;
@@ -202,7 +202,13 @@ class AlertService
         $resolved = app(FootballController::class)->marketActivity(['alerts' => [$drop]], currentPinnacleQuote: true);
         $quote = $resolved[0]['bf_back'] ?? null;
 
-        return is_numeric($quote) && is_finite((float) $quote) && (float) $quote > (float) $drop['to_price'];
+        if (! is_numeric($quote) || ! is_finite((float) $quote) || (float) $quote <= (float) $drop['to_price']) {
+            return false;
+        }
+
+        $betfairBack = (float) $quote;
+
+        return true;
     }
 
     public function connectionChanged(Customer $customer): void
@@ -669,6 +675,7 @@ class AlertService
                 $alert = DB::table('alerts')->find($delivery->alert_id);
                 $payload = json_decode($alert->payload, true);
                 $allowed = $customer !== null && ($alert->type === 'expired' ? (! $this->eligible($customer) && $customer->is_verified && ! $customer->is_blocked && ! $customer->is_suspended) : $this->eligible($customer));
+                $betfairBack = null;
                 if ($allowed && $delivery->channel === 'telegram') {
                     $allowed = $customer->telegram_available && $customer->telegram_chat_id === $delivery->destination;
                     $pinnacleFilters = [];
@@ -690,7 +697,7 @@ class AlertService
                             || (preg_match('/^(total|totals|o\/u)(?:\s|$)/', $market) === 1 && is_numeric($line) && in_array((float) $line, [0.5, 1.5, 2.5, 3.5, 4.5], true)));
                     }
                     if ($allowed && $alert->type === 'prematch_drops') {
-                        $allowed = $this->allowsPinnacleDrop($pinnacleFilters, $payload['context']);
+                        $allowed = $this->allowsPinnacleDrop($pinnacleFilters, $payload['context'], $betfairBack);
                     }
                 } elseif ($allowed) {
                     $allowed = $customer->popup_enabled;
@@ -734,7 +741,7 @@ class AlertService
                             $error = 'Telegram bot is not configured.';
                         } else {
                             $response = Http::connectTimeout(3)->timeout(10)->post('https://api.telegram.org/bot'.$botToken.'/sendMessage', [
-                                'chat_id' => $customer->telegram_chat_id, 'text' => $this->text($payload), 'protect_content' => true,
+                                'chat_id' => $customer->telegram_chat_id, 'text' => $this->text($payload, $betfairBack), 'protect_content' => true,
                             ]);
                             if ($response->json('ok') === true) {
                                 $remoteId = (string) $response->json('result.message_id');
@@ -781,7 +788,7 @@ class AlertService
     }
 
     /** @param array<string, mixed> $payload */
-    public function text(array $payload): string
+    public function text(array $payload, ?float $betfairBack = null): string
     {
         $type = $payload['alert_type'];
         if ($type === 'test') {
@@ -809,6 +816,10 @@ class AlertService
             $line = is_numeric($m['point'] ?? null) ? ' '.$m['point'] : '';
             $text = ($shock ? '⚡️ BF MARKETS | MARKET SHOCK DETECTED' : '📉 BF MARKETS | PREMATCH DROP ALERT')
                 ."\n\n🎯 Filter: ".($shock ? 'Market Shock Detector' : 'Betfair > Pinnacle Drop')."\n{$base}\n⏰ Kickoff: {$kickoff}\n\n📊 Market: ".str_replace('_', ' ', $m['market']).$line.' ('.$m['selection'].")\n📈 Odds Movement: {$from} 📉 {$to}".($drop === null ? '' : " (-{$drop}% Drop)");
+
+            if (! $shock && $betfairBack !== null) {
+                $text .= "\n🟨 Betfair Back Odds: ".number_format($betfairBack, 2);
+            }
 
             return $text.($shock ? "\n💥 Volume Surge: ".($m['volume'] ?? 'No data available') : "\n🔥 Price Drop: ".($drop === null ? '—' : "-{$drop}%"));
         }

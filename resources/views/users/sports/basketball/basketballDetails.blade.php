@@ -52,20 +52,20 @@
                 @if ($quarterScores !== [])<span aria-label="{{ __('Completed quarter scores') }}" class="col-span-3 whitespace-nowrap text-center text-[11px] font-normal leading-3 text-[var(--text-strong)]">{{ implode(' | ', $quarterScores) }}</span>@endif
             </button>
             <div class="flex items-center justify-center gap-4">
-                <button type="button" class="cursor-pointer text-[var(--text-brand-40-2)] disabled:cursor-not-allowed disabled:opacity-30"
+                <button type="button" class="live-stat-icon bg-transparent border-0 [color:var(--text-live)] [font-size:15px] [padding:4px_4px] cursor-pointer [border-radius:8px] [width:28px] text-center [transition:0.2s] disabled:cursor-not-allowed disabled:opacity-30 dark:[color:rgb(var(--primary))] dark:[&:hover]:[background:rgb(var(--surface))] dark:[&:hover]:[color:var(--text-on-primary)] [&:hover]:[background:var(--surface-neutral-5-7)] [&:hover]:[color:var(--text-danger-30)]"
                     @if ($checkAuthAndSubscription['display_odds'])
                         data-action="stats" title="{{ __('Live match statistics') }}"
                     @else
                         disabled title="{{ __('Statistics (requires subscription)') }}"
                     @endif
-                    ><i class="fas fa-chart-bar"></i></button>
-                <button type="button" class="cursor-pointer text-[var(--text-brand-40-2)] disabled:cursor-not-allowed disabled:opacity-30"
+                    ><i class="fas fa-wave-square" aria-hidden="true"></i></button>
+                <button type="button" class="action-icon bg-transparent border-0 [color:var(--text-brand-45)] [font-size:15px] [padding:4px_4px] cursor-pointer [border-radius:8px] [width:28px] text-center [transition:0.2s] disabled:cursor-not-allowed disabled:opacity-30 dark:[color:rgb(var(--primary))] dark:[&:hover]:[background:rgb(var(--surface))] dark:[&:hover]:[color:var(--text-on-primary)] [&:hover]:[background:var(--surface-neutral-5-7)] [&:hover]:[color:rgb(var(--text-main))]"
                     @if ($checkAuthAndSubscription['display_odds'])
                         data-action="prediction" data-requires-login="{{ $authenticated ? 'false' : 'true' }}" data-login-url="{{ route('login') }}" title="{{ __('Predictions') }}"
                     @else
                         disabled title="{{ __('Prediction (requires subscription)') }}"
                     @endif
-                    @disabled($event['status'] !== 'Prematch')><i class="fas fa-brain"></i></button>
+                    @disabled($event['status'] !== 'Prematch')><i class="fas fa-brain" aria-hidden="true"></i></button>
             </div>
             <div class="flex min-w-0 gap-2 overflow-x-auto [scrollbar-width:thin]">
                 @foreach ($event['markets'] !== [] ? $event['markets'] : [[], []] as $runner)

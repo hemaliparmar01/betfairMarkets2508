@@ -54,15 +54,45 @@
     <section id="pinnacleDashboard" class="my-5 min-w-0" data-source-url="{{ route('football.pinnacle-odds') }}" data-timezone="{{ getCurrentUserTimezone() }}">
         <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div>
-                <h1 class="flex items-center gap-2 text-2xl font-extrabold text-[rgb(var(--text-main))] dark:text-[var(--text-on-primary)] max-[480px]:text-xl">
-                    <i class="fas fa-arrow-trend-down text-[var(--text-danger-15)]"></i> {{ __('Pinnacle Odds Drops & Market Movement') }}
-                </h1>
+                <div class="flex items-center gap-2">
+                    <h1 class="flex items-center gap-2 text-2xl font-extrabold text-[rgb(var(--text-main))] dark:text-[var(--text-on-primary)] max-[480px]:text-xl">
+                        <i class="fas fa-arrow-trend-down text-[var(--text-danger-15)]"></i> {{ __('Pinnacle Odds Drops & Market Movement') }}
+                    </h1>
+                    <button type="button" aria-haspopup="dialog" aria-controls="pinnacleDropsInfo" aria-label="{{ __('Why track Pinnacle Odds Drops?') }}" class="inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full border border-[var(--border-control)] text-[rgb(var(--text-muted))] focus-visible:outline-2" onclick="document.getElementById('pinnacleDropsInfo').showModal()"><i class="fas fa-info-circle" aria-hidden="true"></i></button>
+                </div>
                 <p class="mt-1 text-sm text-[rgb(var(--text-muted))] dark:text-[rgb(var(--text-soft))]">{{ __('Realtime Pinnacle odds drops compared with Betfair prices') }}</p>
             </div>
             <span id="pinnacleConnection" class="inline-flex items-center gap-2 rounded-full border border-[var(--border-amber-200)] bg-[var(--surface-amber-50)] px-3 py-1.5 text-xs font-bold text-[var(--text-amber-700)]">
                 <span class="size-2 rounded-full bg-current"></span><span data-status-text>{{ __('Connecting') }}</span>
             </span>
         </div>
+
+
+        <dialog id="pinnacleDropsInfo" aria-labelledby="pinnacleDropsInfoTitle" class="m-auto max-h-[85dvh] w-[calc(100%-2rem)] max-w-lg overflow-y-auto rounded-xl border border-[var(--border-control)] bg-[rgb(var(--surface))] p-5 text-[rgb(var(--text-main))] shadow-xl backdrop:bg-black/50 dark:border-[rgb(var(--border))] dark:text-[var(--text-on-primary)]">
+            <div class="mb-4 flex items-start justify-between gap-3">
+                <h2 id="pinnacleDropsInfoTitle" class="text-lg font-bold">{{ __('Why track Pinnacle Odds Drops?') }}</h2>
+                <form method="dialog">
+                    <button type="submit" aria-label="{{ __('Close') }}" class="cursor-pointer rounded px-2 text-xl focus-visible:outline-2">×</button>
+                </form>
+            </div>
+            <div class="space-y-3 text-sm leading-relaxed">
+                <p>{{ __('Pinnacle is globally recognized as the benchmark for "sharp" bookmaking. A sudden drop in Pinnacle odds indicates strong information impact on the market (Smart Money flow or key news).') }}</p>
+                <h3 class="font-bold">{{ __('Key Use Cases & Strategies:') }}</h3>
+                <div>
+                    <h4 class="font-semibold">{{ __('Capturing Arbitrage & Value Windows:') }}</h4>
+                    <p>{{ __('When Pinnacle drops its price on an outcome, soft bookmakers and exchanges often react with a delay. This creates a temporary price discrepancy between soft bookies\' higher odds and Pinnacle’s lower odds—allowing you to secure high-value bets or lock in arbitrage opportunities.') }}</p>
+                </div>
+                <div>
+                    <h4 class="font-semibold">{{ __('Steam Chasing:') }}</h4>
+                    <p>{{ __('This strategy aligns with "Smart Money" flow. A rapid odds drop (e.g., ≥5%) usually signals that professional bettors or sharp models perceive an increased probability for that outcome. Traders immediately follow the market move in the same direction before other sportsbooks adjust their lines.') }}</p>
+                </div>
+                <div>
+                    <h4 class="font-semibold">{{ __('Betfair Trading:') }}</h4>
+                    <p>{{ __('Pinnacle movements can influence market movements on Betfair exchange, giving you an edge to trade positions (Back/Lay) before kickoff.') }}</p>
+                </div>
+                <p class="rounded-lg border border-[var(--border-control)] p-3">{{ __('⚠️ Disclaimer: An odds drop does not guarantee a winning outcome. It simply highlights market sentiment and liquidity flow. Upsets and unexpected results happen regularly in sports.') }}</p>
+            </div>
+        </dialog>
 
         <nav class="mb-4 flex flex-wrap gap-2" aria-label="{{ __('Pinnacle odds history') }}">
             <a href="{{ route('football.pinnacle-odds') }}" @if (! $pinnacleArchive) aria-current="page" @endif class="cursor-pointer rounded-lg border border-[var(--border-control)] px-4 py-2 text-sm font-bold {{ ! $pinnacleArchive ? 'bg-[var(--surface-heading)] text-white' : 'text-[rgb(var(--text-muted))]' }}">{{ __('Real-Time Drops') }}</a>
@@ -503,7 +533,7 @@
 
                 const tooltipTexts = {
                     archive: @json(__('Outdated odds drop data is automatically moved to the archive and stored for 24 hours.')),
-                    betfair: @json(__('Currently unavailable on Betfair')),
+                    betfair: @json(__('Betfair odds unavailable (Low liquidity or market not open yet)')),
                     moneyline: @json(__('Pinnacle: Moneyline = Betfair: Match Odds')),
                     nvp: (globalThis.bfTranslations?.["NVP (No-Vig Price) is the 'fair' or 'true' odds for an outcome. It is calculated by removing the bookmaker's margin (vigorish) from the Pinnacle odds. It represents the true probability of the event without the bookmaker's built-in profit."] ?? "NVP (No-Vig Price) is the 'fair' or 'true' odds for an outcome. It is calculated by removing the bookmaker's margin (vigorish) from the Pinnacle odds. It represents the true probability of the event without the bookmaker's built-in profit."),
 

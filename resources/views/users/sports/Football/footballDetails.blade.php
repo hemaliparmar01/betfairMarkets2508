@@ -104,7 +104,26 @@
                     </div>
                 @endif
                 @if ($isPrematchDrops)
-                    <span data-prematch-status title="{{ __('Drop classification is not supplied by the current data') }}"><span aria-hidden="true">●</span> —</span>
+                    @php
+                        $preview = $event['odds_markets'][0]['runners'][0] ?? [];
+                        $baseline = $preview['previousBackOdds'] ?? null;
+                        $current = $preview['currentBackOdds'] ?? null;
+                        $history = $preview['history'] ?? [];
+                        $previous = count($history) > 1 ? ($history[count($history) - 2]['odds'] ?? null) : null;
+                        $detectedAt = (int) ($preview['detected_at'] ?? 0);
+                        $dropStatus = match (true) {
+                            !is_numeric($baseline) || !is_numeric($current) => 'unknown',
+                            $current >= $baseline || (is_numeric($previous) && $current > $previous) => 'weak',
+                            $detectedAt > 0 && $detectedAt >= time() - 300 => 'new',
+                            default => 'active',
+                        };
+                    @endphp
+                    <span data-prematch-status="{{ $dropStatus }}"><span aria-hidden="true">●</span> {{ match ($dropStatus) {
+                        'new' => __('NEW'),
+                        'active' => __('ACTIVE'),
+                        'weak' => __('WEAK'),
+                        default => '—',
+                    } }}</span>
                 @endif
                 <div
                     class="event-left relative flex min-w-0 flex-nowrap items-center gap-2 overflow-hidden max-[1024px]:col-span-2 max-[480px]:col-span-1">
@@ -238,13 +257,13 @@
                         class="action-icon bg-transparent border-0 [color:var(--text-brand-45)] [font-size:15px] [padding:4px_4px] cursor-pointer [border-radius:8px] [width:28px] text-center [transition:0.2s] dark:[color:rgb(var(--primary))] dark:[&:hover]:[background:rgb(var(--surface))] dark:[&:hover]:[color:var(--text-on-primary)] [&:hover]:[background:var(--surface-neutral-5-7)] [&:hover]:[color:rgb(var(--text-main))] [&.disabled]:[opacity:0.3] [&.disabled]:[pointer-events:none]"
                         data-action="chart" data-chart-url="{{ route('football.matches.show', $event['sportsApiPro_match_id']) }}" title="{{ __('Markets & odds charts') }}" aria-label="{{ __('Markets & odds charts') }}"><i class="fas fa-chart-simple"></i></button>
                     <button type="button"
-                        class="action-icon bg-transparent border-0 [color:var(--text-brand-45)] [font-size:15px] [padding:4px_4px] cursor-pointer [border-radius:8px] [width:28px] text-center [transition:0.2s] dark:[color:rgb(var(--primary))] disabled:cursor-not-allowed disabled:opacity-30 dark:[&:hover]:[background:rgb(var(--surface))] dark:[&:hover]:[color:var(--text-on-primary)] [&:hover]:[background:var(--surface-neutral-5-7)] [&:hover]:[color:rgb(var(--text-main))] [&.disabled]:[opacity:0.3] [&.disabled]:[pointer-events:none]"
+                        class="action-icon bg-transparent border-0 [color:var(--text-brand-45)] [font-size:15px] [padding:4px_4px] cursor-pointer [border-radius:8px] [width:28px] text-center [transition:0.2s] disabled:cursor-not-allowed disabled:opacity-30 dark:[color:rgb(var(--primary))] dark:[&:hover]:[background:rgb(var(--surface))] dark:[&:hover]:[color:var(--text-on-primary)] [&:hover]:[background:var(--surface-neutral-5-7)] [&:hover]:[color:rgb(var(--text-main))]"
                         @if ($checkAuthAndSubscription['display_odds'])
                             data-action="stats" data-match-id="{{ $event['sportsApiPro_match_id'] }}" aria-expanded="false" aria-controls="statistics-{{ $event['sportsApiPro_match_id'] }}" title="{{ __('Statistics') }}"
                         @else
                             disabled title="{{ __('Statistics (requires subscription)') }}"
                         @endif
-                        ><i class="fas fa-chart-bar"></i></button>
+                        ><i class="fas fa-chart-bar" aria-hidden="true"></i></button>
                     <button type="button"
                         class="action-icon bg-transparent border-0 [color:var(--text-brand-45)] [font-size:15px] [padding:4px_4px] cursor-pointer [border-radius:8px] [width:28px] text-center [transition:0.2s] disabled:cursor-not-allowed disabled:opacity-30 dark:[color:rgb(var(--primary))] dark:[&:hover]:[background:rgb(var(--surface))] dark:[&:hover]:[color:var(--text-on-primary)] [&:hover]:[background:var(--surface-neutral-5-7)] [&:hover]:[color:rgb(var(--text-main))]"
                         @if ($checkAuthAndSubscription['display_odds'])
@@ -252,7 +271,7 @@
                         @else
                             disabled title="{{ __('Prediction (requires subscription)') }}"
                         @endif
-                        title="{{ __('Prediction') }}" @disabled($event['status'] !== 'Prematch')><i class="fas fa-brain"></i></button>
+                        title="{{ __('Prediction') }}" @disabled($event['status'] !== 'Prematch')><i class="fas fa-brain" aria-hidden="true"></i></button>
                 </div>
                 @if (($event['timeline'] ?? null) !== null)
                     <div class="w-[360px] min-w-0 max-[1024px]:w-full max-[480px]:col-span-1">
@@ -400,10 +419,10 @@
                                                         <span class="football-alert-previous">{{ number_format($odd['previousBackOdds'], 2) }}</span>
                                                         @if ($isPrematchDrops)
                                                             @if ($intermediateOdds !== null)
-                                                                <i class="fas {{ $intermediateOdds < $odd['previousBackOdds'] ? 'fa-arrow-down text-[var(--text-red-600)]' : 'fa-arrow-up text-[var(--text-green-600)]' }}" aria-hidden="true"></i>
+                                                                <i class="fas {{ $intermediateOdds < $odd['previousBackOdds'] ? 'fa-arrow-down prematch-drop-arrow text-[var(--text-red-600)]' : 'fa-arrow-up text-[var(--text-green-600)]' }}" aria-hidden="true"></i>
                                                                 <span class="football-alert-previous">{{ number_format($intermediateOdds, 2) }}</span>
                                                             @endif
-                                                            <i class="fas {{ $movementDirection === 'down' ? 'fa-arrow-down text-[var(--text-red-600)]' : ($movementDirection === 'up' ? 'fa-arrow-up text-[var(--text-green-600)]' : 'fa-minus text-[var(--text-slate-400)]') }}" aria-hidden="true"></i>
+                                                            <i class="fas {{ $movementDirection === 'down' ? 'fa-arrow-down prematch-drop-arrow text-[var(--text-red-600)]' : ($movementDirection === 'up' ? 'fa-arrow-up text-[var(--text-green-600)]' : 'fa-minus text-[var(--text-slate-400)]') }}" aria-hidden="true"></i>
                                                         @else
                                                             <span class="football-alert-arrow" aria-hidden="true">→</span>
                                                         @endif
@@ -425,12 +444,12 @@
                                                 @if ($isMarketShock)
                                                     <div data-shock-movement="{{ $odd['odds_direction'] }}"><i class="fas {{ $odd['odds_direction'] === 'down' ? 'fa-arrow-down' : ($odd['odds_direction'] === 'up' ? 'fa-arrow-up' : 'fa-minus') }}" aria-hidden="true"></i> {{ $dropPercent !== null ? sprintf('%+.1f%%', -$dropPercent) : '—' }}</div>
                                                     <span data-shock-countdown aria-live="off">{{ __('Expires in') }} —</span>
-                                                    <button type="button" data-shock-chart data-action="chart" data-chart-url="{{ route('football.matches.show', $event['sportsApiPro_match_id']) }}"><i class="fas fa-chart-bar" aria-hidden="true"></i> {{ __('Chart') }}</button>
+                                                    <button type="button" data-shock-chart data-action="chart" data-chart-url="{{ route('football.matches.show', $event['sportsApiPro_match_id']) }}"><i class="fas fa-chart-simple action-icon bg-transparent border-0 [color:var(--text-brand-45)] [font-size:15px] [padding:4px_4px] cursor-pointer [border-radius:8px] [width:28px] text-center [transition:0.2s] disabled:cursor-not-allowed disabled:opacity-30 dark:[color:rgb(var(--primary))] dark:[&:hover]:[background:rgb(var(--surface))] dark:[&:hover]:[color:var(--text-on-primary)] [&:hover]:[background:var(--surface-neutral-5-7)] [&:hover]:[color:rgb(var(--text-main))]" aria-hidden="true"></i> {{ __('Chart') }}</button>
                                                 @endif
                                                 @if ($isPrematchDrops)
                                                     <span data-prematch-drop data-label="{{ __('Drop %') }}">{{ $dropPercent !== null ? sprintf('%+.1f%%', -$dropPercent) : '—' }}</span>
                                                     <time data-prematch-started data-label="{{ __('Drop Started') }}" @if ($odd['detected_at'] ?? null) datetime="{{ \Carbon\Carbon::createFromTimestampUTC($odd['detected_at'])->toIso8601String() }}" @endif>{{ ($odd['detected_at'] ?? null) ? \Carbon\Carbon::createFromTimestampUTC($odd['detected_at'])->diffForHumans(short: true) : '—' }}</time>
-                                                    <button type="button" data-action="chart" data-chart-url="{{ route('football.matches.show', $event['sportsApiPro_match_id']) }}" title="{{ __('Markets & odds charts') }}" aria-label="{{ __('Chart for :selection', ['selection' => $odd['runner']]) }}"><i class="fas fa-chart-bar" aria-hidden="true"></i></button>
+                                                    <button type="button" data-action="chart" data-chart-url="{{ route('football.matches.show', $event['sportsApiPro_match_id']) }}" title="{{ __('Markets & odds charts') }}" aria-label="{{ __('Chart for :selection', ['selection' => $odd['runner']]) }}"><i class="fas fa-chart-simple action-icon bg-transparent border-0 [color:var(--text-brand-45)] [font-size:15px] [padding:4px_4px] cursor-pointer [border-radius:8px] [width:28px] text-center [transition:0.2s] disabled:cursor-not-allowed disabled:opacity-30 dark:[color:rgb(var(--primary))] dark:[&:hover]:[background:rgb(var(--surface))] dark:[&:hover]:[color:var(--text-on-primary)] [&:hover]:[background:var(--surface-neutral-5-7)] [&:hover]:[color:rgb(var(--text-main))]" aria-hidden="true"></i></button>
                                                 @endif
                                             </div>
                                         @endforeach
@@ -458,36 +477,26 @@
                     data-live-stats-panel="{{ $event['sportsApiPro_match_id'] }}" role="dialog" aria-modal="true"
                     aria-label="Live statistics for {{ $event['team1'] }} vs {{ $event['team2'] }}"
                     class="fixed inset-0 z-[80] hidden overflow-hidden bg-slate-950/60 p-3 backdrop-blur-sm sm:p-6">
-                    <div
-                        class="relative mx-auto my-4 w-full max-w-4xl max-h-[calc(100dvh-3.5rem)] overflow-x-hidden overflow-y-auto overscroll-contain rounded-2xl sm:max-h-[calc(100dvh-7rem)] border border-[var(--border-neutral-5-6)] bg-[rgb(var(--surface))] shadow-2xl dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--bg))] sm:my-8">
-                        <div
-                            class="relative bg-gradient-to-r from-[var(--surface-brand-65-2)] to-[var(--surface-brand-35)] px-4 py-5 text-white sm:px-7">
+                    <div class="mx-auto flex max-h-full w-full max-w-[900px] flex-col overflow-hidden rounded-xl border border-[#d1dbe6] bg-white shadow-[0_12px_30px_rgba(0,0,0,0.15)] dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--bg))]">
+                        <div class="relative shrink-0 bg-[#0b2a40] p-5 text-center text-white">
                             <button type="button" data-close-live-stats
-                                class="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full bg-[rgb(var(--surface))]/15 text-lg text-white transition hover:bg-[rgb(var(--surface))]/25 focus:outline-none focus:ring-2 focus:ring-[var(--text-on-primary)]/70"
+                                class="absolute right-[15px] top-[15px] flex size-[30px] items-center justify-center rounded-full bg-white/20 text-base transition hover:bg-white/40 focus-visible:outline-2 focus-visible:outline-white"
                                 aria-label="{{ __('Close live statistics') }}"><i class="fas fa-times"></i></button>
-                            <div
-                                class="mb-3 text-center text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--text-brand-5)]">
-                                {{ $matches['tournament_name'] }} {{ __('· Live Statistics') }}</div>
-                            <div class="flex flex-wrap items-center justify-center gap-3 text-center sm:gap-6">
-                                <span
-                                    class="max-w-[36%] text-sm font-semibold sm:text-base">{{ $event['team1'] }}</span>
-                                <span
-                                    data-score-status="{{ $event['status'] }}" class="match-score match-score-on-dark text-2xl font-extrabold tracking-wider sm:text-4xl">{{ $event['score'] }}</span>
-                                <span
-                                    class="max-w-[36%] text-sm font-semibold sm:text-base">{{ $event['team2'] }}</span>
+                            <div class="mb-2 px-8 text-xs uppercase tracking-[1px] text-[#b0c8dd]">
+                                {{ $matches['tournament_name'] }} · {{ __('Live Statistics') }}
                             </div>
-                            <div
-                                class="mt-2 flex items-center justify-center gap-2 text-xs font-semibold uppercase tracking-wider">
-                                <span class="h-2 w-2 animate-pulse rounded-full bg-[var(--surface-red-500)]"></span>
-                                {{ __($event['minutes']) }}@if (preg_match('/^\d+(?:\+\d*)?$/', (string) $event['minutes']) === 1)
-                                    <span class="minute-tick-blink">'</span>
-                                @endif
+                            <div class="flex items-center justify-center gap-[15px] text-base font-bold min-[601px]:text-xl">
+                                <span class="w-2/5 min-w-0 break-words text-right">{{ $event['team1'] }}</span>
+                                <span data-score-status="{{ $event['status'] }}" class="match-score match-score-on-dark shrink-0 whitespace-nowrap rounded-md bg-white/10 px-2 py-0.5 text-[22px] font-extrabold !text-[#ff4d4d] min-[601px]:px-3 min-[601px]:py-1 min-[601px]:text-[28px]">{{ $event['score'] }}</span>
+                                <span class="w-2/5 min-w-0 break-words text-left">{{ $event['team2'] }}</span>
+                            </div>
+                            <div class="mt-2 flex items-center justify-center gap-1 text-xs font-bold text-[#ff4d4d]">
+                                <span class="text-[10px]" aria-hidden="true">●</span>
+                                <span>{{ __($event['minutes']) }}@if (preg_match('/^\d+(?:\+\d*)?$/', (string) $event['minutes']) === 1)'@endif</span>
                             </div>
                         </div>
 
-                        <div class="p-4 sm:p-7">
-                            @include('users.sports.football.partials.statisticsTable', ['event' => $event])
-                        </div>
+                        @include('users.sports.football.partials.statisticsTable', ['event' => $event])
                     </div>
                 </div>
             @endif

@@ -190,6 +190,60 @@ if (dashboard) {
             document.documentElement.classList.remove('!overflow-hidden');
         }
     }
+    function renderLiveStatistics(data, selectedPeriod, translations) {
+        const translate = (label) => escape(translations[label] ?? globalThis.bfTranslations?.[label] ?? label);
+        const tabs = { ALL: 'Full Match', P1: '1st Period', P2: '2nd Period', P3: '3rd Period' };
+        const activePeriod = Object.keys(tabs).find((key) => tabs[key] === data.status);
+        const scores = Object.keys(tabs).slice(1).map((period) => {
+            const key = `period${period[1]}`;
+            const home = data.home?.[key];
+            const away = data.away?.[key];
+            if (home == null || away == null || home < 0 || away < 0) return '';
+            return `<span class="rounded-md border px-2.5 py-1 text-sm font-bold ${period === activePeriod ? 'border-[#ff4d4d] bg-white/20 text-white' : 'border-transparent bg-white/10 text-[#b0c8dd]'}">${period}: ${escape(home)}-${escape(away)}</span>`;
+        }).join('');
+        const periods = Array.isArray(data.statistics) ? data.statistics : [data.statistics];
+        const aliases = { ALL: ['ALL', 'FULLMATCH'], P1: ['P1', '1ST', '1STPERIOD', 'PERIOD1', '1'], P2: ['P2', '2ND', '2NDPERIOD', 'PERIOD2', '2'], P3: ['P3', '3RD', '3RDPERIOD', 'PERIOD3', '3'] };
+        const groups = periods.filter((period) => {
+            const code = String(period?.period ?? period?.periodName ?? 'ALL').toUpperCase().replace(/[^A-Z0-9]/g, '');
+            return aliases[selectedPeriod].includes(code);
+        }).flatMap((period) => period?.groups ?? []).filter((group) => group.statisticsItems?.length);
+        const comparisonValue = (display, raw) => {
+            const percentage = String(display ?? '').match(/(-?\d+(?:\.\d+)?)\s*%/);
+            const value = percentage?.[1] ?? raw ?? display;
+            return value == null || String(value).trim() === '' ? NaN : Number(value);
+        };
+        const statRows = groups.map((group) => `<section class="rounded-lg border border-[#e3ecf5] bg-white p-4 shadow-sm dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--surface))]">
+            <h3 class="mb-3 border-b border-[#edf2f7] pb-2 text-xs font-bold uppercase tracking-wide text-[#5a7d99] dark:border-[rgb(var(--border))] dark:text-[rgb(var(--text-muted))]">${translate(group.groupName ?? 'Match Overview')}</h3>
+            ${group.statisticsItems.map((item) => {
+                const home = item.home ?? item.homeValue;
+                const away = item.away ?? item.awayValue;
+                const homeValue = comparisonValue(home, item.homeValue);
+                const awayValue = comparisonValue(away, item.awayValue);
+                const valueStyle = (higher) => higher ? 'font-extrabold text-[#0b2a40] dark:text-white' : 'font-medium text-[#597995] dark:text-[rgb(var(--text-muted))]';
+                return `<div class="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] items-center gap-2 py-1.5 text-xs sm:text-[13px]">
+                    <span class="break-words ${valueStyle(homeValue > awayValue)}">${escape(home ?? '—')}</span>
+                    <span class="text-center font-medium text-[#5a7d99] dark:text-[rgb(var(--text-muted))]">${translate(item.name ?? '')}</span>
+                    <span class="break-words text-right ${valueStyle(awayValue > homeValue)}">${escape(away ?? '—')}</span>
+                </div>`;
+            }).join('')}
+        </section>`).join('');
+
+        return `<header class="relative bg-[#0b2a40] p-5 text-center text-white">
+            <button type="button" data-action="close-modal" aria-label="${translate('Close')}" class="absolute right-[15px] top-[15px] flex size-[30px] items-center justify-center rounded-full bg-white/20 text-lg hover:bg-white/40">×</button>
+            <h2 id="icehockeyModalTitle" class="mb-2 px-8 text-xs uppercase tracking-[1px] text-[#b0c8dd]">${translate('Ice Hockey')} · ${translate('Live Statistics')}</h2>
+            <div class="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 font-bold sm:gap-[15px]">
+                <span class="break-words text-right">${escape(data.team1)}</span>
+                <strong class="whitespace-nowrap rounded-md bg-white/10 px-2 py-1 text-[22px] font-extrabold text-[#ff4d4d]">${escape(data.score ?? '—')}</strong>
+                <span class="break-words text-left">${escape(data.team2)}</span>
+            </div>
+            <p class="mt-2 text-xs font-bold text-[#ff4d4d]"><span aria-hidden="true">●</span> ${translate(data.status ?? '')}</p>
+            ${scores ? `<div class="mt-4 flex flex-wrap justify-center gap-2">${scores}</div>` : ''}
+        </header>
+        <div class="flex border-b border-[#d1dbe6] bg-[#f0f4f8] dark:bg-[rgb(var(--bg))]" role="group" aria-label="${translate('Statistics period')}">
+            ${Object.entries(tabs).map(([period, label]) => `<button type="button" data-action="statistics-period" data-period="${period}" aria-pressed="${period === selectedPeriod}" class="min-w-0 flex-1 border-b-[3px] px-1 py-3 text-center text-xs font-bold uppercase tracking-wide ${period === selectedPeriod ? 'border-[#0b2a40] bg-white text-[#0b2a40] dark:border-white dark:bg-[rgb(var(--surface))] dark:text-white' : 'border-transparent text-[#5a7d99] dark:text-[rgb(var(--text-muted))]'}">${translate(label)}</button>`).join('')}
+        </div>
+        <div class="space-y-4 bg-[#f7f9fc] p-5 dark:bg-[rgb(var(--bg))]">${statRows || `<p class="py-6 text-center text-sm text-[#5a7d99] dark:text-[rgb(var(--text-muted))]">${translate('Statistics for this period are not available yet.')}</p>`}</div>`;
+    }
     function renderModal() {
         const rows = [...dashboard.querySelectorAll('[data-match-id]')];
         const row = rows.find((candidate) => candidate.dataset.matchId === activeModal.matchId && (!activeModal.marketId || candidate.dataset.marketId === activeModal.marketId));
@@ -197,16 +251,13 @@ if (dashboard) {
         const modal = dashboard.querySelector('#icehockeyModal');
         const panel = modal.querySelector('[data-icehockey-modal-panel]');
         const scrollTop = panel.scrollTop;
-        const scoreStatus = escape(row.dataset.matchStatus ?? '');
+        const isStats = activeModal.action === 'stats';
+        panel.classList.toggle('p-5', !isStats);
+        panel.classList.toggle('max-w-3xl', !isStats);
+        panel.classList.toggle('max-w-[560px]', isStats);
         let title = ''; let body = '';
         if (activeModal.action === 'stats') {
-            const data = parse(row.dataset.icehockeyStats); title = (globalThis.bfTranslations?.["Live Match Statistics"] ?? "Live Match Statistics");
-            body = `<div class="grid gap-3 sm:grid-cols-2">${[['home', data.team1], ['away', data.team2]].map(([side, team]) => {
-                const score = data[side] ?? {};
-                return `<section class="rounded-xl border border-[var(--border-control)] p-4"><h3 class="mb-2 font-bold">${escape(team)}</h3><p class="mb-2 text-xl font-bold"><span class="match-score" data-score-status="${scoreStatus}">${escape(score.current ?? score.display ?? '—')}</span></p>${[['period1', 'P1'], ['period2', 'P2'], ['period3', 'P3'], ['overtime', 'OT'], ['penalties', 'SO']].filter(([key]) => score[key] != null).map(([key, label]) => `<p class="py-1">${label}: <b>${escape(score[key])}</b></p>`).join('')}</section>`;
-            }).join('')}</div>`;
-            const statistics = Array.isArray(data.statistics) ? data.statistics : [data.statistics];
-            body += statistics.map((period) => (period?.groups ?? []).map((group) => `<h3 class="mt-4 font-bold">${escape(globalThis.bfTranslations?.[group.groupName] ?? group.groupName)}</h3>${(group.statisticsItems ?? []).map((item) => `<div class="grid grid-cols-[1fr_2fr_1fr] border-b border-[var(--border-neutral-5-2)] py-2 text-center text-sm"><span>${escape(item.home ?? item.homeValue ?? '—')}</span><span>${escape(globalThis.bfTranslations?.[item.name] ?? item.name)}</span><span>${escape(item.away ?? item.awayValue ?? '—')}</span></div>`).join('')}`).join('')).join('');
+            body = renderLiveStatistics(parse(row.dataset.icehockeyStats), activeModal.period ?? 'ALL', parse(modal.dataset.statisticsTranslations));
         } else if (activeModal.action === 'prediction') {
             const data = parse(row.dataset.icehockeyPrediction); title = (globalThis.bfTranslations?.["Match Predictions"] ?? "Match Predictions");
             const total = Object.values(data.counts ?? {}).reduce((sum, count) => sum + Number(count), 0);
@@ -223,7 +274,7 @@ if (dashboard) {
         }
         hideOddsTooltip();
         const modalFragment = document.createElement('template');
-        modalFragment.innerHTML = `<div class="mb-5 flex items-center justify-between gap-3"><h2 id="icehockeyModalTitle" class="text-lg font-extrabold">${escape(title)}</h2><button type="button" data-action="close-modal" aria-label="${(globalThis.bfTranslations?.["Close"] ?? "Close")}" class="px-2 text-2xl">×</button></div>${body}`;
+        modalFragment.innerHTML = isStats ? body : `<div class="mb-5 flex items-center justify-between gap-3"><h2 id="icehockeyModalTitle" class="text-lg font-extrabold">${escape(title)}</h2><button type="button" data-action="close-modal" aria-label="${(globalThis.bfTranslations?.["Close"] ?? "Close")}" class="px-2 text-2xl">×</button></div>${body}`;
         updateFixtureRows(panel, modalFragment.content);
         panel.scrollTop = scrollTop;
         modal.classList.remove('hidden');
@@ -251,6 +302,12 @@ if (dashboard) {
         if (button.dataset.requiresLogin === 'true') { window.location.assign(button.dataset.loginUrl); return; }
         const action = button.dataset.action;
         if (action === 'close-modal') { closeModal(); return; }
+        if (action === 'statistics-period' && activeModal?.action === 'stats') {
+            activeModal.period = button.dataset.period;
+            renderModal();
+            dashboard.querySelector(`[data-period="${CSS.escape(activeModal.period)}"]`)?.focus({ preventScroll: true });
+            return;
+        }
         const row = button.closest('[data-match-id]');
         if (action === 'open-match') { window.location.assign(row.dataset.icehockeyMatchUrl); return; }
         if (['stats', 'prediction', 'market'].includes(action)) { activeModal = { action, matchId: row.dataset.matchId, marketId: row.dataset.marketId ?? null }; renderModal(); return; }

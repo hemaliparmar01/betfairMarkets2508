@@ -758,6 +758,12 @@ const callFixtureData = async (value, options = {}) => {
                 if (state?.expanded) state.scrollTop = panel.scrollTop;
             });
             preserveQuickStatsPanel(incoming);
+            if (openLiveStatsMatchId !== null) {
+                const selector = `[data-live-stats-panel="${CSS.escape(openLiveStatsMatchId)}"]`;
+                const period = fixtures.querySelector(`${selector} input[type="radio"]:checked`)?.value;
+                const nextPeriod = period && incoming.querySelector(`${selector} input[value="${CSS.escape(period)}"]`);
+                if (nextPeriod) nextPeriod.checked = true;
+            }
             fixtures.querySelectorAll('[data-prediction-saved-at]').forEach(panel => {
                 if (Number(panel.dataset.predictionSavedAt) >= requestStartedAt) {
                     incoming.querySelector(`[data-prediction-panel="${CSS.escape(panel.dataset.predictionPanel)}"]`)?.replaceWith(panel);
