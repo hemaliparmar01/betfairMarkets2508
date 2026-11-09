@@ -18,7 +18,7 @@
     <div class="min-h-screen bg-[rgb(var(--bg-soft))] font-['Noto_Sans_Georgian',Inter,sans-serif] text-[rgb(var(--text-main))]">
 
         <main class="max-w-5xl mx-auto px-5 py-10 md:py-14">
-            @php $current_country = (auth('customers')->user()?->country_code === 'GE' ? 'Georgia' : 'International'); @endphp
+            @php $current_country = (auth('customers')->user()?->country_code === 'GE' ? 'Georgia' : get_current_country()); @endphp
             <div>
                 <div class="text-center mb-8">
                     <div class="inline-block bg-[rgb(var(--primary)_/_0.10)] bg-opacity-10 rounded-full px-4 py-1.5 mb-4">

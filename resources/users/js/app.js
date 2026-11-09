@@ -278,7 +278,7 @@ if (alertContainer) {
             popup.querySelector('[data-match]').textContent = `⚽ ${alert.match}`;
             popup.querySelector('[data-league]').textContent = `🏆 ${alert.league}`;
             popup.querySelector('[data-time]').textContent = alert.alert_type === 'goal' ? `${t.score_label}: ${alert.score} · ${alert.minute}' ${t.minute_label} (${t.half_label})` : `${alert.minute}' ${t.minute_label} | ${t.score_label}: ${alert.score}`;
-            popup.querySelector('[data-odds]').textContent = alert.alert_type === 'ltd' ? `📈 ${t.odds_label}: ${Number(alert.draw_lay).toFixed(2)}` : '';
+            popup.querySelector('[data-odds]').textContent = alert.alert_type === 'ltd' ? `📈 ${t.odds_label}: ${alert.draw_lay == null ? '—' : Number(alert.draw_lay).toFixed(2)}` : '';
             popup.querySelector('[data-strategy]').textContent = alert.alert_type === 'goal' ? `✅ ${t.status_label}` : `🎯 ${t.strategy_label}`;
             const view = popup.querySelector('[data-view]');
             view.textContent = t.view_btn;

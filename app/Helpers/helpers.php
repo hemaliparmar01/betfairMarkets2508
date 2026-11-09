@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
 
@@ -1465,5 +1466,24 @@ if (! function_exists('checkAuthAndSubscription')) {
         }
 
         return ['is_authenticated' => true, 'has_active_subscription' => false, 'display_odds' => false];
+    }
+}
+
+if (! function_exists('get_current_country')) {
+    function get_current_country()
+    {
+        if (env('APP_ENV') == 'locale') {
+            return 'India';
+        }
+        $ip = request()->ip();
+        if (! filter_var($ip, FILTER_VALIDATE_IP)) {
+            return response()->json(['message' => 'Invalid IP address.'], 422);
+        }
+        $response = Http::get("https://api.country.is/{$ip}");
+        $data = $response->json();
+        $countryCode = strtoupper($data['country'] ?? '');
+        $countryName = Locale::getDisplayRegion("-{$countryCode}", 'en');
+
+        return $countryName;
     }
 }

@@ -338,6 +338,10 @@ class AlertService
         $text = $clean((string) ($message['text'] ?? ''));
         $context = trim($text."\n".$clean((string) ($message['reply_text'] ?? '')));
         $goal = preg_match('/(?:^|\n)\s*(?:⚽\s*)?go+a+l+(?:!+(?=\s|$)|(?=\h+(?:Score:|[^\n]+\h+\d{1,2}\h*[-:]\h*\d{1,2})))/iu', $text) === 1;
+        $goal = $goal || preg_match('/\bStatus\s*:\s*(?:Won|Paid\s*out)\b/im', $text) === 1;
+        $hasMinute = preg_match('/\b(\d{1,3}(?:\+\d{1,2})?)\s*[\x{0027}\x{2019}\x{2032}]/u', $text, $minute)
+            || preg_match('/\b(?:1st\s*half\s*[-–:]|time\s+elapsed\s*:)\s*(\d{1,2}):[0-5]\d\b/iu', $text, $minute);
+        $hasScore = preg_match('~(?<![\d:/-])(\d{1,2})\h*[-:–]\h*(\d{1,2})(?![\d:/-])~u', preg_replace('/^.*(?:1st\s*half\s*[-–:]|time\s+elapsed\s*:).*$/imu', '', $text), $score);
         if (! $goal && (! preg_match('/\b(?:1st\s*half|first\s*half|HT)\b/i', $text)
             || ! preg_match('/\bOver\s*\(?0[.,]5\)?(?:\s*Goals)?\b/i', $text)
             || preg_match('/\b(?:Over\s*\(?[1-9]|Full\s*Time|Full\s*Match|Asian\s*Handicap)\b/i', $text))) {
@@ -348,13 +352,13 @@ class AlertService
             $hasTeams = preg_match('/\bgo+a+l+!?\s*([^\n]+?)\s+\d{1,2}\s*[-:]\s*\d{1,2}\s+([^\n]+?)(?=\s+@|\n|$)/iu', $text, $teams);
         }
         $hasLeague = preg_match('/(?:League|Competition|Tournament)\s*:\s*([^\n|]+)/iu', $context, $league);
-        if (! $goal && ! $hasTeams) {
+        if (! $hasTeams) {
             $hasTeams = preg_match('/^\h*([\p{L}][^\n:]+?)\h+\d{1,2}\h*[:–-]\h*\d{1,2}\h+([\p{L}][^\n:]+?)(?:\n([\p{L}][\p{L} .-]+)(?=\n\h*\d))?\h*$/mu', $text, $teams);
             if ($hasTeams && isset($teams[3])) {
                 $teams[2] .= ' '.$teams[3];
             }
         }
-        if (! $goal && ! $hasLeague) {
+        if (! $hasLeague) {
             $hasLeague = preg_match('/^\h*Football[.\h]+[^\n.]+\.\h+([^\n]+)$/mi', $text, $league);
         }
         if (! $hasTeams || (! $goal && ! $hasLeague)) {
@@ -373,7 +377,7 @@ class AlertService
             'english premier league', 'england premier league' => 'Premier League',
             default => $name,
         };
-        $candidates = FootballMatch::query()->where('result_status', 'Live')->whereBetween('start_timestamp', [time() - 4 * 3600, time()])
+        $candidates = FootballMatch::query()->whereIn('result_status', $hasMinute && $hasScore ? ['Live', 'Prematch'] : ['Live'])->whereBetween('start_timestamp', [time() - 4 * 3600, time()])
             ->select(['id', 'sports_api_pro_match_id', 'team1', 'team2', 'tournament', 'unique_key'])->get()
             ->filter(fn (FootballMatch $match): bool => $resolver->teamSimilarity($normalizeTeam($match->team1), $normalizeTeam($home)) >= 80
                 && $resolver->teamSimilarity($normalizeTeam($match->team2), $normalizeTeam($away)) >= 80
@@ -390,8 +394,7 @@ class AlertService
             return null;
         }
         if ($goal) {
-            if (! preg_match('/(?:Score\s*:\s*|\b)(\d{1,2})\s*[-:]\s*(\d{1,2})\b/i', $text, $score)
-                || ! preg_match('/\b(\d{1,3}(?:\+\d{1,2})?)\s*[\x{0027}\x{2019}\x{2032}]/u', $text, $minute)) {
+            if (! $hasScore || ! $hasMinute) {
                 return null;
             }
             $parent = DB::table('alerts')->where('type', 'ltd')->where('match_id', (string) $match['sportsApiPro_match_id'])->first();
@@ -407,19 +410,28 @@ class AlertService
 
             return $this->process('goal', $match, ['parent_alert_id' => $parent->id, 'score' => $score[1].' - '.$score[2], 'minute' => $minute[1]]);
         }
+        if (($match['result_status'] ?? null) === 'Prematch' && $hasMinute && $hasScore) {
+            $match['result_status'] = 'Live';
+            $match['minutes_status'] = '1st half';
+        }
         if (! in_array($match['minutes_status'] ?? '', ['1st half', 'Live'], true)) {
             return null;
         }
         $record->load(['markets' => fn ($query) => $query->where('market_type', 'HALF_TIME')]);
         $draws = $record->markets->filter(fn ($runner): bool => in_array(strtolower(trim($runner->runner ?? '')), ['the draw', 'draw', 'x'], true)
             && $runner->lay_odds > 1 && $runner->lay_odds <= 1000 && empty($runner->payload['suspended']) && ! in_array($runner->payload['market_status'] ?? 'OPEN', ['SUSPENDED', 'CLOSED'], true) && $runner->updated_at->gt(now()->subMinutes(2)));
-        if ($draws->count() !== 1) {
-            Log::debug('Telegram LTD source has no unique current half-time draw lay quote.', ['message_id' => $message['message_id'], 'match_id' => $record->sports_api_pro_match_id]);
-
-            return null;
+        $context = ['provider' => 'telegram_source', 'draw_lay' => $draws->count() === 1 ? $draws->first()->lay_odds : null];
+        if ($hasMinute) {
+            $context['minute'] = (int) $minute[1];
+            if (str_starts_with($minute[1], '45+')) {
+                $context['minute'] = $minute[1];
+            }
+        }
+        if ($hasScore) {
+            $context['score'] = $score[1].' - '.$score[2];
         }
 
-        return $this->process('ltd', $match, ['draw_lay' => $draws->first()->lay_odds]);
+        return $this->process('ltd', $match, $context);
     }
 
     /** @param array<string, mixed> $match @param array<string, mixed> $context */
@@ -468,7 +480,7 @@ class AlertService
             if ($predicate !== null && ! $predicate($match)) {
                 return null;
             }
-            if ($type === 'ltd' && (($match['result_status'] ?? '') !== 'Live' || (float) ($context['draw_lay'] ?? 0) <= 1 || (float) ($context['draw_lay'] ?? 0) > 1000)) {
+            if ($type === 'ltd' && (($match['result_status'] ?? '') !== 'Live' || (($context['provider'] ?? null) !== 'telegram_source' && ((float) ($context['draw_lay'] ?? 0) <= 1 || (float) ($context['draw_lay'] ?? 0) > 1000)))) {
                 return null;
             }
         } elseif ($customerId === null) {
@@ -804,7 +816,7 @@ class AlertService
             return "⚽️ GOAL DETECTED! | BF MARKETS UPDATE\n\n{$base}\n🔢 New Score: {$score}\n⏱ Time: {$time}' min (1st Half)\n\n✅ Status: ".self::STRATEGY['en'].' Successful!';
         }
         if ($type === 'ltd') {
-            return "🔔 BF MARKETS | ALERT DETECTED\n\n🎯 Filter: ".self::STRATEGY['en']."\n{$base}\n⏱ Time: {$time}' min | Score: {$score}\n📈 1st Half Draw Odds: ".number_format($payload['context']['draw_lay'], 2)."\n\n💡 Risk Tip: Recommended max stake: 10% of bankroll.";
+            return "🔔 BF MARKETS | ALERT DETECTED\n\n🎯 Filter: ".self::STRATEGY['en']."\n{$base}\n⏱ Time: {$time}' min | Score: {$score}\n📈 1st Half Draw Odds: ".(isset($payload['context']['draw_lay']) ? number_format($payload['context']['draw_lay'], 2) : '—')."\n\n💡 Risk Tip: Recommended max stake: 10% of bankroll.";
         }
         if (in_array($type, ['prematch_drops', 'market_shock'], true)) {
             $m = $payload['context']['movement'];

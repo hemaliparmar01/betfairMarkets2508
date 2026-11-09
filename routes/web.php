@@ -176,6 +176,66 @@ Route::post('notifications/telegram/webhook', [NotificationController::class, 'w
     ->withoutMiddleware([StartSession::class, ShareErrorsFromSession::class, CustomerAuthService::class, PreventRequestForgery::class]);
 Route::post('notifications/telegram/source', [NotificationController::class, 'source'])
     ->withoutMiddleware([StartSession::class, ShareErrorsFromSession::class, CustomerAuthService::class, PreventRequestForgery::class]);
+Route::post('notifications/telegram/ltd-preview', function (Request $request) {
+    $alerts = app('App\Services\AlertService');
+    abort_unless(app()->environment('local', 'staging'), 404);
+    $secret = config('services.telegram.source_secret');
+    abort_unless(config('services.telegram.enabled') && filled($secret)
+        && hash_equals($secret, (string) $request->header('X-BF-Source-Secret')), 403);
+
+    $data = $request->validate([
+        'text' => ['sometimes', 'required', 'string', 'max:8192'],
+        'reply_text' => ['nullable', 'string', 'max:8192'],
+    ]);
+
+    if (! isset($data['text'])) {
+        $fixture = app('App\Models\FootballMatch')->newQuery()
+            ->where('result_status', 'Live')
+            ->whereBetween('start_timestamp', [time() - 45 * 60, time()])
+            ->latest('start_timestamp')
+            ->first();
+
+        if ($fixture === null) {
+            return response()->json([
+                'accepted' => false,
+                'message' => 'No recent live fixture found. Supply source text to test manually.',
+            ], 422);
+        }
+
+        $data['text'] = "Match: {$fixture->team1} vs {$fixture->team2}\nLeague: {$fixture->tournament}\nTotal. Over (0.5). 1st half";
+    }
+
+    $database = app('db');
+    $database->beginTransaction();
+
+    try {
+        $id = $alerts->source([
+            ...$data,
+            'source' => config('services.telegram.source_channel'),
+            'message_id' => random_int(1, PHP_INT_MAX),
+            'sent_at' => time(),
+        ]);
+        if ($id === null) {
+            return response()->json([
+                'accepted' => false,
+                'message' => 'Source text did not pass parsing, fixture matching, or alert validation.',
+            ], 422);
+        }
+
+        $payload = json_decode($database->table('alerts')->where('id', $id)->value('payload'), true, flags: JSON_THROW_ON_ERROR);
+
+        return response()->json([
+            'accepted' => true,
+            'type' => $payload['alert_type'],
+            'match_id' => $payload['match_id'],
+            'telegram_preview' => $alerts->text($payload),
+        ]);
+    } finally {
+        $database->rollBack();
+    }
+})->middleware('throttle:5,1')
+    ->withoutMiddleware([StartSession::class, ShareErrorsFromSession::class, CustomerAuthService::class, PreventRequestForgery::class])
+    ->name('notifications.telegram.ltd-preview');
 Route::get('subscriptions', [SubscriptionController::class, 'subscriptions'])->name('subscriptions');
 Route::get('subscriptions-details', [SubscriptionController::class, 'getSubscriptions'])->name('checkout-single');
 Route::get('/guides/feature-request', [FeatureRequestController::class, 'featureRequest'])->name('feature-request');

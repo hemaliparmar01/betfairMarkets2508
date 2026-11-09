@@ -255,7 +255,7 @@ class AlertSystemTest extends TestCase
         $this->assertNull(app(AlertService::class)->source($this->source(str_replace('Over (0.5)', 'Over (1.5)', $text))));
     }
 
-    public function test_source_rejects_ads_other_markets_ambiguous_matches_and_missing_or_stale_odds(): void
+    public function test_source_rejects_ads_and_other_markets_and_accepts_missing_or_stale_odds(): void
     {
         $match = $this->fixture();
         foreach (['Over 1.5', 'Over 2.5', 'Full Time Over 0.5', 'Asian Handicap', '1st Half Over 0.5 bonus deposit', '1st Half Over 0.5 register'] as $market) {
@@ -265,10 +265,14 @@ class AlertSystemTest extends TestCase
         $this->assertNull(app(AlertService::class)->source([...$this->source(), 'source' => 'untrusted']));
         $this->assertNull(app(AlertService::class)->source([...$this->source(), 'sent_at' => time() - 3600]));
         FootballMarket::query()->update(['updated_at' => now()->subMinutes(4)]);
-        $this->assertNull(app(AlertService::class)->source($this->source()));
+        $alertId = app(AlertService::class)->source($this->source());
+        $this->assertNotNull($alertId);
+        $payload = json_decode(DB::table('alerts')->find($alertId)->payload, true);
+        $this->assertNull($payload['context']['draw_lay']);
+        $this->assertStringContainsString('1st Half Draw Odds: —', app(AlertService::class)->text($payload));
         FootballMarket::query()->delete();
-        $this->assertNull(app(AlertService::class)->source($this->source()));
-        $this->assertDatabaseCount('alerts', 0);
+        $this->assertSame($alertId, app(AlertService::class)->source($this->source()));
+        $this->assertDatabaseCount('alerts', 1);
     }
 
     public function test_goal_requires_valid_parent_and_only_reaches_parent_recipients(): void
@@ -1147,7 +1151,7 @@ class AlertSystemTest extends TestCase
         $parent = app(AlertService::class)->source($this->source());
         $this->delivery($parent, $customer);
         DB::table('alert_deliveries')->where('alert_id', $parent)->update(['status' => 'sent']);
-        $goal = $this->source("GOAL! Torino 0-1 Monza 1912 @ 48'");
+        $goal = $this->source("GOAL! Torino 0-1 Monza 1912\n1st Half - 33:38");
         $this->assertNotNull(app(AlertService::class)->source($goal));
         $this->assertNotNull(app(AlertService::class)->source([...$goal, 'text' => "GOAL! Score: 0 - 2 Time: 45+4'", 'reply_text' => $this->source()['text']]));
         $this->assertNull(app(AlertService::class)->source([...$goal, 'text' => "GOAL! Other 0-1 Teams @ 48'"]));

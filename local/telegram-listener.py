@@ -43,6 +43,7 @@ async def main():
         print('Tesseract is unavailable. Telegram image alerts require it.', file=sys.stderr)
 
     @client.on(events.NewMessage(chats=entity, incoming=True))
+    @client.on(events.MessageEdited(chats=entity, incoming=True))
     async def receive(event):
         reply = await event.get_reply_message() if event.is_reply else None
         text = event.raw_text or ''
@@ -69,7 +70,7 @@ async def main():
         if not text.strip():
             return
         payload = json.dumps({'source': source, 'message_id': event.id,
-                              'sent_at': int(event.date.timestamp()),
+                              'sent_at': int((event.edit_date or event.date).timestamp()),
                               'text': text[:8192],
                               'reply_text': (reply.raw_text or '') if reply else None}).encode()
 

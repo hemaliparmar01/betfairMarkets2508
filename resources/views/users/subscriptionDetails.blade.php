@@ -537,7 +537,7 @@
                                             @endif
                                         </div>
 
-                                        @if ((auth('customers')->user()?->country_code === 'GE' ? 'Georgia' : 'International') == 'Georgia')
+                                        @if ((auth('customers')->user()?->country_code === 'GE' ? 'Georgia' : get_current_country()) == 'Georgia')
                                             <div class="space-y-4">
                                                 <div class="checkout-price">
                                                     {{ number_format((float) $plan->price_for_local, 2) }}
@@ -606,7 +606,7 @@
                                         {{ $formatDuration((int) $selectedPlan->duration_days) }}
                                     </p>
                                     <div class="mt-4 flex items-end gap-2">
-                                        @if ((auth('customers')->user()?->country_code === 'GE' ? 'Georgia' : 'International') == 'Georgia')
+                                        @if ((auth('customers')->user()?->country_code === 'GE' ? 'Georgia' : get_current_country()) == 'Georgia')
                                             <span class="text-3xl font-bold theme-text-main">
                                                 {{ number_format((float) $selectedPlan->price_for_local, 2) }}
                                             </span>
@@ -646,7 +646,7 @@
                                 </div>
                                 <div class="checkout-summary-line">
                                     <span>{{ __('Amount') }}</span>
-                                    @if ((auth('customers')->user()?->country_code === 'GE' ? 'Georgia' : 'International') == 'Georgia')
+                                    @if ((auth('customers')->user()?->country_code === 'GE' ? 'Georgia' : get_current_country()) == 'Georgia')
                                         <strong>
                                             {{ number_format((float) $selectedPlan->price_for_local, 2) }}
                                             {{ __('GEL') }}
