@@ -634,7 +634,7 @@ if (! function_exists('ApiCall')) {
                         'curl_errno' => $curlErrorCode,
                         'curl_error' => $curlError !== '' ? $curlError : null,
                         'json_error' => $jsonError,
-                        'response_body' => $body === false ? null : $body,
+                        'response_body' => $body !== false && ($options['log_response_body'] ?? true) ? $body : null,
                     ], $secrets);
                     if ($failed) {
                         Log::warning('API request failed', $diagnostics);
@@ -812,7 +812,7 @@ if (! function_exists('getSportsApiProImage')) {
                         $response = ApiCall("https://api.sportsapipro.com/v2/{$apiSport}/images/{$type}/{$entityId}", [
                             'x-api-key' => GetSportApiProKey(),
                             'Accept' => 'image/png,image/jpeg,image/webp,image/gif',
-                        ], ['connect_timeout' => 3, 'timeout' => 10, 'raw_response' => true, 'follow_redirects' => true], $apiDiagnostics);
+                        ], ['connect_timeout' => 3, 'timeout' => 10, 'raw_response' => true, 'follow_redirects' => true, 'log_response_body' => false], $apiDiagnostics);
                         $contentType = strtolower(trim(explode(';', $response['content_type'])[0]));
                         $extension = ['image/png' => 'png', 'image/jpeg' => 'jpg', 'image/webp' => 'webp', 'image/gif' => 'gif'][$contentType] ?? null;
                         if (! $response['successful'] || $extension === null || $response['body'] === '' || strlen($response['body']) > 5_000_000) {
