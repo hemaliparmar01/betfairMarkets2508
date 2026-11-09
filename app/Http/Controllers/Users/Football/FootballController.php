@@ -44,7 +44,7 @@ class FootballController extends Controller
                 ], 403);
             }
 
-            return view('users.sports.Football.marketActivity', compact('checkAuthAndSubscription'));
+            return view('users.sports.football.marketActivity', compact('checkAuthAndSubscription'));
         }
 
         if ($capture || request()->routeIs('football.pinnacle-odds')) {
@@ -538,7 +538,7 @@ class FootballController extends Controller
 
             $pinnacleLeagueOptions = app(AlertService::class)->pinnacleMonitorLeagueOptions();
 
-            return view('users.sports.Football.marketActivity', compact('pinnacleLeagueOptions', 'pinnacleAlerts', 'pinnacleFeedConnected', 'pinnacleFeeds', 'pinnacleArchive', 'pinnacleArchiveHasMore', 'pinnacleArchiveCursor', 'pinnacleArchiveStart', 'pinnacleArchiveEnd', 'pinnacleArchiveStats'));
+            return view('users.sports.football.marketActivity', compact('pinnacleLeagueOptions', 'pinnacleAlerts', 'pinnacleFeedConnected', 'pinnacleFeeds', 'pinnacleArchive', 'pinnacleArchiveHasMore', 'pinnacleArchiveCursor', 'pinnacleArchiveStart', 'pinnacleArchiveEnd', 'pinnacleArchiveStats'));
         }
 
         $marketActivites = $this->getMarketActivites();
