@@ -337,8 +337,14 @@ class MatchBackup
                     }
                 }
                 unset($match, $previous, $updates, $payload);
+                if ($sport === 'football' && app(FootballMatchCache::class)->active()) {
+                    app(FootballMatchCache::class)->removeCleaned();
+                }
+                if ($sport === 'tennis' && app(TennisMatchCache::class)->active()) {
+                    app(TennisMatchCache::class)->removeCleaned();
+                }
                 if ($matches !== []) {
-                    if ($sport === 'football') {
+                    if ($sport === 'football' || ($sport === 'tennis' && app(TennisMatchCache::class)->active())) {
                         storeInRedis($cacheKey, $matches, 30, false, replace: true);
                     } else {
                         Redis::setex($cacheKey, 1800, json_encode($matches, JSON_THROW_ON_ERROR));

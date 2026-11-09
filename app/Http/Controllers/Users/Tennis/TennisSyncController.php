@@ -6,10 +6,14 @@ use App\Http\Controllers\Controller;
 use App\Models\TennisMarket;
 use App\Models\TennisMatch;
 use App\Services\MatchBackup;
+use App\Services\TennisMatchCache;
 use Carbon\Carbon;
+use Illuminate\Contracts\Cache\LockTimeoutException;
+use Illuminate\Queue\CallQueuedClosure;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Str;
+use Throwable;
 
 class TennisSyncController extends Controller
 {
@@ -50,6 +54,70 @@ class TennisSyncController extends Controller
         }
 
         return $competitions[mb_strtolower($label)] ?? null;
+    }
+
+    /** @return array{string, string}|null */
+    public static function tennisCompetition(array $source): ?array
+    {
+        $tournament = $source['tournament'] ?? '';
+        $names = is_array($tournament)
+            ? [$tournament['uniqueTournament']['name'] ?? '', $tournament['name'] ?? '']
+            : [(string) $tournament];
+        $stored = $source['tennis_competition'] ?? null;
+        if (is_array($stored) && count($stored) === 2
+            && array_key_exists($stored[1], config('services.pinnodds.tennis_priority.'.$stored[0], []))
+            && is_string($tournament) && in_array($tournament, [$stored[1], ...config('services.pinnodds.tennis_priority.'.$stored[0].'.'.$stored[1], [])], true)) {
+            return $stored;
+        }
+        $tour = $source['tournament_tour'] ?? (is_array($tournament) ? ($tournament['category']['name'] ?? $tournament['uniqueTournament']['category']['name'] ?? '') : '');
+        foreach ($names as $name) {
+            if (! is_string($name) || trim($name) === '') {
+                continue;
+            }
+            $name = trim(explode(',', $name, 2)[0]);
+            foreach ([trim($tour.' '.$name), $name] as $label) {
+                $competition = self::pinnacleCompetition($label);
+                if ($competition !== null
+                    && ! (str_starts_with(strtoupper($tour), 'WTA') && str_starts_with($competition[0], 'ATP'))
+                    && ! (str_starts_with(strtoupper($tour), 'ATP') && str_starts_with($competition[0], 'WTA'))) {
+                    return $competition;
+                }
+            }
+            $matches = [];
+            foreach (config('services.pinnodds.tennis_priority', []) as $group => $tournaments) {
+                foreach (array_keys($tournaments) as $canonical) {
+                    if (strcasecmp(Str::ascii($canonical), Str::ascii($name)) === 0
+                        && ($tour === '' || ! preg_match('/^(ATP|WTA)/i', $group, $groupTour)
+                            || str_starts_with(strtoupper($tour), strtoupper($groupTour[1])))) {
+                        $matches[] = [$group, $canonical];
+                    }
+                }
+            }
+            if (count($matches) === 1) {
+                return $matches[0];
+            }
+        }
+
+        return null;
+    }
+
+    public static function tennisCompetitionPriority(array $match): int
+    {
+        $competition = self::tennisCompetition($match);
+        if ($competition === null) {
+            return PHP_INT_MAX;
+        }
+        $rank = 0;
+        foreach (config('services.pinnodds.tennis_priority', []) as $group => $tournaments) {
+            foreach (array_keys($tournaments) as $name) {
+                if ([$group, $name] === $competition) {
+                    return $rank;
+                }
+                $rank++;
+            }
+        }
+
+        return PHP_INT_MAX;
     }
 
     public function syncBetFairLiveData(): array
@@ -382,15 +450,15 @@ class TennisSyncController extends Controller
             $mainArray[$uniqueKey] = $tempArray;
         }
         $changedMatches = array_filter($mainArray, static fn (array $match, string $key): bool => $match != ($getExistingRecords[$key] ?? null), ARRAY_FILTER_USE_BOTH);
-        $this->storeMatchesInDatabase($changedMatches);
-        storeInRedis($cacheKey, $mainArray, $ttlSeconds);
+        storeInRedis($cacheKey, $mainArray, $ttlSeconds, existingData: $getExistingRecords);
+        $this->persistUpdatedMatches($changedMatches);
 
         return $mainArray;
     }
 
     private function readsportApiData(array $payloads, string $cacheKey, bool $isLive, int $ttlSeconds): array
     {
-        $events = $payloads['events'] ?? [];
+        $events = array_filter($payloads['events'] ?? [], static fn (array $event): bool => self::tennisCompetition($event) !== null);
         if (! is_array($events) || $events === []) {
             return [];
         }
@@ -474,6 +542,7 @@ class TennisSyncController extends Controller
 
         return withRedisLock($cacheKey, function () use ($events, $cacheKey, $isLive, $ttlSeconds, $sportsImages): array {
             $matches = getInRedis($cacheKey) ?? [];
+            $existingMatches = $matches;
             $knownIds = array_column($matches, 'sportsApiPro_match_id');
             $missingIds = array_diff(array_column($events, 'id'), $knownIds);
             if ($missingIds !== []) {
@@ -523,10 +592,10 @@ class TennisSyncController extends Controller
                     $changedMatches[$matchKey] = $matches[$matchKey];
                 }
             }
-            $this->storeMatchesInDatabase($changedMatches);
             if ($matches !== []) {
-                storeInRedis($cacheKey, $matches, $ttlSeconds);
+                storeInRedis($cacheKey, $matches, $ttlSeconds, existingData: $existingMatches);
             }
+            $this->persistUpdatedMatches($changedMatches);
 
             return $changedMatches;
         }, 30);
@@ -567,6 +636,14 @@ class TennisSyncController extends Controller
             return false;
         }
         $before = $match;
+        $competition = self::tennisCompetition($event);
+        if ($competition !== null) {
+            $match['tennis_competition'] = $competition;
+        }
+        $tour = $this->eventValue($event, 'tournament.category.name');
+        if (is_string($tour) && $tour !== '') {
+            $match['tournament_tour'] = $tour;
+        }
         $country = $this->eventValue($event, 'tournament.category.country.name')
             ?? $this->eventValue($event, 'tournament.uniqueTournament.category.country.name')
             ?? $this->eventValue($event, 'tournament.country.name')
@@ -700,12 +777,22 @@ class TennisSyncController extends Controller
     {
         $scoreUpdates = [];
         $sourceTimestamp = $sourceTimestamp === null ? null : ($sourceTimestamp < 100000000000 ? $sourceTimestamp * 1000 : $sourceTimestamp);
-        $matches = $cachedMatches ?? getInRedis('Tennis:matches') ?? [];
-        unset($cachedMatches);
         $events = str_starts_with($channel, 'live-scores')
             ? (isset($frameData['id']) || isset($frameData['eventId']) ? [$frameData] : ($frameData['events'] ?? (array_is_list($frameData) ? $frameData : [])))
             : [$frameData];
         preg_match('/^match:(\d+)/', $channel, $channelMatch);
+        $ids = [];
+        foreach ($events as $event) {
+            $id = $event['id'] ?? $event['eventId'] ?? ($channelMatch[1] ?? null);
+            if ($id !== null) {
+                $ids[] = $id;
+            }
+        }
+        $matches = $cachedMatches ?? getInRedis('Tennis:matches', matchIds: $ids) ?? [];
+        $matches = array_filter($matches, static fn (array $match): bool => self::tennisCompetition($match) !== null);
+        $existingMatches = $matches;
+        unset($cachedMatches);
+
         $useEventIndex = count($events) > 1;
         $keysByEvent = [];
         if ($useEventIndex) {
@@ -794,8 +881,8 @@ class TennisSyncController extends Controller
             unset($match);
         }
         if ($changed !== []) {
-            storeInRedis('Tennis:matches', $matches, 30, false);
-            $this->storeMatchesInDatabase($changed);
+            storeInRedis('Tennis:matches', $changed, 30, false, $existingMatches);
+            $this->persistUpdatedMatches($changed);
         }
 
         return $changed !== [];
@@ -824,6 +911,71 @@ class TennisSyncController extends Controller
         $match['away_score_data']['point'] = (string) $point[$homeIsTeam1 ? 'awayPoint' : 'homePoint'];
     }
 
+    private function persistUpdatedMatches(array $matches): void
+    {
+        if (app(TennisMatchCache::class)->active()) {
+            $this->queueMatchPersistence($matches);
+        } else {
+            $this->storeMatchesInDatabase($matches);
+        }
+    }
+
+    private function queueMatchPersistence(array $matches): void
+    {
+        foreach ($matches as $match) {
+            $id = (string) ($match['sportsApiPro_match_id'] ?? '');
+            if (! ctype_digit($id) || (int) $id <= 0) {
+                continue;
+            }
+            $key = 'Tennis:match-persistence:'.$id;
+            $pending = Cache::store('redis')->lock($key, 3600);
+            if (! $pending->get()) {
+                continue;
+            }
+            $owner = $pending->owner();
+            try {
+                dispatch(static function (CallQueuedClosure $job) use ($id, $key, $owner): void {
+                    $lock = Cache::store('redis')->restoreLock($key, $owner);
+                    if (! $lock->isOwnedByCurrentProcess()) {
+                        return;
+                    }
+                    $retrying = false;
+                    $matches = [];
+                    try {
+                        $matches = getInRedis('Tennis:matches', readOnly: true, matchIds: [$id]) ?? [];
+                        app(self::class)->persistMatches($matches);
+                        $latest = getInRedis('Tennis:matches', readOnly: true, matchIds: [$id]) ?? [];
+                        if ($latest !== $matches) {
+                            $retrying = true;
+                            $job->release(1);
+                        }
+                    } catch (LockTimeoutException) {
+                        $retrying = releaseSportsJobAfterLockContention($job);
+                    } catch (Throwable $exception) {
+                        $retrying = $job->attempts() < 3;
+                        throw $exception;
+                    } finally {
+                        if (! $retrying) {
+                            $lock->release();
+                        }
+                    }
+                    if (! $retrying) {
+                        $latest = getInRedis('Tennis:matches', readOnly: true, matchIds: [$id]) ?? [];
+                        if ($latest !== $matches) {
+                            app(self::class)->queueMatchPersistence($latest);
+                        }
+                    }
+                })->name('Tennis match persistence '.$id)->onConnection('sports-realtime')->onQueue('realtime-tennis')
+                    ->catch(static function (Throwable $exception) use ($key, $owner): void {
+                        Cache::store('redis')->restoreLock($key, $owner)->release();
+                    });
+            } catch (Throwable $exception) {
+                $pending->release();
+                throw $exception;
+            }
+        }
+    }
+
     public function persistMatches(array $matches): void
     {
         $this->storeMatchesInDatabase($matches);
@@ -836,6 +988,8 @@ class TennisSyncController extends Controller
 
     private function storeMatchesInDatabase(array $matches): void
     {
+        $matches = array_filter($matches, static fn (array $match): bool => self::tennisCompetition($match) !== null);
+
         if ($matches === []) {
             return;
         }

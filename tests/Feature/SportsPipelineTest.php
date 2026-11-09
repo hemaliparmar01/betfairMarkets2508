@@ -1930,7 +1930,7 @@ PYTHON;
         config(['services.football_fixture_index' => true]);
         $match = ['unique_key' => 'known', 'sportsApiPro_match_id' => '123', 'timestamp' => time() - 1020,
             'current_period_start_timestamp' => time() - 1020, 'result_status' => 'Live', 'minutes_status' => '1st half',
-            'home_score' => 0, 'away_score' => 0, 'team1' => 'Home', 'team2' => 'Away', 'tournament' => 'Test League', 'markets' => []];
+            'home_score' => 0, 'away_score' => 0, 'team1' => 'Home', 'team2' => 'Away', 'tournament' => 'Serie A', 'tournament_country' => 'Italy', 'markets' => []];
         storeInRedis('Football:matches', ['known' => $match]);
         $listener = app(ListenSportsApiPro::class);
         $method = new ReflectionMethod($listener, 'updateFootballCache');
@@ -1978,7 +1978,7 @@ PYTHON;
         config(['services.football_fixture_index' => true]);
         $fixture = ['sportsApiPro_match_id' => 123, 'unique_key' => 'known', 'timestamp' => time() - 120,
             'result_status' => 'Prematch', 'minutes_status' => 'Prematch', 'home_score' => 0, 'away_score' => 0,
-            'team1' => 'Home', 'team2' => 'Away', 'tournament' => 'Test League', 'markets' => []];
+            'team1' => 'Home', 'team2' => 'Away', 'tournament' => 'Serie A', 'tournament_country' => 'Italy', 'markets' => []];
         storeInRedis('Football:matches', ['known' => $fixture, 'other' => [...$fixture, 'unique_key' => 'other', 'sportsApiPro_match_id' => 124]]);
         $listener = app(ListenSportsApiPro::class);
         $config = (new ReflectionClass($listener))->getConstant('SPORTS')['football'];

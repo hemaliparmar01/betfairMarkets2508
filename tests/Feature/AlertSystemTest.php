@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Console\Commands\ListenPinnodds;
+use App\Http\Controllers\Users\Football\FootballSyncController;
 use App\Jobs\ProcessAlert;
 use App\Models\Customer;
 use App\Models\FootballMarket;
@@ -489,10 +490,38 @@ class AlertSystemTest extends TestCase
         $this->assertSame(['ATP Masters 1000', 'Paris Masters'], $drops['tennis']['pinnacle_competition']);
         $this->assertSame(['Italy', 'Serie A'], $drops['verified-id']['pinnacle_competition']);
         $this->assertSame(['Women’s ITF', 'W35'], $drops['itf-with-level']['pinnacle_competition']);
-        $this->assertSame(75, DB::table('pinnacle_league_mappings')->where('sport', 'soccer')->distinct()->get(['country', 'league'])->count());
+        $this->assertSame(77, DB::table('pinnacle_league_mappings')->where('sport', 'soccer')->distinct()->get(['country', 'league'])->count());
         $this->assertDatabaseHas('pinnacle_league_mappings', [
             'provider_league_id' => 2436, 'provider_league_name' => 'Italy - Serie A', 'country' => 'Italy', 'league' => 'Serie A',
         ]);
+    }
+
+    public function test_football_allowlist_requires_country_and_accepts_all_77_competitions(): void
+    {
+        $catalog = config('services.pinnodds.football_priority');
+        $this->assertCount(77, $catalog);
+        foreach ($catalog as [$country, $league]) {
+            $this->assertTrue(FootballSyncController::allowsFootballCompetition([
+                'tournament_country' => $country, 'tournament' => $league,
+            ]), $country.' - '.$league);
+        }
+        foreach ([['Qatar', 'Stars League'], ['Armenia', 'First League'], ['Congo', 'Serie A'], ['', 'Premier League']] as [$country, $league]) {
+            $this->assertFalse(FootballSyncController::allowsFootballCompetition([
+                'tournament_country' => $country, 'tournament' => $league,
+            ]));
+        }
+        $this->assertTrue(FootballSyncController::allowsFootballCompetition([
+            'tournament_country' => 'Chile', 'tournament' => 'Primera Division',
+        ]));
+        $this->assertTrue(FootballSyncController::allowsFootballCompetition([
+            'tournament_country' => 'Paraguay', 'tournament' => 'Primera División',
+        ]));
+        $this->assertFalse(FootballSyncController::allowsFootballCompetition([
+            'tournament_country' => 'Armenia', 'tournament' => 'Primera División',
+        ]));
+        $this->assertSame(['Paraguay', 'Paraguayan Primera División'],
+            FootballSyncController::pinnacleCompetition('Paraguay', 'Primera División'));
+
     }
 
     public function test_pinnacle_monitor_preserves_priority_across_repeated_countries(): void
@@ -505,8 +534,11 @@ class AlertSystemTest extends TestCase
         $this->assertSame('Premier League', $options[14]);
         $this->assertSame('Israeli Premier League', $options[36]);
         $this->assertSame('EFL Championship', $options[37]);
-        $this->assertSame('Qatar Stars League', $options[74]);
-        $this->assertSame('Australian Open', $options[75]);
+        $this->assertSame('Chilean Primera División', $options[74]);
+        $this->assertSame('Paraguayan Primera División', $options[75]);
+        $this->assertSame('Uruguayan Primera División', $options[76]);
+        $this->assertNotContains('Qatar Stars League', $options);
+        $this->assertSame('Australian Open', $options[77]);
         $this->assertLessThan(array_search('Rotterdam Open', $options, true), array_search('ATP Finals', $options, true));
     }
 

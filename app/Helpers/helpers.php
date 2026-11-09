@@ -2,7 +2,10 @@
 
 use App\Http\Controllers\Users\Football\FootballController;
 use App\Http\Controllers\Users\Football\FootballSyncController;
+use App\Http\Controllers\Users\Tennis\TennisSyncController;
+use App\Services\FootballMatchCache;
 use App\Services\MatchBackup;
+use App\Services\TennisMatchCache;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Queue\CallQueuedClosure;
 use Illuminate\Support\Facades\Cache;
@@ -894,7 +897,23 @@ if (! function_exists('storeInRedis')) {
      */
     function storeInRedis(string $cacheKey, array $data, int $ttlMinutes = 10, bool $mergeLifecycle = true, ?array $existingData = null, bool $replace = false, ?array $fixtureSnapshot = null): void
     {
+        if ($cacheKey === 'Tennis:matches') {
+            $data = array_filter($data, static fn (array $match): bool => TennisSyncController::tennisCompetition($match) !== null);
+            if (app(TennisMatchCache::class)->active()) {
+                app(TennisMatchCache::class)->store($data, $ttlMinutes, $mergeLifecycle, $existingData);
+
+                return;
+            }
+        }
         $football = $cacheKey === 'Football:matches';
+        if ($football && app(FootballMatchCache::class)->active()) {
+            app(FootballMatchCache::class)->store($data, $ttlMinutes, $mergeLifecycle, $existingData);
+
+            return;
+        }
+        if ($football) {
+            $data = array_filter($data, [FootballSyncController::class, 'allowsFootballCompetition']);
+        }
         $indexed = $football && config('services.football_fixture_index');
         $cachedData = null;
         $stream = false;
@@ -929,7 +948,11 @@ if (! function_exists('storeInRedis')) {
             }
             unset($cachedData);
             $mergedData = array_replace($existingData, $data);
+            if ($cacheKey === 'Tennis:matches') {
+                $mergedData = array_filter($mergedData, static fn (array $match): bool => TennisSyncController::tennisCompetition($match) !== null);
+            }
             if ($football) {
+                $mergedData = array_filter($mergedData, [FootballSyncController::class, 'allowsFootballCompetition']);
                 $mergedData = app(FootballSyncController::class)->mergeDuplicateMatches($mergedData);
             }
             $sport = MatchBackup::sportForCache($cacheKey);
@@ -1025,7 +1048,7 @@ if (! function_exists('storeInRedis')) {
             $fields = array_flip(['unique_key', 'sportsApiPro_match_id', 'betfair_match_id', 'timestamp', 'result_status', 'minutes_status', 'current_period_start_timestamp', 'added_time', 'tournament', 'tournament_country', 'tournament_id', 'tournament_logo', 'country_id', 'internal_backup', 'provider_lifecycle', 'pinnacle_drop_triggered', 'pinnacle_market_shock_detected_at']);
             $visibleFields = array_flip(['unique_key', 'team1', 'team2', 'home_team_id', 'away_team_id', 'home_team_logo', 'away_team_logo', 'betfair_match_id', 'sportsApiPro_match_id', 'timestamp', 'result_status', 'minutes_status', 'current_period_start_timestamp', 'added_time', 'home_score', 'away_score', 'timeline', 'live_stats', 'live_stats_meta', 'statistics_periods', 'prematch_statistics', 'statistics_requests', 'predictions']);
             $controller = app(FootballController::class);
-            $index['priority_version'] = hash('xxh3', serialize((new ReflectionClass($controller))->getConstant('LEAGUE_PRIORITY')));
+            $index['priority_version'] = hash('xxh3', serialize([config('services.pinnodds.football_priority'), (new ReflectionClass($controller))->getConstant('LEAGUE_PRIORITY')]));
             $previousIndex = $stream ? $fixtureSnapshot : (getInRedis($cacheKey, fixtureIndex: true) ?? []);
             $rows = $stream ? $streamedRows : $mergedData;
             unset($mergedData, $streamedRows);
@@ -1169,6 +1192,32 @@ if (! function_exists('getInRedis')) {
      */
     function getInRedis(string $cacheKey, bool $restoreVisibleFootballTimelines = false, bool $readOnly = false, ?array $matchIds = null, bool $fixtureIndex = false, ?array $snapshot = null, ?array $matchKeys = null, bool $marketActivityIndex = false): mixed
     {
+        if ($cacheKey === 'Tennis:matches' && app(TennisMatchCache::class)->active()) {
+            return $fixtureIndex
+                ? app(TennisMatchCache::class)->index()
+                : app(TennisMatchCache::class)->read($matchIds, $matchKeys, $snapshot);
+        }
+        if ($cacheKey === 'Football:matches' && app(FootballMatchCache::class)->active()) {
+            $records = app(FootballMatchCache::class);
+            if ($fixtureIndex) {
+                return $records->index();
+            }
+            $matches = $records->read($matchIds, $matchKeys, $snapshot);
+            if (! $readOnly || $restoreVisibleFootballTimelines) {
+                $controller = app(FootballSyncController::class);
+                $ids = array_values(array_filter(array_column($matches, 'sportsApiPro_match_id')));
+                $saved = $ids === [] ? collect() : DB::table('football_timeline')->whereIn('match_id', $ids)->get(['match_id', 'timeline'])->keyBy('match_id');
+                foreach ($matches as &$match) {
+                    $timeline = json_decode($saved->get((string) ($match['sportsApiPro_match_id'] ?? ''))->timeline ?? '[]', true) ?? [];
+                    if ($timeline !== []) {
+                        $controller->storeTimeline($match, frameType: 'restore', storedTimeline: $timeline);
+                    }
+                }
+                unset($match);
+            }
+
+            return $matches;
+        }
         if ($cacheKey === 'Football:matches' && ($fixtureIndex || $matchIds !== null || $matchKeys !== null)) {
             $index = $snapshot;
             $encoded = null;
@@ -1193,7 +1242,7 @@ if (! function_exists('getInRedis')) {
                 $marker = "\n".strtr(str_pad(decbin(hexdec(substr(hash('sha256', $encoded), 0, 15))), 64, '0', STR_PAD_LEFT), '01', " \t")."\n";
                 unset($encoded, $metadata);
                 $valid = is_array($index['matches'] ?? null) && is_array($index['orders'] ?? null)
-                    && ($index['priority_version'] ?? null) === hash('xxh3', serialize((new ReflectionClass(FootballController::class))->getConstant('LEAGUE_PRIORITY')))
+                    && ($index['priority_version'] ?? null) === hash('xxh3', serialize([config('services.pinnodds.football_priority'), (new ReflectionClass(FootballController::class))->getConstant('LEAGUE_PRIORITY')]))
                     && $index['marker'] === $marker
                     && Redis::getrange($cacheKey, -66, -1) === $index['marker'];
             }
@@ -1349,6 +1398,12 @@ if (! function_exists('releaseSportsJobAfterLockContention')) {
 if (! function_exists('withRedisLock')) {
     function withRedisLock(string $cacheKey, callable $callback, int $waitSeconds = 5, ?callable $pause = null): mixed
     {
+        if ($cacheKey === 'Tennis:matches' && app(TennisMatchCache::class)->active()) {
+            return $callback();
+        }
+        if ($cacheKey === 'Football:matches' && app(FootballMatchCache::class)->active()) {
+            return $callback();
+        }
         $lock = Cache::store('redis')->lock("{$cacheKey}:write-lock", 30);
         if ($waitSeconds !== 0 && $pause === null) {
             return $lock->block($waitSeconds, $callback);

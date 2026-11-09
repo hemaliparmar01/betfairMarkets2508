@@ -26,7 +26,9 @@ use App\Http\Controllers\Users\Cricket\CricketSyncController;
 use App\Http\Controllers\Users\Football\FootballSyncController;
 use App\Http\Controllers\Users\IceHockey\IceHockeySyncController;
 use App\Http\Controllers\Users\Tennis\TennisSyncController;
+use App\Services\FootballMatchCache;
 use App\Services\MatchBackup;
+use App\Services\TennisMatchCache;
 use Illuminate\Console\Command;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Queue\CallQueuedClosure;
@@ -466,7 +468,8 @@ class ListenSportsApiPro extends Command
                 return $this->updateFootballCache($channel, $frameData, $type, $syncedIds);
             }
 
-            $cachedMatches = $frameIds === [] ? null : (getInRedis($cacheKey) ?? []);
+            $individualTennis = $sport === 'tennis' && app(TennisMatchCache::class)->active();
+            $cachedMatches = $frameIds === [] ? null : (getInRedis($cacheKey, matchIds: $individualTennis ? $frameIds : null) ?? []);
             if ($cachedMatches !== null) {
                 $syncedIds = $this->syncedMatchIds($cacheKey, $frameIds, $cachedMatches);
             }
@@ -706,7 +709,9 @@ class ListenSportsApiPro extends Command
         }
 
         $cacheKey = 'Football:matches';
-        $index = $ids === null ? null : getInRedis($cacheKey, fixtureIndex: true);
+        $index = $ids === null ? null : (app(FootballMatchCache::class)->active()
+            ? ['format' => 4]
+            : getInRedis($cacheKey, fixtureIndex: true));
         $matches = $index === null ? null : getInRedis($cacheKey, readOnly: true, matchIds: $ids, snapshot: $index);
         $fallbackSnapshot = null;
         if ($matches === null) {
@@ -720,6 +725,7 @@ class ListenSportsApiPro extends Command
         if ($matches === []) {
             return false;
         }
+        $matches = array_filter($matches, [FootballSyncController::class, 'allowsFootballCompetition']);
         $existingMatches = $matches;
 
         if ($liveScores) {
@@ -792,7 +798,7 @@ class ListenSportsApiPro extends Command
             }
             unset($match);
         }
-        storeInRedis($cacheKey, $changed, 10, false, $fallbackSnapshot, replace: $index !== null, fixtureSnapshot: $index);
+        storeInRedis($cacheKey, $changed, 10, false, $existingMatches, replace: $index !== null, fixtureSnapshot: $index);
 
         return true;
     }

@@ -90,7 +90,9 @@ trait FootballTrait
         ['Egypt', ['Egyptian Premier League', 'Premier League']],
         ['Morocco', ['Botola Pro', 'Botola']],
         ['UAE', ['UAE Pro League', 'Pro League', 'UAE Arabian Gulf League']],
-        ['Qatar', ['Qatar Stars League', 'Stars League']],
+        ['Chile', ['Chilean Primera División', 'Primera Division']],
+        // ['Paraguay', ['Paraguayan Primera División', 'Division Profesional', 'Primera Division']],
+        ['Uruguay', ['Uruguayan Primera División', 'Primera Division']],
     ];
 
     protected bool $footballHasMore = false;
@@ -311,7 +313,8 @@ trait FootballTrait
         $leaguePriorities = [];
         $getData = array_filter($getData, function (array $match) use ($type, $matchesFilter, &$leaguePriorities): bool {
             if (
-                MatchBackup::isHidden($match, 'football')
+                ! FootballSyncController::allowsFootballCompetition($match)
+                || MatchBackup::isHidden($match, 'football')
                 || ! isset($match['timestamp'])
                 || ! is_numeric($match['sportsApiPro_match_id'] ?? null)
                 || (int) $match['sportsApiPro_match_id'] <= 0
@@ -753,10 +756,21 @@ trait FootballTrait
                 'Saudi Arabia' => ['KSA', 'SAU'], 'Japan' => ['JPN'],
                 'South Korea' => ['KOR', 'Korea Republic', 'Republic of Korea'], 'China' => ['CHN', 'China PR', 'PR China'],
                 'Australia' => ['AUS'], 'South Africa' => ['RSA', 'ZAF'], 'Egypt' => ['EGY'], 'Morocco' => ['MAR'],
-                'UAE' => ['United Arab Emirates', 'ARE'], 'Qatar' => ['QAT'],
+                'UAE' => ['United Arab Emirates', 'ARE'], 'Chile' => ['CHI', 'CHL'], 'Paraguay' => ['PAR', 'PRY'], 'Uruguay' => ['URU', 'URY'],
             ];
             $priorities = [];
-            foreach (self::LEAGUE_PRIORITY as $rank => [$competitionCountry, $leagues]) {
+            $aliases = [];
+            foreach (self::LEAGUE_PRIORITY as [$competitionCountry, $leagues]) {
+                $aliases[$competitionCountry][$normalize($leagues[0])] = $leagues;
+            }
+            foreach (config('services.pinnodds.football_priority', []) as $rank => [$competitionCountry, $competition, $providerAliases]) {
+                $leagues = [$competition, ...($aliases[$competitionCountry][$normalize($competition)] ?? [])];
+                foreach ($providerAliases as $providerAlias) {
+                    $parts = explode(' - ', $providerAlias, 2);
+                    if (isset($parts[1])) {
+                        $leagues[] = $parts[1];
+                    }
+                }
                 foreach ([$competitionCountry, ...($countryAliases[$competitionCountry] ?? [])] as $countryAlias) {
                     $countryKey = $normalize($countryAlias);
                     foreach ($leagues as $league) {
@@ -1101,7 +1115,7 @@ trait FootballTrait
             return null;
         }
 
-        if (MatchBackup::isHidden($match, 'football')) {
+        if (! FootballSyncController::allowsFootballCompetition($match) || MatchBackup::isHidden($match, 'football')) {
             return null;
         }
         // $match = prepareMatchOddsMonitoring($match);
@@ -1190,7 +1204,7 @@ trait FootballTrait
         if (($index['market_activity'] ?? null) !== 1) {
             $index = null;
         }
-        $getData = $index['matches'] ?? getInRedis('Football:matches', readOnly: true) ?? [];
+        $getData = array_filter($index['matches'] ?? getInRedis('Football:matches', readOnly: true) ?? [], [FootballSyncController::class, 'allowsFootballCompetition']);
         if (request()->filled('match')) {
             $matchId = (string) request()->query('match');
             if (isset($index['ids'][$matchId])) {

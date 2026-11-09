@@ -1188,7 +1188,7 @@ class FootballSyncController extends Controller
         $queued = [];
         $index = getInRedis('Football:matches', fixtureIndex: true, marketActivityIndex: true);
         $indexed = ($index['statistics_schedule'] ?? null) === 2;
-        foreach ($indexed ? $index['matches'] : (json_decode(Redis::get('Football:matches') ?? '[]', true) ?? []) as $match) {
+        foreach ($indexed ? $index['matches'] : (getInRedis('Football:matches', readOnly: true) ?? []) as $match) {
             $matchId = (string) ($match['sportsApiPro_match_id'] ?? '');
             if (! ctype_digit($matchId) || (int) $matchId <= 0 || isset($queued[$matchId]) || ! in_array($match['result_status'] ?? '', ['Prematch', 'Live'], true) || MatchBackup::isHidden($match, 'football')) {
                 continue;
@@ -1373,12 +1373,13 @@ class FootballSyncController extends Controller
                 $matches = $index === null ? null : getInRedis('Football:matches', readOnly: true, matchIds: [$matchId], snapshot: $index);
                 if ($matches === null) {
                     $index = null;
-                    $matches = json_decode(Redis::get('Football:matches') ?? '[]', true) ?? [];
+                    $matches = getInRedis('Football:matches', readOnly: true) ?? [];
                 }
                 $key = array_find_key($matches, static fn (array $match): bool => (string) ($match['sportsApiPro_match_id'] ?? '') === $matchId && ! MatchBackup::isHidden($match, 'football'));
                 if ($key === null) {
                     return null;
                 }
+                $beforeUpdate = $matches;
                 foreach ($responses as $section => $response) {
                     if ($section === 'statistics') {
                         $this->applyMatchStatistics($matches[$key], $response['data'], $response['at']);
@@ -1387,7 +1388,7 @@ class FootballSyncController extends Controller
                     }
                 }
                 $matches[$key]['statistics_requests'] = array_replace($matches[$key]['statistics_requests'] ?? [], $attempts);
-                storeInRedis('Football:matches', $matches, 10, false, replace: true, fixtureSnapshot: $index);
+                storeInRedis('Football:matches', $matches, 10, false, $beforeUpdate, replace: true, fixtureSnapshot: $index);
 
                 return $matches[$key];
             });
@@ -1495,6 +1496,17 @@ class FootballSyncController extends Controller
         }
 
         return $changed !== [];
+    }
+
+    public static function allowsFootballCompetition(array $match): bool
+    {
+        static $controller = null;
+        $controller ??= app(FootballController::class);
+
+        return $controller->footballLeaguePriority(
+            (string) ($match['tournament'] ?? ''),
+            $match['tournament_country'] ?? null,
+        ) !== PHP_INT_MAX;
     }
 
     /** @return array{string, string}|null */
@@ -1887,6 +1899,10 @@ class FootballSyncController extends Controller
 
     private function readsportApiData(array $payloads, string $cacheKey, bool $isLive, int $ttlSeconds): array
     {
+        $payloads['events'] = array_filter($payloads['events'] ?? [], static fn (array $event): bool => self::allowsFootballCompetition([
+            'tournament' => $event['tournament']['name'] ?? '',
+            'tournament_country' => $event['tournament']['category']['name'] ?? null,
+        ]));
         if (empty($payloads)) {
             return [];
         }

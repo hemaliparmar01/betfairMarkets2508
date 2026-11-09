@@ -1,6 +1,8 @@
 <?php
 
 return [
+    'tennis_match_cache' => (bool) env('TENNIS_MATCH_CACHE', true),
+    'football_match_cache' => (bool) env('FOOTBALL_MATCH_CACHE', true),
     'football_fixture_index' => (bool) env('FOOTBALL_FIXTURE_INDEX', true),
     'paypal' => [
         'base_url' => env('PAYPAL_BASE_URL', env('PAYPAL_MODE', 'sandbox') === 'live' ? 'https://api-m.paypal.com' : 'https://api-m.sandbox.paypal.com'),
@@ -113,7 +115,9 @@ return [
             ['Egypt', 'Egyptian Premier League', ['Egypt - Premier League']],
             ['Morocco', 'Botola Pro', []],
             ['UAE', 'UAE Pro League', ['UAE - Pro League']],
-            ['Qatar', 'Qatar Stars League', ['Qatar - Stars League']],
+            ['Chile', 'Chilean Primera División', ['Chile - Primera Division']],
+            // ['Paraguay', 'Paraguayan Primera División', ['Paraguay - Division Profesional', 'Paraguay - Primera Division', 'Paraguay - Primera División']],
+            ['Uruguay', 'Uruguayan Primera División', ['Uruguay - Primera Division']],
         ],
         'tennis_priority' => [
             'Grand Slam' => [

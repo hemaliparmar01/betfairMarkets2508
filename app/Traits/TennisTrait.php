@@ -2,6 +2,7 @@
 
 namespace App\Traits;
 
+use App\Http\Controllers\Users\Tennis\TennisSyncController;
 use App\Models\Favorite;
 use App\Models\PredictionVote;
 use App\Models\TennisMatch;
@@ -29,12 +30,16 @@ trait TennisTrait
             abort_unless($checkAuthAndSubscription['display_odds'], 403, __('An active 7-day free trial or paid subscription is required to use smart filters.'));
         }
 
-        $visibleMatches = getVisibleSportsMatches('Tennis:matches');
+        $type = request()->input('type', 'all');
+        $index = in_array($type, ['all', 'live', 'upcoming', 'finished', 'favorites', 'by_time'], true)
+            ? getInRedis('Tennis:matches', fixtureIndex: true)
+            : null;
+        $visibleMatches = array_filter($index['matches'] ?? getVisibleSportsMatches('Tennis:matches'), static fn (array $match): bool => TennisSyncController::tennisCompetition($match) !== null && ! MatchBackup::isHidden($match, 'tennis'));
+
         $customerId = request()->user('customers')?->getAuthIdentifier();
         $favoriteKeys = $customerId === null ? [] : array_fill_keys(Favorite::query()->where('sport', 'tennis')->where('customer_id', $customerId)->pluck('event_key')->all(), true);
         $timezone = getCurrentUserTimezone();
         $today = Carbon::now($timezone)->toDateString();
-        $type = request()->input('type', 'all');
         $matches = array_filter($visibleMatches, static function (array $match) use ($today, $timezone, $type, $favoriteKeys): bool {
             if (($match['data_sync_complete'] ?? false) !== true || ! isset($match['sportsApiPro_match_id'], $match['timestamp'])) {
                 return false;
@@ -67,6 +72,10 @@ trait TennisTrait
             if ($type === 'by_time') {
                 return (int) $left['timestamp'] <=> (int) $right['timestamp'];
             }
+            $priority = ($left['_fixture_priority'] ?? TennisSyncController::tennisCompetitionPriority($left)) <=> ($right['_fixture_priority'] ?? TennisSyncController::tennisCompetitionPriority($right));
+            if ($priority !== 0) {
+                return $priority;
+            }
             $order = ['Live' => 0, 'Prematch' => 1, 'Finished' => 2];
 
             return (($order[$left['result_status']] ?? 3) <=> ($order[$right['result_status']] ?? 3)) ?: ((int) $left['timestamp'] <=> (int) $right['timestamp']);
@@ -77,8 +86,14 @@ trait TennisTrait
         $this->tennisHasMore = $offset + $perPage < count($matches);
         $this->tennisNextPage = $this->tennisHasMore ? $page + 1 : null;
         $matches = array_slice($matches, $offset, $perPage);
+        $pageMatches = $index === null ? $visibleMatches : getInRedis(
+            'Tennis:matches', readOnly: true, matchKeys: array_column($matches, 'unique_key'), snapshot: $index,
+        );
+        if ($index !== null) {
+            $matches = array_values(array_filter(array_map(static fn (array $entry): ?array => $pageMatches[$entry['unique_key']] ?? null, $matches)));
+        }
         if ($matchesById !== null) {
-            $matchesById = array_intersect_key($visibleMatches, array_fill_keys(array_column($matches, 'unique_key'), true));
+            $matchesById = array_intersect_key($pageMatches, array_fill_keys(array_column($matches, 'unique_key'), true));
         }
         unset($visibleMatches);
         $matchIds = array_map(static fn (array $match): string => (string) $match['sportsApiPro_match_id'], $matches);
@@ -197,7 +212,7 @@ trait TennisTrait
     public function getTennisMatchDetail(string $matchId): ?array
     {
         // $match = array_find(getVisibleSportsMatches('Tennis:matches') ?? [], static fn (array $match): bool => (string) ($match['sportsApiPro_match_id'] ?? '') === $matchId && ($match['data_sync_complete'] ?? false) === true);
-        $match = array_find(getInRedis('Tennis:matches') ?? [], static fn (array $candidate): bool => (string) ($candidate['sportsApiPro_match_id'] ?? '') === $matchId && ! MatchBackup::isHidden($candidate, 'tennis'));
+        $match = array_find(getInRedis('Tennis:matches', matchIds: [$matchId]) ?? [], static fn (array $candidate): bool => (string) ($candidate['sportsApiPro_match_id'] ?? '') === $matchId && ! MatchBackup::isHidden($candidate, 'tennis'));
         if ($match === null) {
             $stored = TennisMatch::query()->with('markets')->where('sports_api_pro_match_id', $matchId)
                 // ->where('data_sync_complete', true)
@@ -215,7 +230,7 @@ trait TennisTrait
                 $match[$logo] = $images && is_file($images[0]) ? '/images/tennis/teams/'.basename($images[0]) : null;
             }
         }
-        if (MatchBackup::isHidden($match, 'tennis')) {
+        if (TennisSyncController::tennisCompetition($match) === null || MatchBackup::isHidden($match, 'tennis')) {
             return null;
         }
         // $match = prepareMatchOddsMonitoring($match);

@@ -266,6 +266,11 @@ class ListenPinnodds extends Command
         $mappings = DB::table('pinnacle_league_mappings')->whereNotNull('provider_league_id')->get();
         foreach ($mappings as $mapping) {
             $competition = [$mapping->country, $mapping->league];
+            if ($mapping->sport === 'soccer' && ! FootballSyncController::allowsFootballCompetition([
+                'tournament_country' => $mapping->country, 'tournament' => $mapping->league,
+            ])) {
+                continue;
+            }
             $this->leagueMappings[$mapping->sport]['id:'.$mapping->provider_league_id] = $competition;
             if ($mapping->provider_league_name !== null) {
                 $this->leagueMappings[$mapping->sport]['name:'.mb_strtolower($mapping->provider_league_name)] = $competition;
@@ -347,7 +352,7 @@ class ListenPinnodds extends Command
                 $mode = $alert['feed'] ?? (($alert['is_live'] ?? false) ? 'live' : 'prematch');
                 $alerts = array_replace($alerts, $this->normalizeDrops([$alert], $mode));
             }
-            $legacyAlerts = array_filter($alerts, static fn (array $alert): bool => ! isset($alert['pinnacle_competition']));
+            $legacyAlerts = array_filter($alerts, static fn (array $alert): bool => ! isset($alert['pinnacle_competition']) || (($alert['sport'] ?? '') === 'soccer' && ! FootballSyncController::allowsFootballCompetition(['tournament_country' => $alert['pinnacle_competition'][0], 'tournament' => $alert['pinnacle_competition'][1]])));
             $alerts = array_replace(array_diff_key($alerts, $legacyAlerts), $this->filterCompetitions($legacyAlerts));
             $receivedAt = microtime(true);
             $monitorDrops = $pending;
