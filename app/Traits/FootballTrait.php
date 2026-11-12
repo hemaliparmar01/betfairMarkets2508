@@ -736,14 +736,14 @@ trait FootballTrait
         $normalize = static fn (string $name): string => strtolower((string) preg_replace('/[^a-z0-9]+/i', '', Str::ascii($name)));
         $country = $normalize($country ?? '');
         $name = $normalize($tournament);
-        if ($country === '' || $name === '') {
+        if ($name === '') {
             return PHP_INT_MAX;
         }
 
         static $priorities = null;
         if ($priorities === null) {
             $countryAliases = [
-                'FIFA' => ['World', 'International'], 'UEFA' => ['Europe'],
+                'FIFA' => ['World', 'International'], 'UEFA' => ['Europe'], 'World' => ['International', 'FIFA'],
                 'England' => ['ENG'], 'Spain' => ['ESP', 'España'], 'Italy' => ['ITA', 'Italia'],
                 'Germany' => ['GER', 'DEU', 'Deutschland'], 'France' => ['FRA'], 'Portugal' => ['POR', 'PRT'],
                 'Netherlands' => ['NED', 'NLD', 'Holland'], 'Turkey' => ['TUR', 'Türkiye'],
@@ -789,7 +789,7 @@ trait FootballTrait
             }
         }
 
-        return $priorities[$country][$name] ?? PHP_INT_MAX;
+        return $priorities[$country][$name] ?? (preg_match('/uefa|fifa|friendl/', $name) ? 0 : PHP_INT_MAX);
     }
 
     public function footballTimeline(array $match, array $timeline): array

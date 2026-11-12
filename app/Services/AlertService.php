@@ -80,7 +80,9 @@ class AlertService
         $country = trim((string) (is_array($country) ? ($country['name'] ?? '') : $country));
         $parts = explode(' - ', $label, 2);
         if (isset($parts[1])) {
-            if ($country !== '' && strcasecmp($country, trim($parts[0])) !== 0) {
+            if ($country !== '' && strcasecmp($country, trim($parts[0])) !== 0
+                && ! in_array(strtolower(trim($parts[0])), ['uefa', 'europe', 'fifa', 'world', 'international'], true)
+                && ! preg_match('/uefa|fifa|friendl/i', $parts[1])) {
                 return null;
             }
             [$country, $label] = array_map('trim', $parts);

@@ -1522,7 +1522,8 @@ class FootballSyncController extends Controller
             }
         }
 
-        return $competitions[mb_strtolower($country.' - '.$league)] ?? null;
+        return $competitions[mb_strtolower($country.' - '.$league)]
+            ?? (preg_match('/uefa|fifa|friendl/i', $league) ? [$country !== '' ? $country : 'World', $league] : null);
     }
 
     /** @param list<array<string, mixed>> $alerts */
