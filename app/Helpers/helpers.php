@@ -1049,8 +1049,11 @@ if (! function_exists('storeInRedis')) {
             $fields = array_flip(['unique_key', 'sportsApiPro_match_id', 'betfair_match_id', 'timestamp', 'result_status', 'minutes_status', 'current_period_start_timestamp', 'added_time', 'tournament', 'tournament_country', 'tournament_id', 'tournament_logo', 'country_id', 'internal_backup', 'provider_lifecycle', 'pinnacle_drop_triggered', 'pinnacle_market_shock_detected_at']);
             $visibleFields = array_flip(['unique_key', 'team1', 'team2', 'home_team_id', 'away_team_id', 'home_team_logo', 'away_team_logo', 'betfair_match_id', 'sportsApiPro_match_id', 'timestamp', 'result_status', 'minutes_status', 'current_period_start_timestamp', 'added_time', 'home_score', 'away_score', 'timeline', 'live_stats', 'live_stats_meta', 'statistics_periods', 'prematch_statistics', 'statistics_requests', 'predictions']);
             $controller = app(FootballController::class);
-            $index['priority_version'] = hash('xxh3', serialize([config('services.pinnodds.football_priority'), (new ReflectionClass($controller))->getConstant('LEAGUE_PRIORITY')]));
+            $index['priority_version'] = hash('xxh3', serialize(['live-first', config('services.pinnodds.football_priority'), (new ReflectionClass($controller))->getConstant('LEAGUE_PRIORITY')]));
             $previousIndex = $stream ? $fixtureSnapshot : (getInRedis($cacheKey, fixtureIndex: true) ?? []);
+            if (($previousIndex['priority_version'] ?? null) !== $index['priority_version']) {
+                $previousIndex = [];
+            }
             $rows = $stream ? $streamedRows : $mergedData;
             unset($mergedData, $streamedRows);
             $isList = array_is_list($rows);
@@ -1073,7 +1076,7 @@ if (! function_exists('storeInRedis')) {
                             $canonical = $canonical && ! isset($index['ids'][$id]);
                             $index['ids'][$id] = $matchKey;
                         }
-                        $sortFields[$matchKey] = [$entry['_fixture_priority'], $entry['timestamp'] ?? 0, $entry['tournament_id'] ?? null, $entry['tournament_country'] ?? null, $entry['tournament'] ?? ''];
+                        $sortFields[$matchKey] = [$entry['result_status'] ?? null, $entry['_fixture_priority'], $entry['timestamp'] ?? 0, $entry['tournament_id'] ?? null, $entry['tournament_country'] ?? null, $entry['tournament'] ?? ''];
                         unset($rows[$matchKey]);
 
                         continue;
@@ -1135,7 +1138,7 @@ if (! function_exists('storeInRedis')) {
                     $canonical = $canonical && ! isset($index['ids'][$id]);
                     $index['ids'][$id] = $matchKey;
                 }
-                $sortFields[$matchKey] = [$entry['_fixture_priority'], $entry['timestamp'] ?? 0, $entry['tournament_id'] ?? null, $entry['tournament_country'] ?? null, $entry['tournament'] ?? ''];
+                $sortFields[$matchKey] = [$entry['result_status'] ?? null, $entry['_fixture_priority'], $entry['timestamp'] ?? 0, $entry['tournament_id'] ?? null, $entry['tournament_country'] ?? null, $entry['tournament'] ?? ''];
                 unset($rows[$matchKey], $match, $previous);
             }
             unset($row, $rows, $cachedData, $data, $savedTimelines, $json);
@@ -1161,7 +1164,9 @@ if (! function_exists('storeInRedis')) {
                         $competition = $mode === 'competition' && $priority === 0
                             ? strcmp((string) ($first['tournament_id'] ?? ($first['tournament_country'] ?? '').'|'.($first['tournament'] ?? '')), (string) ($second['tournament_id'] ?? ($second['tournament_country'] ?? '').'|'.($second['tournament'] ?? ''))) : 0;
 
-                        return $mode === 'time' ? ($time ?: $priority) : ($priority ?: $competition ?: $time);
+                        $liveComparison = (($second['result_status'] ?? null) === 'Live') <=> (($first['result_status'] ?? null) === 'Live');
+
+                        return $liveComparison ?: ($mode === 'time' ? ($time ?: $priority) : ($priority ?: $competition ?: $time));
                     });
                     $index['orders'][$mode] = array_keys($ordered);
                 }
@@ -1243,7 +1248,7 @@ if (! function_exists('getInRedis')) {
                 $marker = "\n".strtr(str_pad(decbin(hexdec(substr(hash('sha256', $encoded), 0, 15))), 64, '0', STR_PAD_LEFT), '01', " \t")."\n";
                 unset($encoded, $metadata);
                 $valid = is_array($index['matches'] ?? null) && is_array($index['orders'] ?? null)
-                    && ($index['priority_version'] ?? null) === hash('xxh3', serialize([config('services.pinnodds.football_priority'), (new ReflectionClass(FootballController::class))->getConstant('LEAGUE_PRIORITY')]))
+                    && ($index['priority_version'] ?? null) === hash('xxh3', serialize(['live-first', config('services.pinnodds.football_priority'), (new ReflectionClass(FootballController::class))->getConstant('LEAGUE_PRIORITY')]))
                     && $index['marker'] === $marker
                     && Redis::getrange($cacheKey, -66, -1) === $index['marker'];
             }

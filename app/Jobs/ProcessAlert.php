@@ -47,7 +47,7 @@ class ProcessAlert implements ShouldBeUnique, ShouldQueue
                 $from = (float) ($drop['from_price'] ?? 0);
                 $to = (float) ($drop['to_price'] ?? 0);
                 $at = (int) ($drop['alerted'] ?? 0);
-                if (! is_finite($from) || ! is_finite($to) || $from <= 1 || $to <= 1 || round(($from - $to) / $from * 100, 8) < 5
+                if (! is_finite($from) || ! is_finite($to) || $from <= 1 || $to <= 1 || $to >= $from
                     || $at < $dayStart || $at > $now->timestamp + 30) {
                     continue;
                 }
@@ -103,7 +103,7 @@ class ProcessAlert implements ShouldBeUnique, ShouldQueue
             $alerts->scan();
         } elseif ($this->task === 'pinnacle') {
             foreach ($this->data['alerts'] ?? [] as $drop) {
-                if (is_array($drop)) {
+                if (is_array($drop) && (empty($this->data['mapped_notifications_only']) || isset($drop['pinnacle_competition']))) {
                     $drop['archive_parent'] ??= $this->data['parents'][$drop['sport'] ?? 'other'][$drop['parent_id'] ?? ''] ?? null;
                     $alerts->process('prematch_drops', [], ['pinnacle' => $drop]);
                 }

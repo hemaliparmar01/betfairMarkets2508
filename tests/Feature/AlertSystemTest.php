@@ -592,10 +592,12 @@ class AlertSystemTest extends TestCase
                 'from_price' => 2, 'to_price' => 1.8, 'alerted' => $now - $age];
         }
         $cached = json_encode(['alerts' => $drops, 'signals' => $drops]);
-        Redis::shouldReceive('get')->with('Pinnacle:drops')->andReturn($cached);
+        Redis::shouldReceive('get')->with('Pinnacle:drops')->andReturnUsing(function () use (&$cached): string {
+            return $cached;
+        });
         Redis::shouldReceive('get')->with('Football:matches')->andReturnNull();
-        Redis::shouldReceive('set')->with('Pinnacle:drops', \Mockery::capture($stored))->once()->andReturnTrue();
-        Redis::shouldReceive('expire')->with('Pinnacle:drops', 10800)->once()->andReturnTrue();
+        Redis::shouldReceive('set')->with('Pinnacle:drops', \Mockery::capture($stored))->times(3)->andReturnTrue();
+        Redis::shouldReceive('expire')->with('Pinnacle:drops', 10800)->times(3)->andReturnTrue();
 
         (new ReflectionMethod(ListenPinnodds::class, 'storeDrops'))->invoke($command, [], []);
 
@@ -605,6 +607,19 @@ class AlertSystemTest extends TestCase
         $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', 1);
         Bus::assertNothingDispatched();
         Http::assertNothingSent();
+
+        $delayed = array_replace($drops[2], ['id' => 4, 'alerted' => $now - 14400]);
+        $pending = (new ReflectionMethod(ListenPinnodds::class, 'normalizeDrops'))->invoke($command, [$delayed], 'prematch');
+        $store = new ReflectionMethod(ListenPinnodds::class, 'storeDrops');
+        $store->invoke($command, $pending, []);
+
+        $payload = json_decode($stored, true);
+        $this->assertSame([4, 1], array_column($payload['alerts'], 'id'));
+        $this->assertSame([1, 2, 3], array_column($payload['signals'], 'id'));
+        $this->assertGreaterThanOrEqual($now, $payload['alerts'][0]['monitor_received_at']);
+        $cached = $stored;
+        $store->invoke($command, $pending, []);
+        $this->assertSame($payload['alerts'][0]['monitor_received_at'], json_decode($stored, true)['alerts'][0]['monitor_received_at']);
     }
 
     public function test_pinnacle_archive_retains_all_markets_and_sports_once_without_enabling_notifications(): void

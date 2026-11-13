@@ -28,7 +28,7 @@ trait FootballTrait
         ['UEFA', ['UEFA Europa League Qualifiers', 'UEFA Europa League Qualification', 'Europa League Qualifiers', 'Europa League Qualification']],
         ['UEFA', ['UEFA Conference League', 'UEFA Europa Conference League', 'Conference League', 'Europa Conference League']],
         ['UEFA', ['UEFA Conference League Qualifiers', 'UEFA Conference League Qualification', 'UEFA Europa Conference League Qualifiers', 'UEFA Europa Conference League Qualification', 'Conference League Qualifiers', 'Conference League Qualification', 'Europa Conference League Qualification']],
-        ['UEFA', ['UEFA Nations League', 'Nations League']],
+        ['UEFA', ['UEFA Nations League', 'Nations League', 'Nations League League A', 'Nations League League B', 'Nations League League C', 'Nations League League D']],
         ['UEFA', ['UEFA Super Cup', 'European Super Cup']],
         ['England', ['Premier League', 'English Premier League']],
         ['Spain', ['La Liga', 'Spanish La Liga', 'Primera Division']],
@@ -355,9 +355,11 @@ trait FootballTrait
                     ? strcmp((string) ($first['tournament_id'] ?? ($first['tournament_country'] ?? '').'|'.$first['tournament']), (string) ($second['tournament_id'] ?? ($second['tournament_country'] ?? '').'|'.$second['tournament']))
                     : 0;
 
-                return $sortByTime
+                $liveComparison = (($second['result_status'] ?? null) === 'Live') <=> (($first['result_status'] ?? null) === 'Live');
+
+                return $liveComparison ?: ($sortByTime
                     ? ($timeComparison ?: $priorityComparison)
-                    : ($priorityComparison ?: $competitionComparison ?: $timeComparison);
+                    : ($priorityComparison ?: $competitionComparison ?: $timeComparison));
             });
         }
         $getData = array_slice($getData, $offset, $perPage);
@@ -471,6 +473,9 @@ trait FootballTrait
             }
             $tournamentName = $data['tournament'];
             $leagueKey = 'competition:'.($data['tournament_id'] ?? ($data['tournament_country'] ?? '').'|'.$tournamentName);
+            if ($data['result_status'] === 'Live') {
+                $leagueKey .= '|live';
+            }
             if ($type === 'by_time') {
                 $leagueKey .= '|'.$data['timestamp'];
             }
@@ -738,6 +743,15 @@ trait FootballTrait
         $name = $normalize($tournament);
         if ($name === '') {
             return PHP_INT_MAX;
+        }
+
+        if (preg_match('/^(?:europe)?(?:uefa)?nationsleague(?:league)?([a-d])(?:(?:group|gr)\d+)?$/D', $name, $division)
+            && (str_contains($name, 'uefa') || in_array($country, ['', 'europe', 'uefa', 'world', 'international'], true))) {
+            return ord($division[1]) - ord('a') - 5;
+        }
+        if (in_array($name, ['uefanationsleague', 'nationsleague'], true)
+            && ($name === 'uefanationsleague' || in_array($country, ['europe', 'uefa'], true))) {
+            return -1;
         }
 
         static $priorities = null;

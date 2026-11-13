@@ -58,7 +58,7 @@ trait HorseRacingTrait
             $right = $second['market_indicators'][$second['betfair_match_id'].'_WIN'] ?? [];
 
             return ($bucket($first) <=> $bucket($second))
-                ?: (($strength[$left['momentum'] ?? 'neutral']) <=> ($strength[$right['momentum'] ?? 'neutral']))
+                ?: (($strength[$left['momentum'] ?? 'neutral'] ?? $strength['neutral']) <=> ($strength[$right['momentum'] ?? 'neutral'] ?? $strength['neutral']))
                 ?: (($right['liquidity'] ?? 0) <=> ($left['liquidity'] ?? 0))
                 ?: ($first['timestamp'] <=> $second['timestamp']);
         });

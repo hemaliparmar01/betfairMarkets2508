@@ -80,7 +80,7 @@ class ListenPinnodds extends Command
                 return;
             }
             try {
-                if (app(FootballSyncController::class)->mergePinnacleDrops(array_values($pending), deferIfBusy: true)) {
+                if (app(FootballSyncController::class)->mergePinnacleDrops(array_values(array_filter($pending, static fn (array $drop): bool => isset($drop['pinnacle_competition']) && $drop['drop_pct'] >= 1)), deferIfBusy: true)) {
                     $pending = [];
                 }
             } catch (Throwable $e) {
@@ -138,7 +138,7 @@ class ListenPinnodds extends Command
                     $feeds[$mode]['status'] = 'connecting';
                     $dirty = true;
                     try {
-                        $request = new Request(rtrim((string) config('services.pinnodds.url'), '/').$path.'?min_drop='.($mode === 'prematch' ? 1 : 5));
+                        $request = new Request(rtrim((string) config('services.pinnodds.url'), '/').$path);
                         $request->setHeader('x-api-key', $key);
                         $request->setHeader('Accept', 'text/event-stream');
                         $request->setTcpConnectTimeout(5);
@@ -191,7 +191,8 @@ class ListenPinnodds extends Command
                                     if (isset($frame['type'])) {
                                         continue;
                                     }
-                                    $drops = $this->filterCompetitions($this->normalizeDrops($frame, $mode));
+                                    $drops = $this->normalizeDrops($frame, $mode);
+                                    $drops = array_replace($drops, $this->filterCompetitions($drops));
                                     if ($drops !== []) {
                                         $pending = array_replace($pending, $drops);
                                         $dirty = true;
@@ -237,7 +238,7 @@ class ListenPinnodds extends Command
             }
             $from = (float) ($drop['from_price'] ?? 0);
             $to = (float) ($drop['to_price'] ?? 0);
-            if (! is_finite($from) || ! is_finite($to) || $from <= 1 || $to <= 1 || round((($from - $to) / $from) * 100, 8) < ($mode === 'prematch' ? 1 : 5)) {
+            if (! is_finite($from) || ! is_finite($to) || $from <= 1 || $to <= 1 || $to >= $from) {
                 continue;
             }
             $alerted = is_numeric($drop['alerted'] ?? null) ? (int) $drop['alerted'] : time();
@@ -352,20 +353,18 @@ class ListenPinnodds extends Command
                 $mode = $alert['feed'] ?? (($alert['is_live'] ?? false) ? 'live' : 'prematch');
                 $alerts = array_replace($alerts, $this->normalizeDrops([$alert], $mode));
             }
-            $legacyAlerts = array_filter($alerts, static fn (array $alert): bool => ! isset($alert['pinnacle_competition']) || (($alert['sport'] ?? '') === 'soccer' && ! FootballSyncController::allowsFootballCompetition(['tournament_country' => $alert['pinnacle_competition'][0], 'tournament' => $alert['pinnacle_competition'][1]])));
-            $alerts = array_replace(array_diff_key($alerts, $legacyAlerts), $this->filterCompetitions($legacyAlerts));
             $receivedAt = microtime(true);
             $monitorDrops = $pending;
             foreach ($monitorDrops as $key => &$drop) {
-                $drop['monitor_received_at'] = $alerts[$key]['monitor_received_at'] ?? $alerts[$key]['alerted'] ?? $receivedAt;
+                $drop['monitor_received_at'] = $alerts[$key]['monitor_received_at'] ?? $receivedAt;
             }
             unset($drop);
-            $alerts = array_filter(array_replace($alerts, $monitorDrops), static fn (array $alert): bool => (int) ($alert['alerted'] ?? 0) >= time() - 10800);
-            uasort($alerts, static fn (array $left, array $right): int => (int) $right['alerted'] <=> (int) $left['alerted']);
-            $signals = array_values(array_slice($alerts, 0, 5000, true));
+            $alerts = array_replace($alerts, $monitorDrops);
+            $signals = array_filter($alerts, static fn (array $alert): bool => (int) ($alert['alerted'] ?? 0) >= $receivedAt - 10800);
+            uasort($signals, static fn (array $left, array $right): int => (int) $right['alerted'] <=> (int) $left['alerted']);
+            $signals = array_values(array_slice($signals, 0, 5000, true));
             $dashboardCutoff = $receivedAt - 420;
-            $dashboardAlerts = array_values(array_filter($alerts, static fn (array $alert): bool => $alert['drop_pct'] >= 5
-                && ($alert['monitor_received_at'] ?? $alert['alerted']) > $dashboardCutoff));
+            $dashboardAlerts = array_values(array_filter($alerts, static fn (array $alert): bool => ($alert['monitor_received_at'] ?? $alert['alerted']) > $dashboardCutoff));
             usort($dashboardAlerts, static fn (array $left, array $right): int => ($right['monitor_received_at'] ?? $right['alerted']) <=> ($left['monitor_received_at'] ?? $left['alerted']));
             Redis::set('Pinnacle:drops', json_encode(['alerts' => $dashboardAlerts, 'signals' => $signals, 'feeds' => $feeds, 'updated_at' => time()], JSON_THROW_ON_ERROR));
             Redis::expire('Pinnacle:drops', 10800);
@@ -393,7 +392,7 @@ class ListenPinnodds extends Command
                     $batchParents[$sport][$parentId] = $parents[$sport][$parentId];
                 }
             }
-            ProcessAlert::dispatch('pinnacle', ['alerts' => $batch, 'parents' => $batchParents]);
+            ProcessAlert::dispatch('pinnacle', ['alerts' => $batch, 'parents' => $batchParents, 'mapped_notifications_only' => true]);
         }
     }
 }

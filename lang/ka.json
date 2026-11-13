@@ -1,4 +1,5 @@
 {
+    "1st half Lay The Draw or 1st half Over 0.5 Goals signal — sourced directly from our Telegram channel.": "პირველი ტაიმის Lay The Draw ან პირველი ტაიმის 0.5 მეტობის სიგნალი — პირდაპირ ჩვენი Telegram არხიდან.",
     "WEAK": "სუსტდება",
     "ACTIVE": "აქტიური",
     " Goals": " გოლი",
@@ -540,7 +541,7 @@
     "Email verified successfully. You can now log in.": "ელფოსტა წარმატებით დადასტურდა. ახლა შეგიძლიათ შესვლა.",
     "Email:": "ელფოსტა:",
     "Enable AutoPay. I authorize recurring payments at this price and period until I cancel from my profile or the provider billing schedule ends.": "AutoPay-ის ჩართვა. ვადასტურებ განმეორებით გადახდებს ამ ფასითა და პერიოდულობით, სანამ პროფილიდან არ გავაუქმებ ან პროვაიდერის გადახდის გრაფიკი არ დასრულდება.",
-    "Enable Live Pop-up alerts": "მიმდინარე ამომხტარი შეტყობინებების ჩართვა",
+    "Enable Live Pop-up alerts": "სწრაფი სიგნალების ჩართვა საიტზე",
     "Enabled": "ჩართული",
     "Encrypted and secure payment flow": "დაშიფრული და უსაფრთხო გადახდა",
     "English / Georgian": "ინგლისური / ქართული",
@@ -588,7 +589,7 @@
     "FAV Badge": "ფავორიტის ნიშანი",
     "FH O/U 0.5": "პირველი ტაიმი მეტი/ნაკლები 0.5",
     "FH O/U 1.5": "პირველი ტაიმი მეტი/ნაკლები 1.5",
-    "FT": "დასრულდა",
+    "FT": "FT",
     "Facebook": "Facebook",
     "Fast / significant fluctuation of odds": "კოეფიციენტის სწრაფი / მნიშვნელოვანი რყევა",
     "Fast Access": "სწრაფი წვდომა",
@@ -683,7 +684,7 @@
     "H": "H",
     "H2H": "ურთიერთშეხვედრები",
     "HOT": "აქტუალური",
-    "HT": "შესვენება",
+    "HT": "HT",
     "HT 0-0": "პირველი ტაიმი 0-0",
     "HT 0-0 (Half Time 0-0)": "პირველი ტაიმი 0-0",
     "Half Time": "შესვენება",
@@ -1092,6 +1093,7 @@
     "Over/Under 3.5": "მეტი/ნაკლები 3.5",
     "Over/Under 4.5": "მეტი/ნაკლები 4.5",
     "Overtime": "დამატებითი დრო",
+    "Period scores do not add up to the final score": "პერიოდების ანგარიშების ჯამი არ ემთხვევა საბოლოო ანგარიშს",
     "PINNACLE ODDS": "PINNACLE-ის კოეფიციენტები",
     "Participant in the market": "ბაზრის მონაწილე",
     "Participant with the lowest Back Odds": "ყველაზე დაბალი Back კოეფიციენტის მქონე მონაწილე",
@@ -1137,7 +1139,7 @@
     "Plan duration": "გეგმის ხანგრძლივობა",
     "Plans below are loaded directly from your subscription database. Choose one plan and continue to checkout.": "ქვემოთ გეგმები პირდაპირ გამოწერების მონაცემთა ბაზიდან იტვირთება. აირჩიეთ გეგმა და გადადით გადახდაზე.",
     "Platform Admins": "პლატფორმის ადმინისტრატორები",
-    "Platform Live Pop-up Alerts": "პლატფორმის მიმდინარე ამომხტარი შეტყობინებები",
+    "Platform Live Pop-up Alerts": "Live შეტყობინებები ეკრანზე (Pop-up)",
     "Player": "მოთამაშე",
     "Please enter a valid email address.": "შეიყვანეთ სწორი ელფოსტის მისამართი.",
     "Please log in again.": "გთხოვთ, ხელახლა შეხვიდეთ.",
@@ -2341,5 +2343,6 @@
     "This strategy aligns with \"Smart Money\" flow. A rapid odds drop (e.g., ≥5%) usually signals that professional bettors or sharp models perceive an increased probability for that outcome. Traders immediately follow the market move in the same direction before other sportsbooks adjust their lines.": "ეს სტრატეგია ეყრდნობა \"ჭკვიანი ფულის\" (Smart Money) ნაკადს. კოეფიციენტის სწრაფი ვარდნა (მაგ. ≥5%) მიუთითებს, რომ პროფესიონალი მოთამაშეების ან მათემატიკური მოდელების მიხედვით ეს შედეგი უფრო სავარაუდოა. ტრეიდერები დაყოვნებლივ მიჰყვებიან ბაზრის მოძრაობას იმავე მიმართულებით, სანამ კოეფიციენტები ყველგან ჩამოვა.",
     "Betfair Trading:": "Betfair Trading:",
     "Pinnacle movements can influence market movements on Betfair exchange, giving you an edge to trade positions (Back/Lay) before kickoff.": "Pinnacle-ის მოძრაობამ შეიძლება გავლენა იქონიოს Betfair-ის ბირჟაზეც, რაც საშუალებას გაძლევთ დაიჭიროთ ხელსაყრელი პოზიცია (Back/Lay) მატჩის დაწყებამდე.",
-    "⚠️ Disclaimer: An odds drop does not guarantee a winning outcome. It simply highlights market sentiment and liquidity flow. Upsets and unexpected results happen regularly in sports.": "⚠️ მნიშვნელოვანი შენიშვნა: კოეფიციენტის ვარდნა არ ნიშნავს გარანტირებულ მოგებას. ეს არის მხოლოდ ბაზრის მოძრაობისა და ლიკვიდურობის ინდიკატორი. სპორტში საპირისპირო შედეგის დაჯდომა ჩვეულებრივი მოვლენაა."
+    "⚠️ Disclaimer: An odds drop does not guarantee a winning outcome. It simply highlights market sentiment and liquidity flow. Upsets and unexpected results happen regularly in sports.": "⚠️ მნიშვნელოვანი შენიშვნა: კოეფიციენტის ვარდნა არ ნიშნავს გარანტირებულ მოგებას. ეს არის მხოლოდ ბაზრის მოძრაობისა და ლიკვიდურობის ინდიკატორი. სპორტში საპირისპირო შედეგის დაჯდომა ჩვეულებრივი მოვლენაა.",
+    "Soccer": "ფეხბურთი"
 }

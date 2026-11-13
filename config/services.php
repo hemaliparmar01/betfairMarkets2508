@@ -77,6 +77,7 @@ return [
             ['World', 'International U17', ['World - U17', 'World - International Youth U17', 'World - International U17 Tournament', 'World - U17 International Tournament', 'World - U17 Tournament', 'World - U17 Tournaments', 'World - International U17 Tournaments', 'World - International Youth U17 Tournament', 'World - International Youth U17 Tournaments', 'International - International U17', 'International - U17', 'International - International Youth U17', 'International - International U17 Tournament', 'International - U17 International Tournament', 'International - U17 Tournament', 'International - U17 Tournaments', 'International - International U17 Tournaments', 'International - International Youth U17 Tournament', 'International - International Youth U17 Tournaments', 'FIFA - International U17', 'FIFA - U17', 'FIFA - International Youth U17', 'FIFA - International U17 Tournament', 'FIFA - U17 International Tournament', 'FIFA - U17 Tournament', 'FIFA - U17 Tournaments', 'FIFA - International U17 Tournaments', 'FIFA - International Youth U17 Tournament', 'FIFA - International Youth U17 Tournaments']],
             ['England', 'Premier League', []],
             ['Spain', 'La Liga', []],
+            ['Spain', 'Copa del Rey', ['Spain - Copa de Su Majestad el Rey']],
             ['Italy', 'Serie A', []],
             ['Germany', 'Bundesliga', []],
             ['France', 'Ligue 1', []],
@@ -172,7 +173,12 @@ return [
             'Year-End Championships' => [
                 'ATP Finals' => ['ATP Finals', 'ATP Finals Turin', 'ATP Finals London'],
                 'Next Gen ATP Finals' => ['ATP Next Gen Finals', 'ATP Next Gen Finals Jeddah'],
-                'WTA Finals' => ['WTA Finals', 'WTA Finals Indian Wells', 'WTA Finals Riyadh'],
+                'WTA Finals' => [
+                    'WTA Finals', 'WTA Finals Indian Wells', 'WTA Finals Riyadh',
+                    'WTA Finals - Indian Wells', 'Finals - Indian Wells',
+                    'WTA Finals - Indian Wells (World)', 'Finals - Indian Wells (World)',
+                    'WTA - Singles: Finals - Indian Wells (World)',
+                ],
             ],
             'ATP 500' => [
                 'Rotterdam Open' => ['ATP Rotterdam'],

@@ -59,7 +59,7 @@ class FootballController extends Controller
             } elseif ($pinnacleArchive) {
                 $filters = request()->validate([
                     'sport' => ['sometimes', 'string', 'max:32'],
-                    'mode' => ['sometimes', 'in:prematch,live'],
+                    'mode' => ['sometimes', 'in:all,prematch,live'],
                     'view' => ['sometimes', 'in:simple,advanced'],
                     'market_filter' => ['sometimes', 'in:main,handicap,all'],
                     'time_filter' => ['sometimes', 'in:all,today,1h,3h,future'],
@@ -69,8 +69,10 @@ class FootballController extends Controller
                 $archiveNow = now();
                 $query = DB::table('pinnacle_drop_archives')
                     ->where('alerted_at', '>=', $pinnacleArchiveStart->timestamp)
-                    ->where('alerted_at', '<', $pinnacleArchiveEnd->timestamp)
-                    ->where('is_live', ($filters['mode'] ?? 'prematch') === 'live');
+                    ->where('alerted_at', '<', $pinnacleArchiveEnd->timestamp);
+                if (($filters['mode'] ?? 'all') !== 'all') {
+                    $query->where('is_live', $filters['mode'] === 'live');
+                }
                 if (! isset($filters['before_key'])) {
                     $sports = DB::table('pinnacle_drop_archives')->where('alerted_at', '>=', $pinnacleArchiveStart->timestamp)
                         ->where('alerted_at', '<', $pinnacleArchiveEnd->timestamp)->groupBy('sport')->orderBy('sport')
@@ -127,14 +129,6 @@ class FootballController extends Controller
             $pinnacleAlerts = $pinnaclePayload ?? [];
             $pinnacleAlerts = $pinnacleAlerts['alerts'] ?? $pinnacleAlerts['data'] ?? $pinnacleAlerts;
             $pinnacleAlerts = is_array($pinnacleAlerts) ? array_values($pinnacleAlerts) : [];
-            $pinnacleAlerts = array_values(array_filter($pinnacleAlerts, static function (array $alert): bool {
-                if (! in_array($alert['sport'] ?? '', ['soccer', 'football'], true) && (int) ($alert['sport_id'] ?? 0) !== 1) {
-                    return true;
-                }
-                $competition = AlertService::pinnacleCompetition(($alert['archive_parent'] ?? []) + $alert);
-
-                return $competition !== null;
-            }));
             if (! $pinnacleArchive && ! $capture) {
                 $cutoff = microtime(true) - 420;
                 $pinnacleAlerts = array_values(array_filter($pinnacleAlerts, static fn (array $alert): bool => (float) ($alert['monitor_received_at'] ?? $alert['alerted'] ?? 0) > $cutoff));
@@ -513,17 +507,14 @@ class FootballController extends Controller
                 }
             }
             unset($alert);
-            $pinnacleAlerts = array_values(array_filter($pinnacleAlerts, static fn (array $alert): bool => empty($alert['internal_hidden'])));
             if ($capture) {
-                return $pinnacleAlerts;
+                return array_values(array_filter($pinnacleAlerts, static fn (array $alert): bool => empty($alert['internal_hidden'])));
             }
 
             foreach ($pinnacleAlerts as &$alert) {
                 [$country, $league, $alert['league_filter_key']] = AlertService::pinnacleLeague($alert);
-                if (isset($alert['pinnacle_competition'])) {
-                    $alert['country'] = $country;
-                    $alert['league'] = $league;
-                }
+                $alert['country'] = $country;
+                $alert['league'] = $league;
             }
             unset($alert);
 

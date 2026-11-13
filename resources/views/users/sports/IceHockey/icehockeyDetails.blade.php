@@ -29,12 +29,31 @@
                 }
             }
             $periodScores = [];
+            $homeScore = $event['home_score_data'] ?? [];
+            $awayScore = $event['away_score_data'] ?? [];
+            $periodKeys = [];
             for ($period = 1; $period <= $completedPeriods; $period++) {
-                $homePeriodScore = $event['home_score_data']['period'.$period] ?? null;
-                $awayPeriodScore = $event['away_score_data']['period'.$period] ?? null;
+                $periodKeys['period'.$period] = 'P'.$period;
+            }
+            if ($event['status'] === 'Finished') {
+                $periodKeys += ['overtime' => 'OT', 'penalties' => 'SO'];
+            }
+            $homePeriodTotal = 0;
+            $awayPeriodTotal = 0;
+            foreach ($periodKeys as $key => $label) {
+                $homePeriodScore = $homeScore[$key] ?? null;
+                $awayPeriodScore = $awayScore[$key] ?? null;
                 if (is_numeric($homePeriodScore) && is_numeric($awayPeriodScore) && $homePeriodScore >= 0 && $awayPeriodScore >= 0) {
-                    $periodScores[] = 'P'.$period.': '.$homePeriodScore.'-'.$awayPeriodScore;
+                    $periodScores[] = $label.': '.$homePeriodScore.'-'.$awayPeriodScore;
+                    $homePeriodTotal += (int) $homePeriodScore;
+                    $awayPeriodTotal += (int) $awayPeriodScore;
                 }
+            }
+            $homeFinal = $homeScore['current'] ?? $homeScore['display'] ?? null;
+            $awayFinal = $awayScore['current'] ?? $awayScore['display'] ?? null;
+            if ($event['status'] === 'Finished' && $periodScores !== [] && is_numeric($homeFinal) && is_numeric($awayFinal)
+                && ($homePeriodTotal !== (int) $homeFinal || $awayPeriodTotal !== (int) $awayFinal)) {
+                $periodScores[] = __('Period scores do not add up to the final score');
             }
         @endphp
         <div data-icehockey-match-url="{{ route('icehockey.matches.show', $event['sportsApiPro_match_id']) }}" data-match-id="{{ $event['sportsApiPro_match_id'] }}" data-match-status="{{ __($event['status']) }}" data-icehockey-stats="{{ json_encode(['team1' => $event['team1'], 'team2' => $event['team2'], 'home' => $event['home_score_data'] ?? [], 'away' => $event['away_score_data'] ?? [], 'score' => $event['score'], 'status' => $event['minutes_status'] ?? $event['minutes'], 'statistics' => $event['live_stats'] ?? []]) }}" data-icehockey-prediction="{{ json_encode($prediction) }}" @if ($highlight) data-incident-highlight-until="{{ $event['incident_highlight_until'] }}" @endif
@@ -45,7 +64,7 @@
                 <span class="flex min-w-0 items-center justify-end gap-1.5 text-right font-bold">@if ($event['home_team_logo'] ?? null)<img src="{{ $event['home_team_logo'] }}" alt="" class="size-5 shrink-0 object-contain" onerror="this.remove()">@endif<span class="break-words">{{ $event['team1'] }}</span></span>
                 <strong data-score-status="{{ __($event['status']) }}" class="match-score text-center text-xs">{{ $event['score'] }}</strong>
                 <span class="flex min-w-0 items-center gap-1.5 text-left"><span class="break-words">{{ $event['team2'] }}</span>@if ($event['away_team_logo'] ?? null)<img src="{{ $event['away_team_logo'] }}" alt="" class="size-5 shrink-0 object-contain" onerror="this.remove()">@endif</span>
-                @if ($periodScores !== [])<span aria-label="{{ __('Completed period scores') }}" class="col-span-3 whitespace-nowrap text-center text-[11px] font-normal leading-3 text-[var(--text-strong)]">{{ implode(' | ', $periodScores) }}</span>@endif
+                @if ($periodScores !== [])<span aria-label="{{ __('Completed period scores') }}" class="col-span-3 text-center text-[11px] font-normal leading-3 text-[var(--text-strong)]">{{ implode(' | ', $periodScores) }}</span>@endif
             </button>
             <div class="flex items-center justify-center gap-4">
                 <button type="button" class="live-stat-icon bg-transparent border-0 [color:var(--text-live)] [font-size:15px] [padding:4px_4px] cursor-pointer [border-radius:8px] [width:28px] text-center [transition:0.2s] disabled:cursor-not-allowed disabled:opacity-30 dark:[color:rgb(var(--primary))] dark:[&:hover]:[background:rgb(var(--surface))] dark:[&:hover]:[color:var(--text-on-primary)] [&:hover]:[background:var(--surface-neutral-5-7)] [&:hover]:[color:var(--text-danger-30)]"

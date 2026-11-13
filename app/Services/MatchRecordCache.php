@@ -72,22 +72,33 @@ abstract class MatchRecordCache
     {
         $matches = $this->catalog();
         $ids = [];
-        foreach ($matches as $key => $match) {
+        $football = static::SPORT === 'football' ? app(FootballController::class) : null;
+        foreach ($matches as $key => &$match) {
+            if ($football !== null) {
+                $match['_fixture_priority'] = $football->footballLeaguePriority(
+                    (string) ($match['tournament'] ?? ''), $match['tournament_country'] ?? null,
+                );
+            }
             if (! empty($match['sportsApiPro_match_id'])) {
                 $ids[(string) $match['sportsApiPro_match_id']] = $key;
             }
         }
+        unset($match);
         $orders = [];
         foreach (['competition', 'default', 'time'] as $mode) {
             $ordered = $matches;
-            uasort($ordered, static function (array $first, array $second) use ($mode): int {
+            uasort($ordered, static function (array $first, array $second) use ($mode, $football): int {
                 $priority = $first['_fixture_priority'] <=> $second['_fixture_priority'];
                 $time = (int) ($first['timestamp'] ?? 0) <=> (int) ($second['timestamp'] ?? 0);
                 $competition = $mode === 'competition' && $priority === 0
                     ? strcmp((string) ($first['tournament_id'] ?? $first['tournament'] ?? ''), (string) ($second['tournament_id'] ?? $second['tournament'] ?? ''))
                     : 0;
 
-                return $mode === 'time' ? ($time ?: $priority) : ($priority ?: $competition ?: $time);
+                $liveComparison = $football !== null
+                    ? (($second['result_status'] ?? null) === 'Live') <=> (($first['result_status'] ?? null) === 'Live')
+                    : 0;
+
+                return $liveComparison ?: ($mode === 'time' ? ($time ?: $priority) : ($priority ?: $competition ?: $time));
             });
             $orders[$mode] = array_keys($ordered);
         }

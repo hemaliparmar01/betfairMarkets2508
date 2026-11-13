@@ -78,8 +78,8 @@ class TennisSyncController extends Controller
             foreach ([trim($tour.' '.$name), $name] as $label) {
                 $competition = self::pinnacleCompetition($label);
                 if ($competition !== null
-                    && ! (str_starts_with(strtoupper($tour), 'WTA') && str_starts_with($competition[0], 'ATP'))
-                    && ! (str_starts_with(strtoupper($tour), 'ATP') && str_starts_with($competition[0], 'WTA'))) {
+                    && ! (str_starts_with(strtoupper($tour), 'WTA') && (str_starts_with($competition[0], 'ATP') || in_array($competition[1], ['ATP Finals', 'Next Gen ATP Finals'], true)))
+                    && ! (str_starts_with(strtoupper($tour), 'ATP') && (str_starts_with($competition[0], 'WTA') || $competition[1] === 'WTA Finals'))) {
                     return $competition;
                 }
             }
