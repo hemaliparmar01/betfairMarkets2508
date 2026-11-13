@@ -317,17 +317,22 @@ class AlertService
         DB::table('alert_deliveries')->where('status', 'sending')->where('updated_at', '<', now()->subMinutes(2))
             ->update(['status' => 'unknown', 'error' => 'Worker stopped before delivery acknowledgement.', 'updated_at' => now()]);
         DB::table('alerts')->whereNull('fanned_out_at')->orderBy('id')->lazyById(100)->each(
-            fn (object $alert) => ProcessAlert::dispatch('fanout', ['alert_id' => $alert->id])
+            fn (object $alert) => ProcessAlert::dispatch('fanout', ['alert_id' => $alert->id])->onQueue(in_array($alert->type, ['ltd', 'goal'], true) ? 'alerts-ltd' : 'alerts')
         );
-        DB::table('alert_deliveries')->whereIn('status', ['pending', 'retry'])->where('updated_at', '<', now()->subMinutes(2))
-            ->orderBy('id')->lazyById(100)->each(fn (object $delivery) => ProcessAlert::dispatch('deliver', ['delivery_id' => $delivery->id])->onQueue($delivery->channel === 'platform' ? 'alerts-platform' : 'alerts-telegram'));
+        DB::table('alert_deliveries')->join('alerts', 'alerts.id', '=', 'alert_deliveries.alert_id')
+            ->select('alert_deliveries.*', 'alerts.type as alert_type')
+            ->whereIn('alert_deliveries.status', ['pending', 'retry'])->where('alert_deliveries.updated_at', '<', now()->subMinutes(2))
+            ->lazyById(100, 'alert_deliveries.id', 'id')->each(function (object $delivery): void {
+                $queue = $delivery->channel === 'platform' ? 'alerts-platform' : (in_array($delivery->alert_type, ['ltd', 'goal'], true) ? 'alerts-ltd' : 'alerts-telegram');
+                ProcessAlert::dispatch('deliver', ['delivery_id' => $delivery->id])->onQueue($queue);
+            });
     }
 
     /** @param array<string, mixed> $message */
     public function source(array $message): ?int
     {
         if (($message['source'] ?? '') !== config('services.telegram.source_channel') || empty($message['message_id'])
-            || ! is_numeric($message['sent_at'] ?? null) || abs(time() - (int) $message['sent_at']) > 300) {
+            || ! is_numeric($message['sent_at'] ?? null) || abs((int) ($message['received_at'] ?? time()) - (int) $message['sent_at']) > 300) {
             return null;
         }
         $clean = static function (string $text): string {
@@ -578,7 +583,7 @@ class AlertService
             'parent_alert_id' => $context['parent_alert_id'] ?? null, 'payload' => json_encode($payload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE), 'created_at' => now()]);
         $alert = DB::table('alerts')->where('event_key', $key)->first();
         if ($alert->fanned_out_at === null) {
-            ProcessAlert::dispatch('fanout', ['alert_id' => $alert->id])->afterCommit();
+            ProcessAlert::dispatch('fanout', ['alert_id' => $alert->id])->onQueue(in_array($type, ['ltd', 'goal'], true) ? 'alerts-ltd' : 'alerts')->afterCommit();
         }
 
         return $alert->id;
@@ -660,7 +665,7 @@ class AlertService
                     DB::table('alert_deliveries')->insertOrIgnore(['alert_id' => $alert->id, 'customer_id' => $customer->id, 'channel' => $channel,
                         'destination' => $channel === 'telegram' ? $customer->telegram_chat_id : null, 'status' => 'pending', 'created_at' => now(), 'updated_at' => now()]);
                     $id = DB::table('alert_deliveries')->where(['alert_id' => $alert->id, 'customer_id' => $customer->id, 'channel' => $channel])->value('id');
-                    ProcessAlert::dispatch('deliver', ['delivery_id' => $id])->onQueue($channel === 'platform' ? 'alerts-platform' : 'alerts-telegram')->afterCommit();
+                    ProcessAlert::dispatch('deliver', ['delivery_id' => $id])->onQueue($channel === 'platform' ? 'alerts-platform' : (in_array($alert->type, ['ltd', 'goal'], true) ? 'alerts-ltd' : 'alerts-telegram'))->afterCommit();
                 }
             });
         }

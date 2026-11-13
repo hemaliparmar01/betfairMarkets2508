@@ -316,7 +316,7 @@
     "queue-alerts-telegram": {
       "command": [
         "queue:work",
-        "--queue=alerts-telegram",
+        "--queue=alerts-ltd,alerts-telegram",
         "--sleep=1",
         "--timeout=60",
         "--tries=3",

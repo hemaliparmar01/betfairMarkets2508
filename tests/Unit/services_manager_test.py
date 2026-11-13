@@ -199,7 +199,7 @@ class ServiceManagerTest(unittest.TestCase):
     def test_live_prematch_recovery_alerts_and_legacy_consumers_are_separate(self):
         self.assertIn('--queue=sports-statistics', self.manager.instances['queue-sports-statistics']['command'])
         self.assertNotIn('--queue=sports-statistics,sports-prematch-statistics', self.manager.instances['queue-sports-statistics']['command'])
-        for service, queue in [('queue-sports-recovery', 'sports-recovery'), ('queue-sports-timeline', 'sports-timeline'), ('queue-alerts', 'alerts'), ('queue-alerts-platform', 'alerts-platform'), ('queue-alerts-telegram', 'alerts-telegram')]:
+        for service, queue in [('queue-sports-recovery', 'sports-recovery'), ('queue-sports-timeline', 'sports-timeline'), ('queue-alerts', 'alerts'), ('queue-alerts-platform', 'alerts-platform'), ('queue-alerts-telegram', 'alerts-ltd,alerts-telegram')]:
             self.assertIn('--queue=' + queue, self.manager.instances[service]['command'])
         self.assertIn('database', self.manager.instances['queue-legacy-sports-statistics']['command'])
         self.assertIn('--queue=sports-statistics', self.manager.instances['queue-legacy-sports-statistics']['command'])

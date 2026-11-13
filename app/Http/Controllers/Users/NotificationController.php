@@ -123,7 +123,10 @@ class NotificationController extends Controller
             'message_id' => ['required', 'integer', 'min:1'], 'sent_at' => ['required', 'integer'],
             'text' => ['required', 'string', 'max:8192'], 'reply_text' => ['nullable', 'string', 'max:8192'],
         ]);
-        ProcessAlert::dispatch('source', $data);
+        $receivedAt = time();
+        if (abs($receivedAt - $data['sent_at']) <= 300) {
+            ProcessAlert::dispatch('source', $data + ['received_at' => $receivedAt])->onQueue('alerts-ltd');
+        }
 
         return response()->json(['accepted' => true], 202);
     }

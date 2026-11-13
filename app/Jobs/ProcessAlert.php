@@ -31,7 +31,12 @@ class ProcessAlert implements ShouldBeUnique, ShouldQueue
 
     public function uniqueId(): string
     {
-        return 'alerts:'.$this->task.':'.hash('sha256', json_encode($this->data));
+        $identity = $this->data;
+        if ($this->task === 'source') {
+            unset($identity['received_at']);
+        }
+
+        return 'alerts:'.$this->task.':'.hash('sha256', json_encode($identity));
     }
 
     public function handle(AlertService $alerts): void
