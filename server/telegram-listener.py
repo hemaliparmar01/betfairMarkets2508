@@ -84,10 +84,11 @@ async def main():
         while client.is_connected():
             try:
                 if await asyncio.to_thread(submit) == 202:
+                    print(f'Source post {event.id} acknowledged by Laravel.', flush=True)
                     return
             except urllib.error.HTTPError as error:
                 if error.code in (401, 403, 422):
-                    print('Source intake rejected; verify Laravel configuration.', file=sys.stderr)
+                    print(f'Source post {event.id} rejected by Laravel (HTTP {error.code}).', file=sys.stderr)
                     return
             except (OSError, TimeoutError):
                 pass

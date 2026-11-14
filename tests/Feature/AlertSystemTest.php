@@ -240,7 +240,7 @@ class AlertSystemTest extends TestCase
         $this->fixture(['team1' => 'Leeds', 'team2' => 'Tottenham', 'tournament' => 'English Premier League']);
         $customer = $this->customer(['popup_enabled' => false]);
         Http::fake(['api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 45]])]);
-        $text = "Football. England. Premier League\nLeeds United 0:0 Tottenham\nHotspur\n0:0\nTotal. Over (0.5). 1st half\n👉 Goal in the first half\nRegistration link on the 1xbet website\nhttps://example.test\nCODE POMO: HNV3";
+        $text = "Football. England. Premier League\nLeeds United 0:0 Tottenham\nHotspur\n0:0\nTotal. Over (0.5). 1st half\n👉 Goal in the first half\nFull Time Match navigation\nRegistration link on the 1xbet website\nhttps://example.test\nCODE POMO: HNV3";
 
         $id = app(AlertService::class)->source($this->source($text));
         $this->assertNotNull($id);
@@ -312,7 +312,7 @@ class AlertSystemTest extends TestCase
         $this->assertDatabaseMissing('alert_deliveries', ['alert_id' => $id, 'customer_id' => $otherFilter->id]);
         $this->assertDatabaseMissing('alert_deliveries', ['alert_id' => $id, 'customer_id' => $expired->id]);
         Bus::assertDispatched(ProcessAlert::class, static fn (ProcessAlert $job): bool => $job->task === 'deliver' && $job->queue === 'alerts-platform');
-        Bus::assertDispatched(ProcessAlert::class, static fn (ProcessAlert $job): bool => $job->task === 'deliver' && $job->queue === 'alerts-telegram');
+        Bus::assertDispatched(ProcessAlert::class, static fn (ProcessAlert $job): bool => $job->task === 'deliver' && $job->queue === 'alerts-ltd');
     }
 
     #[TestWith(['soccer'])]

@@ -349,9 +349,9 @@ class AlertService
         $hasMinute = preg_match('/\b(\d{1,3}(?:\+\d{1,2})?)\s*[\x{0027}\x{2019}\x{2032}]/u', $text, $minute)
             || preg_match('/\b(?:1st\s*half\s*[-–:]|time\s+elapsed\s*:)\s*(\d{1,2}):[0-5]\d\b/iu', $text, $minute);
         $hasScore = preg_match('~(?<![\d:/-])(\d{1,2})\h*[-:–]\h*(\d{1,2})(?![\d:/-])~u', preg_replace('/^.*(?:1st\s*half\s*[-–:]|time\s+elapsed\s*:).*$/imu', '', $text), $score);
-        if (! $goal && (! preg_match('/\b(?:1st\s*half|first\s*half|HT)\b/i', $text)
-            || ! preg_match('/\bOver\s*\(?0[.,]5\)?(?:\s*Goals)?\b/i', $text)
-            || preg_match('/\b(?:Over\s*\(?[1-9]|Full\s*Time|Full\s*Match|Asian\s*Handicap)\b/i', $text))) {
+        if (! $goal && ! preg_match('/^\h*(?:(?:Market|Prediction|Selection)\h*:\h*)?(?:Totals?\.?\h*)?(?:Over\h*\(?0[.,]5\)?(?:\h*Goals?)?\h*[.\-–:]?\h*(?:1st\h*half|first\h*half|HT)|(?:1st\h*half|first\h*half|HT)\h*[.\-–:]?\h*Over\h*\(?0[.,]5\)?(?:\h*Goals?)?)(?=\h|$)/imu', $text)) {
+            Log::debug('Telegram source post did not contain a supported LTD market.', ['message_id' => $message['message_id']]);
+
             return null;
         }
         $hasTeams = preg_match('/(?:^|\n)\s*(?:⚽\s*)?(?:Match\s*:\s*)?([^\n:]+?)\s+(?:vs\.?|v\.?|—)\s+([^\n]+?)(?=\s+[|@]|\s+-\s+(?:Over|Under)|\n|$)/iu', $context, $teams);
@@ -369,6 +369,8 @@ class AlertService
             $hasLeague = preg_match('/^\h*Football[.\h]+[^\n.]+\.\h+([^\n]+)$/mi', $text, $league);
         }
         if (! $hasTeams || (! $goal && ! $hasLeague)) {
+            Log::debug('Telegram source match details could not be parsed.', ['message_id' => $message['message_id']]);
+
             return null;
         }
         $home = trim($teams[1]);
@@ -382,7 +384,7 @@ class AlertService
         };
         $normalizeLeague = static fn (string $name): string => match (strtolower(trim($name))) {
             'english premier league', 'england premier league' => 'Premier League',
-            default => $name,
+            default => trim(preg_replace('/^[^-]+ - /u', '', $name)),
         };
         $candidates = FootballMatch::query()->whereIn('result_status', $hasMinute && $hasScore ? ['Live', 'Prematch'] : ['Live'])->whereBetween('start_timestamp', [time() - 4 * 3600, time()])
             ->select(['id', 'sports_api_pro_match_id', 'team1', 'team2', 'tournament', 'unique_key'])->get()
@@ -752,7 +754,7 @@ class AlertService
                         $public['alert_id'] = (string) $alert->id;
                         $public['draw_lay'] = $payload['context']['draw_lay'] ?? null;
                         $public['url'] = route('football.market-activity', ['match' => $alert->match_id], false);
-                        Broadcast::private('customers.'.$customer->id.'.alerts')->as('alert.received')->with($public)->sendNow();
+                        Broadcast::private('customers.'.$customer->id.'.alerts')->via('reverb')->as('alert.received')->with($public)->sendNow();
                     } else {
                         $botToken = config('services.telegram.bot_token');
                         if (blank($botToken)) {
@@ -845,7 +847,10 @@ class AlertService
         $label = ['ht00' => 'HT 0-0 (Half Time 0-0)', '00_70' => "0-0 @ 70'", 'fav_losing' => 'Favorite Losing In-Play'][$type];
         $text = "🔔 BF MARKETS | ALERT DETECTED\n\n🎯 Filter: {$label}\n{$base}\n".($type === 'ht00' ? '⏱ Status: Half Time' : "⏱ Time: {$time}' min")." | Score: {$score}";
         $odds = [];
-        foreach ($payload['markets'][$type === 'ht00' ? 'HALF_TIME' : 'MATCH_ODDS'] ?? [] as $runner) {
+        foreach ($payload['markets']['MATCH_ODDS'] ?? [] as $runner) {
+            if ($type === 'ht00' && (! empty($runner['suspended']) || in_array($runner['market_status'] ?? 'OPEN', ['SUSPENDED', 'CLOSED'], true))) {
+                continue;
+            }
             $odds[strtolower((string) ($runner['runner'] ?? ''))] = $runner['currentBackOdds'] ?? $runner['backOdds'] ?? null;
         }
         if ($type === 'fav_losing') {
@@ -857,7 +862,7 @@ class AlertService
         }
         $teams = explode(' vs ', $payload['match'], 2);
 
-        return $text."\n\n".($type === 'ht00' ? '📊 1st Half Market Odds:' : '📉 In-Play Odds:')
+        return $text."\n\n".($type === 'ht00' ? '📊 Match Odds (1X2):' : '📉 In-Play Odds:')
             ."\n• Home: ".($odds[strtolower($teams[0])] ?? '—')."\n• Draw: ".($odds['the draw'] ?? $odds['draw'] ?? '—')."\n• Away: ".($odds[strtolower($teams[1])] ?? '—');
     }
 }
