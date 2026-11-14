@@ -1239,6 +1239,9 @@ class FixturesAuditTest extends TestCase
         $this->withoutMiddleware(CustomerAuthService::class);
         $this->app['auth']->guard('customers')->setUser(new Customer(['trial_ends_at' => now()->addDay()]));
         app()->instance(FootballSyncController::class, $this->sync());
+        (require database_path('migrations/2026_10_01_000003_create_football_matches_table.php'))->up();
+        (require database_path('migrations/2026_11_05_070607_create_pinnacle_betfair_events_table.php'))->up();
+
         $start = time() + 3600;
         $match = ['unique_key' => 'matched', 'team1' => 'Galatasaray FC', 'team2' => 'Chennaiyin FC', 'timestamp' => $start, 'data_sync_complete' => true, 'result_status' => 'Prematch', 'markets' => [[['marketType' => 'MATCH_ODDS', 'runner' => 'Galatasaray', 'currentBackOdds' => 1.54, 'layOdds' => 1.56, 'backSize' => 10]]]];
         $matches = [$match];
@@ -1262,6 +1265,16 @@ class FixturesAuditTest extends TestCase
         unset($alerts[1]['starts']);
         $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonPath('data.1.start_timestamp', $start);
         unset($alerts[1]);
+        $matches = [array_replace($match, ['team1' => 'Salford', 'team2' => 'Northampton', 'markets' => [
+            [['marketType' => 'MATCH_ODDS', 'runner' => 'Salford', 'currentBackOdds' => 2.4]],
+        ]])];
+        $originalAlert = $alerts[0];
+        $alerts[0] = array_replace($originalAlert, ['home' => 'Salford City', 'away' => 'Northampton Town']);
+        $this->getJson(route('football.pinnacle-odds'))->assertOk()
+            ->assertJsonPath('data.0.bf_home', 'Salford')->assertJsonPath('data.0.bf_back', 2.4);
+        $matches = [$match];
+        $alerts[0] = $originalAlert;
+
         $matches[] = array_replace($match, ['unique_key' => 'ambiguous']);
         $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonPath('data.0.bf_back', null);
         $matches = [array_replace($match, ['timestamp' => $start + 7200])];

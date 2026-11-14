@@ -287,6 +287,14 @@
                 const edgeClass = value => value === null || !Number.isFinite(value) ? 'text-[var(--text-slate-400)]' : value > 0 ? 'text-[var(--text-emerald-600)] dark:text-[var(--text-emerald-400)]' : value < 0 ? 'text-[var(--text-danger-edge)] dark:text-[var(--text-red-400)]' : 'text-[var(--text-slate-500)]';
                 const betfairEdgeText = alert => betfairPrice(alert) === null ? 'N/A' : edge(alert) === null ? (globalThis.bfTranslations?.["— (fair price pending)"] ?? "— (fair price pending)") : edgeText(edge(alert));
                 const alertIdentity = alert => alert.alert_key || [matchKey(alert), alert.sect, marketLine(alert), alert.period, alert.outcome, alert.alerted, alert.from_price, alert.to_price].join('|');
+                const selectionKey = alert => {
+                    const section = String(alert.sect ?? '').trim().toLowerCase().replaceAll('_', ' ');
+                    const outcome = String(alert.outcome ?? '').trim().toLowerCase();
+                    const side = ({ '1': 'home', '2': 'away', x: 'draw', 'the draw': 'draw' })[outcome] ?? outcome;
+                    const market = /^(money line|moneyline|1x2|match odds)$/.test(section) ? 'moneyline' : section;
+                    const line = marketLine(alert);
+                    return JSON.stringify([market, Number(alert.period ?? 0), line == null || line === '' ? null : number(line), side]);
+                };
                 const monitorTimestamp = alert => {
                     const timestamp = number(alert.monitor_received_at ?? alert.alerted);
                     return timestamp && timestamp < 100000000000 ? timestamp * 1000 : timestamp;
@@ -356,9 +364,9 @@
                     const selectAll = leaguePicker.querySelector('[data-pinnacle-select-all]');
                     const leagues = new Set(selectAll?.checked ? [] : Array.from(leaguePicker.querySelectorAll('[data-pinnacle-league]:checked'), input => input.value));
                     const today = state.timeFilter === 'today' || state.timeFilter === 'future' ? matchDayFormat.format(now) : null;
-                    return state.alerts.filter(alert => {
+                    const matching = state.alerts.filter(alert => {
                         if (leagues.size && !leagues.has(alert.league_filter_key)) return false;
-                        if (higherOnly?.checked && !(betfairPrice(alert) > number(alert.to_price) && number(alert.to_price) > 1)) return false;
+                        if (state.archive && higherOnly?.checked && !(betfairPrice(alert) > number(alert.to_price) && number(alert.to_price) > 1)) return false;
                         const received = monitorTimestamp(alert);
                         if (!state.archive && (!Number.isFinite(received) || received <= 0 || now - received >= 420000)) return false;
                         if (!matchesMarketFilter(alert) || (state.mode !== 'all' && (state.mode === 'live') !== isLive(alert))) return false;
@@ -370,6 +378,14 @@
                         if (state.timeFilter === 'future') return matchDayFormat.format(start) !== today;
                         return start - now <= (state.timeFilter === '1h' ? 3600000 : 10800000);
                     }).sort((a, b) => state.archive ? (number(b.alerted) || 0) - (number(a.alerted) || 0) : monitorTimestamp(b) - monitorTimestamp(a));
+                    if (state.archive) return matching;
+                    const seen = new Set();
+                    return matching.filter(alert => {
+                        const key = JSON.stringify([matchKey(alert), selectionKey(alert)]);
+                        if (seen.has(key)) return false;
+                        seen.add(key);
+                        return !higherOnly?.checked || (number(alert.to_price) > 1 && betfairPrice(alert) > number(alert.to_price));
+                    });
                 };
                 const modeLabels = { all: @json(__('All')), live: @json(__('Live')), prematch: @json(__('Prematch')) };
                 const render = () => {
