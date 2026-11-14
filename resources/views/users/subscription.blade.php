@@ -34,7 +34,7 @@
                         @if ($current_country == 'Georgia')
                             {{ __('Complete Betfair analytics platform for about GEL 2 per day.') }}
                         @else
-                            {{ __('Complete Betfair analytics platform for less than €1 per day.') }}
+                            {{ __('Complete Betfair analytics platform for less than €1.70 per day.') }}
                         @endif
                     </p>
                 </div>
