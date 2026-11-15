@@ -378,8 +378,8 @@
     "Compare Back/Lay odds and liquidity across events": "Compare Back/Lay odds and liquidity across events",
     "Compare Pinnacle and Betfair prices": "Compare Pinnacle and Betfair prices",
     "Competition": "Competition",
-    "Complete Betfair analytics platform for about GEL 2 per day.": "Complete Betfair analytics platform for about GEL 2 per day.",
-    "Complete Betfair analytics platform for less than €1.70 per day.": "Complete Betfair analytics platform for less than €1.70 per day.",
+    "Complete Betfair analytics platform for GEL 3.30 per day.": "Complete Betfair analytics platform for GEL 3.30 per day.",
+    "Complete Betfair analytics platform for €1.63 per day.": "Complete Betfair analytics platform for €1.63 per day.",
     "Complete payment securely": "Complete payment securely",
     "Complete your payment": "Complete your payment",
     "Completed period scores": "Completed period scores",
@@ -2343,5 +2343,8 @@
     "Betfair Trading:": "Betfair Trading:",
     "Pinnacle movements frequently trigger price shifts on the Betfair Exchange, giving traders an edge to enter or exit Back/Lay positions ahead of the market.": "Pinnacle movements frequently trigger price shifts on the Betfair Exchange, giving traders an edge to enter or exit Back/Lay positions ahead of the market.",
     "⚠️ Disclaimer: An odds drop does not guarantee a winning outcome. It reflects market sentiment, liquidity flow, and probability shifts. Upsets and unexpected results happen regularly in sports.": "⚠️ Disclaimer: An odds drop does not guarantee a winning outcome. It reflects market sentiment, liquidity flow, and probability shifts. Upsets and unexpected results happen regularly in sports.",
-    "Pinnacle market limit explanation": "Pinnacle Max Bet Limit (Market Liquidity Indicator)\n\nShows the maximum amount Pinnacle currently accepts on a single bet at this exact odd (not the total volume matched on the event).\n\nHow to read it:\n\nHigh Limit (e.g., €2,000+): Deep, mature market with strong confidence from Pinnacle. Odds drops here are backed by serious money and are much more reliable.\n\nLow Limit (e.g., €100–€300): Low-liquidity or early market. Even a small bet or routine trader adjustment can cause a sharp drop without real \"smart money\" behind it.\n\nPre-Match vs. Live: Limits naturally peak right before kickoff and drop significantly once the match goes Live."
+    "Pinnacle market limit explanation": "Pinnacle Max Bet Limit (Market Liquidity Indicator)\n\nShows the maximum amount Pinnacle currently accepts on a single bet at this exact odd (not the total volume matched on the event).\n\nHow to read it:\n\nHigh Limit (e.g., €2,000+): Deep, mature market with strong confidence from Pinnacle. Odds drops here are backed by serious money and are much more reliable.\n\nLow Limit (e.g., €100–€300): Low-liquidity or early market. Even a small bet or routine trader adjustment can cause a sharp drop without real \"smart money\" behind it.\n\nPre-Match vs. Live: Limits naturally peak right before kickoff and drop significantly once the match goes Live.",
+    "3 months": "3 months",
+    "Save :amount GEL": "Save :amount GEL",
+    "Save €:amount": "Save €:amount"
 }

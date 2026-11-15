@@ -32,9 +32,9 @@
                     <p class="text-[rgb(var(--text-soft))] text-lg max-w-3xl mx-auto">{{ __('Get real-time market data, advanced analytics, and professional tools designed for serious traders.') }}</p>
                     <p class="mt-4 text-lg font-bold text-[rgb(var(--secondary))]">
                         @if ($current_country == 'Georgia')
-                            {{ __('Complete Betfair analytics platform for about GEL 2 per day.') }}
+                            {{ __('Complete Betfair analytics platform for GEL 3.30 per day.') }}
                         @else
-                            {{ __('Complete Betfair analytics platform for less than €1.70 per day.') }}
+                            {{ __('Complete Betfair analytics platform for €1.63 per day.') }}
                         @endif
                     </p>
                 </div>
@@ -64,6 +64,19 @@
                                 }
                                 $popularLabel = __('Most Popular');
                                 $buttonText = data_get(json_decode($plan->button_text_translations), $locale) ?: __($plan->button_text ?? '');
+                            @endphp
+                        @endif
+                        @if ((int) $plan->duration_days === 90)
+                            @php
+                                $planPrice = $current_country === 'Georgia' ? 'price_for_local' : 'price_for_international';
+                                $monthlyPlan = $plans->firstWhere('duration_days', 30);
+                                if ($monthlyPlan !== null) {
+                                    $saving = max(0, (float) $monthlyPlan->$planPrice * 3 - (float) $plan->$planPrice);
+                                    $saving = number_format($saving, $saving == floor($saving) ? 0 : 2, '.', '');
+                                    $priceLabel = __('3 months').' • '.($current_country === 'Georgia'
+                                        ? __('Save :amount GEL', ['amount' => $saving])
+                                        : __('Save €:amount', ['amount' => $saving]));
+                                }
                             @endphp
                         @endif
                         <div
