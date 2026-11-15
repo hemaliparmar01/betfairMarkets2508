@@ -346,7 +346,8 @@ class ListenPinnodds extends Command
     private function storeDrops(array $pending, array $feeds): void
     {
         $parents = [];
-        withRedisLock('Pinnacle:drops', function () use ($pending, $feeds, &$parents): void {
+        $monitorDrops = [];
+        withRedisLock('Pinnacle:drops', function () use ($pending, $feeds, &$parents, &$monitorDrops): void {
             $cached = getInRedis('Pinnacle:drops') ?? [];
             $alerts = [];
             foreach ([...($cached['signals'] ?? []), ...($cached['alerts'] ?? [])] as $alert) {
@@ -383,7 +384,7 @@ class ListenPinnodds extends Command
                 }
             }
         });
-        foreach (array_chunk($pending, 100) as $batch) {
+        foreach (array_chunk($monitorDrops, 100) as $batch) {
             $batchParents = [];
             foreach ($batch as $drop) {
                 $sport = $drop['sport'];

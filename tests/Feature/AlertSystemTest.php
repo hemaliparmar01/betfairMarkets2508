@@ -16,6 +16,7 @@ use Illuminate\Broadcasting\AnonymousEvent;
 use Illuminate\Broadcasting\BroadcastManager;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Queue\CallQueuedClosure;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Broadcast;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
@@ -567,7 +568,7 @@ class AlertSystemTest extends TestCase
 
         $this->assertSame([100], array_column(json_decode($stored, true)['alerts'], 'id'));
         Bus::assertDispatched(ProcessAlert::class, fn (ProcessAlert $job): bool => $job->task === 'pinnacle'
-            && $job->queue === 'alerts' && $job->data['alerts'] === array_values($pending));
+            && $job->queue === 'alerts' && isset($job->data['alerts'][0]['monitor_received_at']) && Arr::except($job->data['alerts'][0], 'monitor_received_at') === array_values($pending)[0]);
         Bus::fake([ProcessAlert::class]);
         config(['services.telegram.enabled' => false]);
         $pending = array_map(fn (array $drop): array => array_replace($drop, ['alert_key' => hash('sha256', 'next-drop'), 'to_price' => 1.7]), $pending);
@@ -745,7 +746,7 @@ class AlertSystemTest extends TestCase
         $this->actingAs($this->customer(['timezone' => 'UTC']), 'customers');
         Redis::shouldReceive('get')->never();
         $base = ['sport' => 'soccer', 'id' => 100, 'home' => 'Home', 'away' => 'Away', 'sect' => 'Moneyline',
-            'from_price' => 2, 'to_price' => 1.8, 'alerted' => now()->timestamp];
+            'from_price' => 2, 'to_price' => 1.8, 'alerted' => now()->timestamp - 600];
         $variants = [
             'hour' => ['starts' => now()->addHour()->timestamp],
             'three' => ['starts' => now()->addHours(3)->timestamp],
@@ -762,18 +763,23 @@ class AlertSystemTest extends TestCase
         }
         $parent = ['id' => 100, 'sport' => 'soccer', 'home' => 'Home Club', 'away' => 'Away Club'];
         (new ProcessAlert('pinnacle', ['alerts' => $drops, 'parents' => ['soccer' => [100 => $parent]]]))->handle(app(AlertService::class));
-        $this->getJson(route('football.pinnacle-odds', ['archive' => 1]))->assertOk()->assertJsonCount(7, 'data');
-        foreach (['1h' => 1, '3h' => 2, 'future' => 1, 'today' => 3] as $filter => $count) {
+        $this->getJson(route('football.pinnacle-odds', ['archive' => 1]))->assertOk()->assertJsonCount(8, 'data');
+        foreach (['1h' => 1, '3h' => 2, 'future' => 1, 'today' => 4] as $filter => $count) {
             $this->getJson(route('football.pinnacle-odds', ['archive' => 1, 'time_filter' => $filter]))->assertOk()->assertJsonCount($count, 'data');
         }
         $this->getJson(route('football.pinnacle-odds', ['archive' => 1, 'mode' => 'live']))->assertOk()->assertJsonCount(1, 'data');
         $this->getJson(route('football.pinnacle-odds', ['archive' => 1, 'sport' => 'snooker', 'market_filter' => 'handicap']))
             ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.sect', 'spread');
-        $main = $this->getJson(route('football.pinnacle-odds', ['archive' => 1, 'market_filter' => 'main']))->assertOk()->assertJsonCount(6, 'data');
+        $main = $this->getJson(route('football.pinnacle-odds', ['archive' => 1, 'market_filter' => 'main']))->assertOk()->assertJsonCount(7, 'data');
         $btts = collect($main->json('data'))->firstWhere('sect', 'btts');
         $this->assertSame(['Home Club', 'Away Club', 'yes'], [$btts['home'], $btts['away'], $btts['outcome']]);
         $this->travelTo(new \DateTimeImmutable('2026-11-08 02:00:00 UTC'));
         $this->getJson(route('football.pinnacle-odds', ['archive' => 1]))->assertOk()->assertJsonCount(0, 'data');
+        $recent = array_replace($drops[0], ['alert_key' => hash('sha256', 'recent-arrival'), 'alerted' => now()->timestamp, 'monitor_received_at' => now()->getTimestampMs() / 1000]);
+        (new ProcessAlert('pinnacle', ['alerts' => [$recent]]))->handle(app(AlertService::class));
+        $this->getJson(route('football.pinnacle-odds', ['archive' => 1]))->assertOk()->assertJsonCount(0, 'data');
+        $this->travel(7)->minutes();
+        $this->getJson(route('football.pinnacle-odds', ['archive' => 1]))->assertOk()->assertJsonCount(1, 'data');
         Http::assertNothingSent();
     }
 

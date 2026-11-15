@@ -67,17 +67,14 @@ class FootballController extends Controller
                     'before_key' => ['nullable', 'required_with:before_time', 'regex:/^[a-f0-9]{64}$/'],
                 ]);
                 $archiveNow = now();
-                $monitorCutoff = microtime(true) - 420;
-                $monitorKeys = [];
-                foreach (getInRedis('Pinnacle:drops')['alerts'] ?? [] as $alert) {
-                    if (isset($alert['alert_key']) && (float) ($alert['monitor_received_at'] ?? $alert['alerted'] ?? 0) > $monitorCutoff) {
-                        $monitorKeys[] = $alert['alert_key'];
-                    }
-                }
+                $monitorCutoff = $archiveNow->getTimestampMs() / 1000 - 420;
                 $archiveQuery = DB::table('pinnacle_drop_archives')
                     ->where('alerted_at', '>=', $pinnacleArchiveStart->timestamp)
                     ->where('alerted_at', '<', $pinnacleArchiveEnd->timestamp)
-                    ->whereNotIn('alert_key', $monitorKeys);
+                    ->where(function ($query) use ($monitorCutoff): void {
+                        $query->where('payload->monitor_received_at', '<=', $monitorCutoff)
+                            ->orWhere(fn ($query) => $query->whereNull('payload->monitor_received_at')->where('alerted_at', '<=', (int) $monitorCutoff));
+                    });
                 $query = clone $archiveQuery;
                 if (($filters['mode'] ?? 'all') !== 'all') {
                     $query->where('is_live', $filters['mode'] === 'live');
@@ -546,7 +543,7 @@ class FootballController extends Controller
 
             $pinnacleLeagueOptions = app(AlertService::class)->pinnacleMonitorLeagueOptions();
 
-            return view('users.sports.football.marketActivity', compact('pinnacleLeagueOptions', 'pinnacleAlerts', 'pinnacleFeedConnected', 'pinnacleFeeds', 'pinnacleArchive', 'pinnacleArchiveHasMore', 'pinnacleArchiveCursor', 'pinnacleArchiveStart', 'pinnacleArchiveEnd', 'pinnacleArchiveStats'));
+            return view('users.sports.Football.marketActivity', compact('pinnacleLeagueOptions', 'pinnacleAlerts', 'pinnacleFeedConnected', 'pinnacleFeeds', 'pinnacleArchive', 'pinnacleArchiveHasMore', 'pinnacleArchiveCursor', 'pinnacleArchiveStart', 'pinnacleArchiveEnd', 'pinnacleArchiveStats'));
         }
 
         $marketActivites = $this->getMarketActivites();
