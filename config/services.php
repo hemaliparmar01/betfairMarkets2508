@@ -148,7 +148,7 @@ return [
                 'US Open' => ['ATP US Open', 'WTA US Open', 'Grand Slam US Open'],
             ],
             'ATP Masters 1000' => [
-                'Indian Wells Masters' => ['ATP Indian Wells'],
+                'Indian Wells Masters' => ['ATP Indian Wells', 'ATP BNP Paribas Open'],
                 'Miami Open' => ['ATP Miami'],
                 'Monte-Carlo Masters' => ['ATP Monte Carlo', 'ATP Monte-Carlo'],
                 'Madrid Open' => ['ATP Madrid'],
@@ -161,7 +161,7 @@ return [
             'WTA 1000' => [
                 'Qatar TotalEnergies Open – Doha' => ['WTA Doha'],
                 'Dubai Duty Free Tennis Championships – Dubai' => ['WTA Dubai'],
-                'Indian Wells Open' => ['WTA Indian Wells'],
+                'Indian Wells Open' => ['WTA Indian Wells', 'WTA BNP Paribas Open'],
                 'Miami Open' => ['WTA Miami'],
                 'Madrid Open' => ['WTA Madrid'],
                 'Italian Open – Rome' => ['WTA Rome'],

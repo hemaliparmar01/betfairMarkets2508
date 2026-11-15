@@ -73,6 +73,18 @@ class TennisMatchCacheTest extends TestCase
         $this->assertSame(['Grand Slam', 'Wimbledon'], TennisSyncController::tennisCompetition([
             'tournament' => ['name' => 'Wimbledon', 'category' => ['name' => 'WTA']],
         ]));
+        $this->assertSame(['Year-End Championships', 'WTA Finals'], TennisSyncController::tennisCompetition([
+            'tournament' => 'WTA - Singles: Finals - Indian Wells (World) - Play Offs, hard',
+        ]));
+        $this->assertSame(['WTA 1000', 'Indian Wells Open'], TennisSyncController::tennisCompetition([
+            'tournament' => ['name' => 'BNP Paribas Open – Play-offs – Semi-finals', 'category' => ['name' => 'WTA - Singles']],
+        ]));
+        $this->assertSame(['ATP Masters 1000', 'Paris Masters'], TennisSyncController::tennisCompetition([
+            'tournament' => 'Paris Masters - Playoffs', 'tournament_tour' => 'ATP',
+        ]));
+        $this->assertNull(TennisSyncController::tennisCompetition([
+            'tournament' => 'WTA - Singles: Unknown Local Cup - Play Offs',
+        ]));
     }
 
     public function test_each_match_uses_one_record_across_prematch_live_and_points_updates(): void

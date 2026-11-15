@@ -67,15 +67,23 @@ class FootballController extends Controller
                     'before_key' => ['nullable', 'required_with:before_time', 'regex:/^[a-f0-9]{64}$/'],
                 ]);
                 $archiveNow = now();
-                $query = DB::table('pinnacle_drop_archives')
+                $monitorCutoff = microtime(true) - 420;
+                $monitorKeys = [];
+                foreach (getInRedis('Pinnacle:drops')['alerts'] ?? [] as $alert) {
+                    if (isset($alert['alert_key']) && (float) ($alert['monitor_received_at'] ?? $alert['alerted'] ?? 0) > $monitorCutoff) {
+                        $monitorKeys[] = $alert['alert_key'];
+                    }
+                }
+                $archiveQuery = DB::table('pinnacle_drop_archives')
                     ->where('alerted_at', '>=', $pinnacleArchiveStart->timestamp)
-                    ->where('alerted_at', '<', $pinnacleArchiveEnd->timestamp);
+                    ->where('alerted_at', '<', $pinnacleArchiveEnd->timestamp)
+                    ->whereNotIn('alert_key', $monitorKeys);
+                $query = clone $archiveQuery;
                 if (($filters['mode'] ?? 'all') !== 'all') {
                     $query->where('is_live', $filters['mode'] === 'live');
                 }
                 if (! isset($filters['before_key'])) {
-                    $sports = DB::table('pinnacle_drop_archives')->where('alerted_at', '>=', $pinnacleArchiveStart->timestamp)
-                        ->where('alerted_at', '<', $pinnacleArchiveEnd->timestamp)->groupBy('sport')->orderBy('sport')
+                    $sports = $archiveQuery->groupBy('sport')->orderBy('sport')
                         ->selectRaw('sport, COUNT(*) AS total, COUNT(betfair_higher) AS compared, SUM(CASE WHEN betfair_higher = 1 THEN 1 ELSE 0 END) AS higher')->get();
                     $pinnacleArchiveStats = ['sports' => $sports, 'total' => (int) $sports->sum('total'),
                         'compared' => (int) $sports->sum('compared'), 'higher' => (int) $sports->sum('higher')];

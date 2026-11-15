@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
 
-const source = readFileSync(new URL('../../resources/views/users/sports/football/marketActivity.blade.php', import.meta.url), 'utf8');
+const source = readFileSync(new URL('../../resources/views/users/sports/football/marketActivity.blade.php', import.meta.url), 'utf8').replace(/@json\(__\('([^']+)'\)\)/g, (_, label) => JSON.stringify(label));
 const helpers = source.slice(source.indexOf('                const sportKey ='), source.indexOf('                const filtered ='));
 const renderer = source.slice(source.indexOf('                const filtered ='), source.indexOf('                const openModal ='));
 const base = { alert_key: 'first', sport: 'soccer', home: 'Home Team', away: 'Away Team', league: 'Super League', sect: 'Total', point: 2.5, outcome: 'Over', from_price: 1.63, to_price: 1.47, nvp: 1.52, bf_back: 1.54, alerted: 1000 };
@@ -11,21 +11,22 @@ function harness(alerts = [base], options = {}) {
     let now = options.now ?? 1000000;
     const translations = JSON.parse(readFileSync(new URL(`../../lang/${options.locale ?? 'en'}.json`, import.meta.url), 'utf8'));
     const matchStartLabels = {
-        minute: translations['Starts in :count min'],
-        minutes: translations['Starts in :count mins'],
-        hour: translations['Starts in :count hour'],
-        hours: translations['Starts in :count hours'],
-        day: translations['Starts in :count day'],
-        days: translations['Starts in :count days'],
+        minutes: translations['Starts in :minutesm'],
+        hoursMinutes: translations['Starts in :hoursh :minutesm'],
         now: translations['Starting now'],
     };
     const output = { innerHTML: '', textContent: '' };
     const state = { alerts, view: 'advanced', mode: 'prematch', sport: 'all', collapsedGroups: new Set(), flashes: new Map() };
-    const context = vm.createContext({ state, matchStartLabels, URL, root: { dataset: { timezone: options.timezone ?? 'UTC' }, querySelectorAll: () => [], querySelector: selector => ({
+    const context = vm.createContext({ setTimeout() {}, clearTimeout() {}, state, matchStartLabels, URL, root: { dataset: { timezone: options.timezone ?? 'UTC' }, querySelectorAll: () => [], querySelector: selector => ({
         '[data-pinnacle-higher]': options.higher ? { checked: true } : null,
-        '[data-pinnacle-league-picker]': options.leagues ? {
-                querySelectorAll: () => options.leagues.map(value => ({ value })),
-        } : null,
+        '[data-pinnacle-league-picker]': {
+            querySelector: selector => selector === '[data-pinnacle-leagues]' ? {
+                querySelectorAll: selector => selector === '[data-pinnacle-league]'
+                    ? (options.leagues ?? []).map(value => ({ value }))
+                    : [],
+            } : null,
+            querySelectorAll: () => (options.leagues ?? []).map(value => ({ value })),
+        },
     })[selector] ?? (selector === '[data-pinnacle-league-picker]' ? null : output) }, Date: { now: () => now }, document: { documentElement: { lang: options.locale ?? 'en' }, createElement: () => ({ set textContent(value) { this.innerHTML = String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;'); } }) } });
     vm.runInContext(helpers + renderer, context);
     return { state, output, evaluate: code => vm.runInContext(code, context), advance: ms => { now += ms; } };
@@ -51,20 +52,26 @@ test('market and position names keep the affected side and line explicit', () =>
     assert.equal(app.evaluate('marketPosition({...state.alerts[0], sect: "Asian Handicap", point: -1.25, outcome: "Away"})'), 'Away (+1.25)');
 });
 
-test('simple has exactly four columns; advanced adds fair price, both edges and time', () => {
-    const app = harness();
+test('both table views display market limit and advanced adds fair price, both edges and time', () => {
+    const app = harness([{ ...base, limit: '2500.50' }]);
     app.evaluate('render()');
-    assert.equal((app.output.innerHTML.match(/scope="col"/g) || []).length, 7);
+    assert.equal((app.output.innerHTML.match(/scope="col"/g) || []).length, 8);
+    assert.match(app.output.innerHTML, /<th scope="col">Limit<\/th>/);
+    assert.match(app.output.innerHTML, /<td>2,500\.5<\/td>/);
     assert.match(app.output.innerHTML, /BF: \+1.3%/);
     assert.match(app.output.innerHTML, /About NVP/);
     assert.match(app.output.innerHTML, /aria-expanded="true"/);
     assert.doesNotMatch(app.output.innerHTML, /min-w-\[/);
     app.state.view = 'simple';
     app.evaluate('render()');
-    assert.equal((app.output.innerHTML.match(/scope="col"/g) || []).length, 4);
+    assert.equal((app.output.innerHTML.match(/scope="col"/g) || []).length, 5);
+    assert.match(app.output.innerHTML, /<td>2,500\.5<\/td>/);
     assert.doesNotMatch(app.output.innerHTML, /About NVP|BF:/);
     assert.match(app.output.innerHTML, /Home Team v Away Team/);
     assert.match(app.output.innerHTML, /Over 2.5 Goals/);
+    delete app.state.alerts[0].limit;
+    app.evaluate('render()');
+    assert.match(app.output.innerHTML, /<td>—<\/td>/);
 });
 
 test('missing fixture names never turn BTTS selections into a match title in either view', () => {
@@ -129,6 +136,20 @@ test('prematch and live drops expire at seven minutes while archive history rema
     app.state.archive = true;
     app.state.mode = 'prematch';
     assert.equal(app.evaluate('filtered().length'), 5);
+});
+
+test('separate drops for one outcome keep their own expiry and render in arrival order', () => {
+    const now = 1000000;
+    const app = harness([
+        { ...base, monitor_received_at: 900 },
+        { ...base, alert_key: 'other', home: 'Another Team', monitor_received_at: 950 },
+        { ...base, alert_key: 'latest', to_price: 1.42, monitor_received_at: 1000 },
+    ], { now });
+    app.evaluate('render()');
+    assert.deepEqual([...app.output.innerHTML.matchAll(/data-alert-key="([^"]+)"/g)].map(match => match[1]), ['latest', 'other', 'first']);
+    app.advance(320000);
+    app.evaluate('render()');
+    assert.deepEqual([...app.output.innerHTML.matchAll(/data-alert-key="([^"]+)"/g)].map(match => match[1]), ['latest', 'other']);
 });
 
 test('expired drops disappear on the existing refresh even if the request fails', async () => {
@@ -268,11 +289,11 @@ test('calendar filters use the customer timezone across midnight and daylight sa
     assert.equal(dst.evaluate('filtered().map(alert => alert.alert_key).join(",")'), 'same-day');
     dst.state.timeFilter = 'future';
     assert.equal(dst.evaluate('filtered().map(alert => alert.alert_key).join(",")'), 'next-day');
-    for (const [timezone, time] of [['Asia/Tbilisi', '16:30'], ['Asia/Kolkata', '18:00']]) {
+    for (const [timezone, time] of [['Asia/Tbilisi', '16:30 (GMT+4)'], ['Asia/Kolkata', '18:00 (GMT+5:30)']]) {
         const local = harness([{...base, alerted: now / 1000, start_timestamp: Date.parse('2026-11-07T12:30:00Z') / 1000}], {now, timezone});
         local.evaluate('render()');
         assert.ok(local.output.innerHTML.includes(`07 Nov 2026, ${time}`));
-        assert.doesNotMatch(local.output.innerHTML, /GMT\+|Asia\/Tbilisi|Asia\/Kolkata/);
+        assert.doesNotMatch(local.output.innerHTML, /Asia\/Tbilisi|Asia\/Kolkata/);
     }
 });
 
@@ -306,40 +327,57 @@ test('start filters preserve market and sport selection and reevaluate incoming 
 
 test('start countdown appears below the league in both languages and views and advances with the existing render', () => {
     const now = Date.parse('2026-11-06T12:00:00Z');
+    const countdownText = app => app.output.innerHTML.replaceAll(/<[^>]+>/g, '');
     for (const locale of ['en', 'ka']) {
         const app = harness([{...base, alerted: now / 1000, league: 'Country - League', start_timestamp: now / 1000 + 600}], {now, locale});
         for (const view of ['simple', 'advanced']) {
             app.state.view = view;
             app.evaluate('render()');
             assert.match(app.output.innerHTML, /Country - League<\/small><small[^>]*text-\[var\(--text-amber-700\)\]/);
-            assert.ok(app.output.innerHTML.includes(locale === 'en' ? ' · Starts in 10 mins' : ' · იწყება 10 წუთში'));
+            assert.ok(countdownText(app).includes(locale === 'en' ? ' · Starts in 10m' : ' · იწყება 10 წთ-ში'));
             for (const [seconds, english, georgian] of [
-                [60, 'Starts in 1 min', 'იწყება 1 წუთში'],
-                [3600, 'Starts in 1 hour', 'იწყება 1 საათში'],
-                [7200, 'Starts in 2 hours', 'იწყება 2 საათში'],
-                [86400, 'Starts in 1 day', 'იწყება 1 დღეში'],
-                [172800, 'Starts in 2 days', 'იწყება 2 დღეში'],
+                [60, 'Starts in 1m', 'იწყება 1 წთ-ში'],
+                [3600, 'Starts in 1h 0m', 'იწყება 1 სთ 0 წთ-ში'],
+                [6420, 'Starts in 1h 47m', 'იწყება 1 სთ 47 წთ-ში'],
+                [7200, 'Starts in 2h 0m', 'იწყება 2 სთ 0 წთ-ში'],
+                [86400, 'Starts in 24h 0m', 'იწყება 24 სთ 0 წთ-ში'],
+                [172800, 'Starts in 48h 0m', 'იწყება 48 სთ 0 წთ-ში'],
                 [0, 'Starting now', 'ახლა იწყება'],
             ]) {
                 app.state.alerts[0].start_timestamp = now / 1000 + seconds;
                 app.evaluate('render()');
-                assert.ok(app.output.innerHTML.includes(locale === 'en' ? english : georgian));
+                assert.ok(countdownText(app).includes(locale === 'en' ? english : georgian));
             }
             app.state.alerts[0].start_timestamp = now / 1000 + 600;
         }
         app.advance(300000);
         app.evaluate('render()');
-        assert.ok(app.output.innerHTML.includes(locale === 'en' ? ' · Starts in 5 mins' : ' · იწყება 5 წუთში'));
+        assert.ok(countdownText(app).includes(locale === 'en' ? ' · Starts in 5m' : ' · იწყება 5 წთ-ში'));
         app.advance(600000);
         app.evaluate('render()');
-        assert.ok(!app.output.innerHTML.includes(locale === 'en' ? ' · Starts in ' : ' · იწყება '));
+        assert.ok(!countdownText(app).includes(locale === 'en' ? ' · Starts in ' : ' · იწყება '));
         app.state.alerts[0].start_timestamp = now / 1000 + 3600;
         app.state.alerts[0].is_live = true;
         app.state.mode = 'live';
         app.evaluate('render()');
-        assert.ok(!app.output.innerHTML.includes(locale === 'en' ? ' · Starts in ' : ' · იწყება '));
+        assert.ok(!countdownText(app).includes(locale === 'en' ? ' · Starts in ' : ' · იწყება '));
     }
 });
+
+test('kickoff displays the configured timezone offset at the match timestamp', () => {
+    const now = Date.parse('2026-11-15T11:43:00Z');
+    const match = { ...base, alerted: now / 1000, start_timestamp: Date.parse('2026-11-15T13:30:00Z') / 1000 };
+    for (const [timezone, kickoff] of [
+        ['Asia/Tbilisi', '17:30 (GMT+4)'],
+        ['Asia/Kolkata', '19:00 (GMT+5:30)'],
+        ['America/New_York', '08:30 (GMT-5)'],
+    ]) {
+        const app = harness([match], { now, timezone });
+        app.evaluate('render()');
+        assert.ok(app.output.innerHTML.includes(kickoff + ' · Starts in 1h 47m'));
+    }
+});
+
 
 test('Pinnacle filters require a selected league and Betfair strictly above the new price', () => {
     const drop = { ...base, league_filter_key: 'selected' };

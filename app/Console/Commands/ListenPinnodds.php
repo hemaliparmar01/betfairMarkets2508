@@ -138,7 +138,7 @@ class ListenPinnodds extends Command
                     $feeds[$mode]['status'] = 'connecting';
                     $dirty = true;
                     try {
-                        $request = new Request(rtrim((string) config('services.pinnodds.url'), '/').$path);
+                        $request = new Request(rtrim((string) config('services.pinnodds.url'), '/').$path.'?min_drop=1');
                         $request->setHeader('x-api-key', $key);
                         $request->setHeader('Accept', 'text/event-stream');
                         $request->setTcpConnectTimeout(5);

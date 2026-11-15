@@ -70,11 +70,14 @@ class TennisSyncController extends Controller
             return $stored;
         }
         $tour = $source['tournament_tour'] ?? (is_array($tournament) ? ($tournament['category']['name'] ?? $tournament['uniqueTournament']['category']['name'] ?? '') : '');
+        $tour = preg_replace('/^(ATP|WTA)[\s:\-–—]+(?:Singles|Doubles)$/iu', '$1', trim($tour));
         foreach ($names as $name) {
             if (! is_string($name) || trim($name) === '') {
                 continue;
             }
             $name = trim(explode(',', $name, 2)[0]);
+            $name = preg_replace('/^(ATP|WTA)\s*[-–—]\s*(?:Singles|Doubles):\s*/iu', '$1 ', $name);
+            $name = preg_replace('/(?:\s+[-–—]\s+(?:play[\s-]*offs?|qualif(?:iers?|ying|ications?)|round\s+\d+|r\d+|quarter[\s-]*finals?|semi[\s-]*finals?|finals?|groups?|singles|doubles))+$/iu', '', $name);
             foreach ([trim($tour.' '.$name), $name] as $label) {
                 $competition = self::pinnacleCompetition($label);
                 if ($competition !== null

@@ -1053,10 +1053,16 @@ class FootballSyncController extends Controller
                 return false;
             }
             $openings = $latest['openings'] ?? [];
+            $score = isset($match['home_score'], $match['away_score'])
+                ? (int) $match['home_score'].' - '.(int) $match['away_score'] : null;
             foreach ($markets as &$market) {
                 foreach ($market['choices'] as &$choice) {
                     $selection = hash('sha256', json_encode([$market['id'], $market['market_id'], $market['period'], $market['name'], $choice['id'], $choice['name']], JSON_THROW_ON_ERROR));
-                    $opening = updateOddsMonitoring(['backOdds' => $choice['decimal_odds']], $openings[$selection] ?? [], $receivedAt, ! $market['suspended']);
+                    $previous = $openings[$selection] ?? [];
+                    $opening = updateOddsMonitoring(['backOdds' => $choice['decimal_odds']], $previous, $receivedAt, ! $market['suspended']);
+                    $choice['quote_score'] = $choice['decimal_odds'] !== null && $choice['decimal_odds'] === (float) ($previous['currentBackOdds'] ?? 0)
+                        ? ($previous['quote_score'] ?? $score) : $score;
+                    $opening['quote_score'] = $choice['quote_score'];
                     $openings[$selection] = $opening;
                     $choice['initial_decimal_odds'] = $opening['initialBackOdds'];
                     $choice['opening_odds'] = $opening;
@@ -1064,7 +1070,7 @@ class FootballSyncController extends Controller
                 unset($choice);
             }
             unset($market);
-            Cache::store('redis')->put($cacheKey, ['provider_id' => 1, 'markets' => $markets, 'openings' => $openings, 'updated_at' => $receivedAt, 'source_timestamp' => $sourceTimestamp], 86400);
+            Cache::store('redis')->put($cacheKey, ['provider_id' => 1, 'score' => $score, 'markets' => $markets, 'openings' => $openings, 'updated_at' => $receivedAt, 'source_timestamp' => $sourceTimestamp], 86400);
 
             return true;
         };

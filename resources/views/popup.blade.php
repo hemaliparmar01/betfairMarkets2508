@@ -76,7 +76,15 @@
             @if ($showHomepageIntro)
                 <div class="flex w-full max-w-7xl flex-1 flex-col justify-center gap-4 px-6 pt-24 pb-8 text-center sm:px-10 sm:pt-20">
                     <h1 class="text-[clamp(1.75rem,5vw,4.25rem)] leading-tight font-bold text-balance text-white text-shadow-md">{{ __('Active Sports Exchange Markets') }}</h1>
-                    <p class="text-[clamp(1rem,2.65vw,2.25rem)] leading-snug text-balance text-gray-100 text-shadow-md">{{ __('Real-time Pinnacle odds drops and comparison with Betfair odds') }}</p>
+                    <p class="text-[clamp(1rem,2.65vw,2.25rem)] leading-snug text-balance text-gray-100 text-shadow-md">
+                        {{ __('Real-time Pinnacle odds drops, Betfair comparison & instant') }}
+                        <span class="font-semibold whitespace-nowrap text-[#7DD3FC]">
+                            <svg class="inline-block size-[0.85em] align-[-0.08em]" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                                <path d="M22 3.7 18.6 20c-.2 1-.8 1.2-1.6.7l-5.2-3.8-2.5 2.4c-.3.3-.5.5-1 .5l.4-5.3 9.6-8.7c.4-.4-.1-.6-.6-.3L5.8 13 1 11.5c-1-.3-1-1 .2-1.5L20.5 2.6c.9-.3 1.7.2 1.5 1.1Z"/>
+                            </svg>
+                            {{ __('Telegram alerts') }}
+                        </span>
+                    </p>
                 </div>
             @endif
             <div class="relative z-10 max-h-[calc(100dvh-2rem)] w-full max-w-md shrink-0 overflow-x-hidden overflow-y-auto overscroll-contain rounded-lg bg-white p-6 text-[#0b2a40] shadow-xl dark:bg-[#1a2a38] dark:text-[#e8edf2]">

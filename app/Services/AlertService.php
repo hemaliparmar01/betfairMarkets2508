@@ -500,6 +500,12 @@ class AlertService
             return null;
         }
         $score = $context['score'] ?? (isset($match['home_score'], $match['away_score']) ? $match['home_score'].' - '.$match['away_score'] : null);
+        if ($type === 'fav_losing') {
+            $context['bet365_live_odds'] = $this->favoriteLiveBet365Odds((string) $matchId, $score, $match['bet365_prematch']['favorite_side'] ?? null);
+            if ($context['bet365_live_odds'] === null) {
+                return null;
+            }
+        }
         if ($type === 'ltd' && ($score === null || ! in_array($match['minutes_status'] ?? '', ['Live', '1st half'], true)
             || (($match['minutes_status'] ?? '') === 'Live' && time() - (int) $match['timestamp'] > 3600))) {
             return null;
@@ -676,6 +682,36 @@ class AlertService
         return 0;
     }
 
+    private function favoriteLiveBet365Odds(string $matchId, ?string $score, ?string $side): ?float
+    {
+        $selection = match ($side) {
+            'home' => '1',
+            'away' => '2',
+            default => null,
+        };
+        if ($score === null || $selection === null) {
+            return null;
+        }
+        try {
+            $snapshot = Cache::store('redis')->get('Football:bet365:live:'.$matchId, []);
+        } catch (RedisException) {
+            return null;
+        }
+        if (($snapshot['provider_id'] ?? null) !== 1 || ($snapshot['score'] ?? null) !== $score || ($snapshot['updated_at'] ?? 0) < microtime(true) - 120) {
+            return null;
+        }
+        $market = array_find($snapshot['markets'] ?? [], static fn (array $market): bool => (int) ($market['market_id'] ?? 0) === 1
+            && in_array(strtolower((string) ($market['period'] ?? 'full-time')), ['full-time', 'full time'], true));
+        if ($market === null || ($market['suspended'] ?? true)) {
+            return null;
+        }
+        $choice = array_find($market['choices'] ?? [], static fn (array $choice): bool => (string) ($choice['name'] ?? '') === $selection);
+        $price = $choice['decimal_odds'] ?? null;
+
+        return ($choice['quote_score'] ?? null) === $score && is_numeric($price) && is_finite((float) $price) && (float) $price > 1
+            ? (float) $price : null;
+    }
+
     public function deliver(int $deliveryId): int
     {
         if (! config('services.telegram.enabled')) {
@@ -733,6 +769,17 @@ class AlertService
                     return 0;
                 }
                 if ($delivery->channel === 'telegram') {
+                    if ($alert->type === 'fav_losing') {
+                        $payload['context']['bet365_live_odds'] = $this->favoriteLiveBet365Odds((string) $alert->match_id, $payload['score'] ?? null, $payload['favorite']['favorite_side'] ?? null);
+                        if ($payload['context']['bet365_live_odds'] === null) {
+                            if (now()->diffInSeconds(Carbon::parse($alert->created_at), true) < 120) {
+                                return 5;
+                            }
+                            DB::table('alert_deliveries')->where('id', $deliveryId)->update(['status' => 'skipped', 'error' => 'Fresh Bet365 odds unavailable for the alert score.', 'updated_at' => now()]);
+
+                            return 0;
+                        }
+                    }
                     $paused = (int) Cache::get('alerts:telegram:paused_until', 0) - time();
                     if ($paused > 0) {
                         return $paused;
@@ -858,7 +905,7 @@ class AlertService
             $teams = explode(' vs ', $payload['match'], 2);
             $favorite = $teams[$side === 'home' ? 0 : 1] ?? '—';
 
-            return $text."\n\n🔥 Fav Team: {$favorite} (Pre-match @ ".($payload['favorite']['favorite_odds'] ?? '—').")\n📈 Current Live Odds: ".($odds[strtolower($favorite)] ?? '—');
+            return $text."\n\n🔥 Fav Team: {$favorite} (Pre-match @ ".($payload['favorite']['favorite_odds'] ?? '—').")\n📈 Current Live Odds: ".($payload['context']['bet365_live_odds'] ?? '—');
         }
         $teams = explode(' vs ', $payload['match'], 2);
 

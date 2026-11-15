@@ -17,7 +17,8 @@ test('the application returns a successful response', function () {
 
     $response->assertStatus(200)
         ->assertSee('Active Sports Exchange Markets')
-        ->assertSee('Real-time Pinnacle odds drops and comparison with Betfair odds');
+        ->assertSee('Real-time Pinnacle odds drops, Betfair comparison & instant')
+        ->assertSee('Telegram alerts');
 });
 
 test('language selection persists and retains the current page query without changing other session data', function () {
@@ -30,7 +31,8 @@ test('language selection persists and retains the current page query without cha
     $this->get('/contact-us')->assertSee('დაგვიკავშირდით')->assertSee('data-lang="ka" aria-pressed="true"', false);
     $this->get('/')
         ->assertSee('სპორტული ბირჟის აქტიური ბაზრები')
-        ->assertSee('პინაკლეს კოეფიციენტების ვარდნების სწრაფი ალერტები და მათი შედარება ბეთფერის კოეფიციენტებთან')
+        ->assertSee('Pinnacle-ის კოეფიციენტების ვარდნა, შედარება Betfair-თან და მყისიერი')
+        ->assertSee('Telegram ალერტები')
         ->assertDontSee('Active Sports Exchange Markets');
     $this->post(route('locale.update'), ['locale' => 'en', 'return_to' => '/contact-us'])->assertRedirect('/contact-us');
     $this->get('/contact-us')->assertSee('lang="en"', false)->assertSee('Contact Us');

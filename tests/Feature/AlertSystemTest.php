@@ -1063,7 +1063,36 @@ class AlertSystemTest extends TestCase
         $this->assertNotNull($alerts->process('00_70', [...$base, 'minutes_status' => '2nd half', 'current_period_start_timestamp' => time() - 25 * 60]));
         $this->assertNull($alerts->process('00_70', $base));
         $losing = [...$base, 'home_score' => 0, 'away_score' => 1, 'bet365_prematch' => ['favorite_side' => 'home', 'favorite_odds' => 1.35]];
-        $this->assertNotNull($alerts->process('fav_losing', $losing));
+        config(['cache.stores.redis.driver' => 'array']);
+        $snapshot = ['provider_id' => 1, 'score' => '0 - 1', 'updated_at' => microtime(true), 'markets' => [[
+            'market_id' => 1, 'period' => 'Full-time', 'suspended' => false,
+            'choices' => [['name' => '1', 'decimal_odds' => 17.5, 'quote_score' => '0 - 2']],
+        ]]];
+        Cache::store('redis')->put('Football:bet365:live:12345', $snapshot);
+        $this->assertNull($alerts->process('fav_losing', $losing));
+        $snapshot['markets'][0]['choices'][0] = ['name' => '1', 'decimal_odds' => 6.8, 'quote_score' => '0 - 1'];
+        $snapshot['markets'][0]['suspended'] = true;
+        Cache::store('redis')->put('Football:bet365:live:12345', $snapshot);
+        $this->assertNull($alerts->process('fav_losing', $losing));
+        $snapshot['markets'][0]['suspended'] = false;
+        Cache::store('redis')->put('Football:bet365:live:12345', $snapshot);
+        $alertId = $alerts->process('fav_losing', $losing);
+        $this->assertNotNull($alertId);
+        $payload = json_decode(DB::table('alerts')->find($alertId)->payload, true, flags: JSON_THROW_ON_ERROR);
+        $this->assertStringContainsString('Current Live Odds: 6.8', $alerts->text($payload));
+        $customer = $this->customer(['tg_fav_losing' => true]);
+        $alerts->fanout($alertId);
+        $delivery = $this->delivery($alertId, $customer);
+        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 99]])]);
+        $snapshot['markets'][0]['suspended'] = true;
+        Cache::store('redis')->put('Football:bet365:live:12345', $snapshot);
+        $this->assertSame(5, $alerts->deliver($delivery));
+        Http::assertNothingSent();
+        $snapshot['markets'][0]['suspended'] = false;
+        $snapshot['markets'][0]['choices'][0]['decimal_odds'] = 7.2;
+        Cache::store('redis')->put('Football:bet365:live:12345', $snapshot);
+        $this->assertSame(0, $alerts->deliver($delivery));
+        Http::assertSent(fn ($request): bool => str_contains($request['text'], 'Current Live Odds: 7.2'));
         $this->assertNull($alerts->process('fav_losing', [...$losing, 'home_score' => 1]));
         $runner = ['runner' => 'Torino', 'marketType' => 'MATCH_ODDS', 'monitoring_baseline_version' => 1, 'initialBackOdds' => 4.0,
             'initialBackOddsTimestamp' => time() - 60, 'opening_odds_source' => 'first_observed', 'currentBackOdds' => 3.5,
