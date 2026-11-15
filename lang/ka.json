@@ -2347,5 +2347,6 @@
     "Betfair Trading:": "Betfair ტრეიდინგი:",
     "Pinnacle movements frequently trigger price shifts on the Betfair Exchange, giving traders an edge to enter or exit Back/Lay positions ahead of the market.": "Pinnacle-ის ფასის ცვლილება ხშირად იწვევს კოეფიციენტების მოძრაობას Betfair-ის ბირჟაზე, რაც ტრეიდერებს აძლევს უპირატესობას დროულად გახსნან ან დახურონ Back/Lay პოზიციები.",
     "⚠️ Disclaimer: An odds drop does not guarantee a winning outcome. It reflects market sentiment, liquidity flow, and probability shifts. Upsets and unexpected results happen regularly in sports.": "⚠️ გაფრთხილება (Disclaimer): კოეფიციენტის ვარდნა არ იძლევა მოგების გარანტიას. ის ასახავს ბაზრის განწყობას, ფულის ნაკადსა და ალბათობის ცვლილებას. სპორტში მოულოდნელი შედეგები რეგულარულად ხდება.",
-    "Soccer": "ფეხბურთი"
+    "Soccer": "ფეხბურთი",
+    "Pinnacle market limit explanation": "Pinnacle-ის მაქსიმალური ფსონის ლიმიტი (ბაზრის ლიკვიდურობის ინდიკატორი)\n\nაჩვენებს მაქსიმალურ თანხას, რასაც Pinnacle იღებს ერთ ბილეთზე მოცემულ კოეფიციენტზე (ეს არ არის თამაშზე დადებული ჯამური თანხა).\n\nროგორ წავიკითხოთ:\n\nმაღალი ლიმიტი (მაგ. €2,000+): მომწიფებული და სანდო ბაზარი. აქ კოეფიციენტის ვარდნა ნიშნავს, რომ რეალურად დიდი ფული შევიდა და სიგნალი სერიოზულია.\n\nდაბალი ლიმიტი (მაგ. €100–€300): დაბალლიკვიდური ან ახალგახსნილი ბაზარი. აქ ერთმა პატარა ფსონმა ან ტრეიდერის ჩასწორებამაც შეიძლება გამოიწვიოს მკვეთრი ვარდნა.\n\nPre-Match vs. Live: ლიმიტი პიკს აღწევს თამაშის დაწყებამდე ცოტა ხნით ადრე, ხოლო Live-ზე გადასვლისას მკვეთრად მცირდება."
 }

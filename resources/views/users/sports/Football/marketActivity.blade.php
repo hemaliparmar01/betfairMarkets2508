@@ -417,8 +417,8 @@
 
                     const advanced = state.view === 'advanced';
                     const columns = advanced ? 8 : 5;
-                    const info = (label, type) => `${label} <button type="button" aria-label="About ${label}" class="inline-flex size-3.5 items-center justify-center rounded-full bg-[var(--surface-neutral-5-8)] text-[10px] font-bold normal-case text-[var(--text-muted-soft)]" onmouseenter="showOddsTooltip(event, '${type}')" onmouseleave="hideOddsTooltip()" onfocus="showOddsTooltip(event, '${type}')" onblur="hideOddsTooltip()"${type === 'moneyline' ? ` onclick="event.stopPropagation(); showOddsTooltip(event, 'moneyline')"` : ''}>i</button>`;
-                    const header = `<table class="drops-table ${advanced ? 'drops-advanced' : 'drops-simple'} text-xs text-[rgb(var(--text-main))] dark:text-[var(--text-on-primary)]"><caption class="sr-only">${(globalThis.bfTranslations?.["Pinnacle odds drops, grouped by match"] ?? "Pinnacle odds drops, grouped by match")}</caption><colgroup>${(advanced ? [8,26,16,10,8,10,15,7] : [10,38,22,12,18]).map(width => `<col style="width:${width}%">`).join('')}</colgroup><thead><tr><th scope="col">${(globalThis.bfTranslations?.["Drop"] ?? "Drop")}</th><th scope="col">${(globalThis.bfTranslations?.["Match / Market"] ?? "Match / Market")}</th><th scope="col">${(globalThis.bfTranslations?.["Pinnacle Odds"] ?? "Pinnacle Odds")}</th><th scope="col">${@json(__('Limit'))}</th>${advanced ? `<th scope="col">${info('NVP', 'nvp')}</th>` : ''}<th scope="col">Betfair</th>${advanced ? `<th scope="col">${info((globalThis.bfTranslations?.["Edge %"] ?? "Edge %"), 'edge')}</th><th scope="col">${(globalThis.bfTranslations?.["Time"] ?? "Time")}</th>` : ''}</tr></thead>`;
+                    const info = (label, type) => `${label} <button type="button" aria-label="About ${label}" class="inline-flex size-3.5 items-center justify-center rounded-full bg-[var(--surface-neutral-5-8)] text-[10px] font-bold normal-case text-[var(--text-muted-soft)]" onmouseenter="showOddsTooltip(event, '${type}')" onmouseleave="hideOddsTooltip()" onfocus="showOddsTooltip(event, '${type}')" onblur="hideOddsTooltip()"${['moneyline', 'limit'].includes(type) ? ` onclick="event.stopPropagation(); showOddsTooltip(event, '${type}')"` : ''}>i</button>`;
+                    const header = `<table class="drops-table ${advanced ? 'drops-advanced' : 'drops-simple'} text-xs text-[rgb(var(--text-main))] dark:text-[var(--text-on-primary)]"><caption class="sr-only">${(globalThis.bfTranslations?.["Pinnacle odds drops, grouped by match"] ?? "Pinnacle odds drops, grouped by match")}</caption><colgroup>${(advanced ? [8,26,16,10,8,10,15,7] : [10,38,22,12,18]).map(width => `<col style="width:${width}%">`).join('')}</colgroup><thead><tr><th scope="col">${(globalThis.bfTranslations?.["Drop"] ?? "Drop")}</th><th scope="col">${(globalThis.bfTranslations?.["Match / Market"] ?? "Match / Market")}</th><th scope="col">${(globalThis.bfTranslations?.["Pinnacle Odds"] ?? "Pinnacle Odds")}</th><th scope="col">${info(@json(__('Limit')), 'limit')}</th>${advanced ? `<th scope="col">${info('NVP', 'nvp')}</th>` : ''}<th scope="col">Betfair</th>${advanced ? `<th scope="col">${info((globalThis.bfTranslations?.["Edge %"] ?? "Edge %"), 'edge')}</th><th scope="col">${(globalThis.bfTranslations?.["Time"] ?? "Time")}</th>` : ''}</tr></thead>`;
                     let animatedRows = 0;
                     const html = [...groups].map(([groupKey, alerts], groupIndex) => {
                         const first = alerts[0];
@@ -628,6 +628,7 @@
                 }, 30000);
 
                 const tooltipTexts = {
+                    limit: @json(__('Pinnacle market limit explanation')),
                     archive: @json(__('Outdated odds drop data is automatically moved to the archive and stored for 24 hours.')),
                     betfair: @json(__('Betfair odds unavailable (Low liquidity or market not open yet)')),
                     moneyline: @json(__('Pinnacle: Moneyline = Betfair: Match Odds')),
@@ -647,6 +648,11 @@
                     document.body.appendChild(tooltip);
                 }
 
+                tooltip.style.whiteSpace = type === 'limit' ? 'pre-line' : '';
+                tooltip.style.width = type === 'limit' ? '420px' : '';
+                tooltip.style.maxHeight = 'calc(100dvh - 24px)';
+                tooltip.style.overflowY = 'auto';
+                tooltip.style.pointerEvents = type === 'limit' ? 'auto' : '';
                 tooltip.textContent = state.archive && type === 'betfair' ? (globalThis.bfTranslations?.['Betfair odds at the time of the drop were unavailable.'] ?? 'Betfair odds at the time of the drop were unavailable.') : tooltipTexts[type];
                 event.currentTarget.setAttribute('aria-describedby', 'odds-info-tooltip');
 

@@ -55,7 +55,7 @@ class PaypalService
         $headers = ['auth_algo' => 'PAYPAL-AUTH-ALGO', 'cert_url' => 'PAYPAL-CERT-URL',
             'transmission_id' => 'PAYPAL-TRANSMISSION-ID', 'transmission_sig' => 'PAYPAL-TRANSMISSION-SIG',
             'transmission_time' => 'PAYPAL-TRANSMISSION-TIME'];
-        $payload = ['webhook_id' => config('services.paypal.webhook_id'), 'webhook_event' => $request->json()->all()];
+        $payload = ['webhook_id' => config('services.paypal.webhook_id')];
         foreach ($headers as $key => $header) {
             if (! $request->hasHeader($header)) {
                 return false;
@@ -63,6 +63,12 @@ class PaypalService
             $payload[$key] = $request->header($header);
         }
 
-        return $this->client()->post('/v1/notifications/verify-webhook-signature', $payload)->throw()->json('verification_status') === 'SUCCESS';
+        $event = $request->getContent();
+        if (! json_validate($event)) {
+            return false;
+        }
+        $body = substr(json_encode($payload, JSON_THROW_ON_ERROR), 0, -1).',"webhook_event":'.$event.'}';
+
+        return $this->client()->withBody($body, 'application/json')->post('/v1/notifications/verify-webhook-signature')->throw()->json('verification_status') === 'SUCCESS';
     }
 }

@@ -48,6 +48,7 @@ class SubscriptionTest extends TestCase
 
     public function test_plans_checkout_and_profile_use_database_records(): void
     {
+        Http::fake(['api.country.is/*' => Http::response(['country' => 'US'])]);
         $this->get('/subscriptions')->assertOk()->assertSee('Premium');
         $this->get('/subscriptions-details?plan='.$this->plan->id)->assertRedirect(route('login'));
         $this->actingAs($this->customer, 'customers')->get('/subscriptions-details?plan='.$this->plan->id)
@@ -64,6 +65,7 @@ class SubscriptionTest extends TestCase
 
     public function test_georgian_plan_display_falls_back_to_existing_english_content(): void
     {
+        Http::fake(['api.country.is/*' => Http::response(['country' => 'GE'])]);
         app()->setLocale('ka');
         $this->get('/subscriptions')->assertOk()->assertSee('Premium')->assertSee('აირჩიეთ თქვენი ვაჭრობის საჭიროებებზე მორგებული გეგმა');
     }
@@ -78,8 +80,9 @@ class SubscriptionTest extends TestCase
     {
         $this->paypalFake();
         $this->actingAs($this->customer, 'customers');
+        $key = (string) Str::uuid();
         for ($attempt = 0; $attempt < 2; $attempt++) {
-            $this->post('/subscriptions/'.$this->plan->id.'/checkout', ['gateway' => 'paypal', 'checkout_key' => (string) Str::uuid(), 'auto_renew' => 1])
+            $this->post('/subscriptions/'.$this->plan->id.'/checkout', ['gateway' => 'paypal', 'checkout_key' => $key, 'auto_renew' => 1])
                 ->assertSessionHasNoErrors()->assertRedirect('https://www.sandbox.paypal.com/approve');
         }
         $this->assertDatabaseCount('customers_subscriptions', 1);
@@ -235,13 +238,17 @@ class SubscriptionTest extends TestCase
             'billing_info' => ['last_payment' => ['time' => now()->toIso8601String()], 'next_billing_time' => now()->addDays(30)->toIso8601String()]];
         Http::fake([
             'api-m.sandbox.paypal.com/v1/oauth2/token' => Http::response(['access_token' => 'test-token']),
-            'api-m.sandbox.paypal.com/v1/notifications/verify-webhook-signature' => Http::response(['verification_status' => 'SUCCESS']),
+            'api-m.sandbox.paypal.com/v1/notifications/verify-webhook-signature' => function ($request) {
+                $event = json_decode($request->body(), true, flags: JSON_THROW_ON_ERROR);
+
+                return Http::response(['verification_status' => data_get($event, 'webhook_event.resource.invoice_number') === '' ? 'SUCCESS' : 'FAILURE']);
+            },
             'api-m.sandbox.paypal.com/v1/billing/subscriptions/I-TEST' => Http::response($details),
         ]);
         $headers = ['PAYPAL-AUTH-ALGO' => 'SHA256withRSA', 'PAYPAL-CERT-URL' => 'https://api.paypal.com/cert',
             'PAYPAL-TRANSMISSION-ID' => 'test', 'PAYPAL-TRANSMISSION-SIG' => 'test', 'PAYPAL-TRANSMISSION-TIME' => now()->toIso8601String()];
         $event = ['id' => 'WH-1', 'event_type' => 'PAYMENT.SALE.COMPLETED', 'resource' => [
-            'id' => 'SALE-1', 'billing_agreement_id' => 'I-TEST', 'create_time' => now()->toIso8601String(),
+            'id' => 'SALE-1', 'billing_agreement_id' => 'I-TEST', 'create_time' => now()->toIso8601String(), 'invoice_number' => '',
             'amount' => ['total' => '10.00', 'currency' => 'EUR'],
         ]];
         $this->postJson('/subscriptions/payments/webhooks/paypal', $event, $headers)->assertOk();
@@ -400,15 +407,18 @@ class SubscriptionTest extends TestCase
         $this->assertNull($this->customer->fresh()->subscription_ends_at);
     }
 
-    public function test_cancelled_paid_access_prevents_overlapping_checkout(): void
+    public function test_existing_subscription_and_admin_access_allow_new_checkouts(): void
     {
-        $record = $this->subscription();
-        $record->update(['status' => 'cancelled', 'auto_renew' => false]);
-        $this->customer->forceFill(['subscription_ends_at' => now()->addDays(5)])->save();
+        $this->paypalFake();
+        $record = $this->subscription('tbc_flitt');
+        $record->update(['status' => 'active', 'active_customer_id' => $this->customer->id]);
+        $this->customer->forceFill(['admin_free_days' => -1, 'country_code' => 'GE'])->save();
         $this->actingAs($this->customer, 'customers')->post('/subscriptions/'.$this->plan->id.'/checkout',
-            ['gateway' => 'paypal', 'checkout_key' => (string) Str::uuid(), 'auto_renew' => 1])->assertSessionHasErrors('subscription');
-        $this->assertDatabaseCount('customers_subscriptions', 1);
-        Http::assertNothingSent();
+            ['gateway' => 'paypal', 'checkout_key' => (string) Str::uuid(), 'auto_renew' => 1])
+            ->assertSessionHasNoErrors()->assertRedirect('https://www.sandbox.paypal.com/approve');
+        $this->assertDatabaseCount('customers_subscriptions', 2);
+        $this->assertSame('active', $record->fresh()->status);
+        $this->assertNull(CustomerSubscriptions::query()->latest('id')->first()->active_customer_id);
     }
 
     public function test_initial_failed_checkout_releases_customer_slot_without_granting_access(): void
