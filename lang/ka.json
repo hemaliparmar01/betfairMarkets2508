@@ -1540,6 +1540,7 @@
     "Starting in 1 Hour": "იწყება მომდევნო 1 საათში",
     "Starting in 3 Hours": "იწყება მომდევნო 3 საათში",
     "Starts in :minutesm": "იწყება :minutes წთ-ში",
+    "Starts in :daysd :hoursh": "იწყება :days დღეში :hours სთ-ში",
     "Starts in :hoursh :minutesm": "იწყება :hours სთ :minutes წთ-ში",
     "Starting now": "ახლა იწყება",
     "Upcoming / Future Days": "ხვალ და მომდევნო დღეებში",

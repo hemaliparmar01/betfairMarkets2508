@@ -13,6 +13,7 @@ function harness(alerts = [base], options = {}) {
     const matchStartLabels = {
         minutes: translations['Starts in :minutesm'],
         hoursMinutes: translations['Starts in :hoursh :minutesm'],
+        daysHours: translations['Starts in :daysd :hoursh'],
         now: translations['Starting now'],
     };
     const output = { innerHTML: '', textContent: '' };
@@ -340,8 +341,10 @@ test('start countdown appears below the league in both languages and views and a
                 [3600, 'Starts in 1h 0m', 'იწყება 1 სთ 0 წთ-ში'],
                 [6420, 'Starts in 1h 47m', 'იწყება 1 სთ 47 წთ-ში'],
                 [7200, 'Starts in 2h 0m', 'იწყება 2 სთ 0 წთ-ში'],
-                [86400, 'Starts in 24h 0m', 'იწყება 24 სთ 0 წთ-ში'],
-                [172800, 'Starts in 48h 0m', 'იწყება 48 სთ 0 წთ-ში'],
+                [86400, 'Starts in 1d 0h', 'იწყება 1 დღეში 0 სთ-ში'],
+                [172800, 'Starts in 2d 0h', 'იწყება 2 დღეში 0 სთ-ში'],
+                [86340, 'Starts in 23h 59m', 'იწყება 23 სთ 59 წთ-ში'],
+                [516960, 'Starts in 5d 23h', 'იწყება 5 დღეში 23 სთ-ში'],
                 [0, 'Starting now', 'ახლა იწყება'],
             ]) {
                 app.state.alerts[0].start_timestamp = now / 1000 + seconds;

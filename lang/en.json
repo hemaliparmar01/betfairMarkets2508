@@ -1539,6 +1539,7 @@
     "Starting in 1 Hour": "Starting in 1 Hour",
     "Starting in 3 Hours": "Starting in 3 Hours",
     "Starts in :minutesm": "Starts in :minutesm",
+    "Starts in :daysd :hoursh": "Starts in :daysd :hoursh",
     "Starts in :hoursh :minutesm": "Starts in :hoursh :minutesm",
     "Starting now": "Starting now",
     "Upcoming / Future Days": "Upcoming / Future Days",

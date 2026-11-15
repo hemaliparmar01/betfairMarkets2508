@@ -242,7 +242,7 @@
                 if (!root || !modal) return;
 
                 const state = { alerts: @json($pinnacleAlerts ?? []), archive: @json($pinnacleArchive), archiveDayEndsAt: @json($pinnacleArchiveEnd->timestamp * 1000), archiveHasMore: @json($pinnacleArchiveHasMore ?? false), archiveCursor: @json($pinnacleArchiveCursor ?? null), sport: @json($pinnacleArchive ? request('sport', 'all') : 'all'), mode: @json($pinnacleArchive ? request('mode', 'all') : 'all'), view: @json($pinnacleArchive ? request('view', 'simple') : 'simple'), marketFilter: @json($pinnacleArchive ? request('market_filter', 'all') : 'all'), timeFilter: @json($pinnacleArchive ? request('time_filter', 'all') : 'all'), connected: @json($pinnacleFeedConnected ?? false), feeds: @json($pinnacleFeeds ?? []), openAlertKey: null, collapsedGroups: new Set(), flashes: new Map() };
-                const matchStartLabels = {{ Illuminate\Support\Js::from(['minutes' => __('Starts in :minutesm'), 'hoursMinutes' => __('Starts in :hoursh :minutesm'), 'now' => __('Starting now')]) }};
+                const matchStartLabels = {{ Illuminate\Support\Js::from(['minutes' => __('Starts in :minutesm'), 'hoursMinutes' => __('Starts in :hoursh :minutesm'), 'daysHours' => __('Starts in :daysd :hoursh'), 'now' => __('Starting now')]) }};
                 const sportKey = value => { const key = String(value || '').toLowerCase().trim().replace(/\s+/g, '-'); return key === 'hockey' ? 'ice-hockey' : key; };
                 const matchDayFormat = new Intl.DateTimeFormat('en-CA', { timeZone: root.dataset.timezone || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' });
                 const matchStartFormat = new Intl.DateTimeFormat(document.documentElement.lang === 'ka' ? 'ka-GE' : 'en-GB', { timeZone: root.dataset.timezone || 'UTC', year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
@@ -435,9 +435,13 @@
                             } else if (secondsUntilStart > 0 && !isLive(first)) {
                                 const minutes = Math.floor(secondsUntilStart / 60);
                                 const hours = Math.floor(minutes / 60);
-                                countdown = hours > 0
-                                    ? matchStartLabels.hoursMinutes.replace(':hours', hours).replace(':minutes', minutes % 60)
-                                    : matchStartLabels.minutes.replace(':minutes', Math.max(1, minutes));
+                                if (hours >= 24) {
+                                    countdown = matchStartLabels.daysHours.replace(':days', Math.floor(hours / 24)).replace(':hours', hours % 24);
+                                } else {
+                                    countdown = hours > 0
+                                        ? matchStartLabels.hoursMinutes.replace(':hours', hours).replace(':minutes', minutes % 60)
+                                        : matchStartLabels.minutes.replace(':minutes', Math.max(1, minutes));
+                                }
                             }
                         }
                         const matchGroupKey = matchKey(first);
