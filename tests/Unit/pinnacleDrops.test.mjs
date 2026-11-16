@@ -460,3 +460,40 @@ test('late provider alerts sort by monitor arrival and keep their full seven min
     app.advance(1);
     assert.equal(app.evaluate('filtered().length'), 0);
 });
+
+
+test('Betfair quotes survive gaps, show movement, and stay out of the current-price filter while unavailable', () => {
+    const app = harness([{...base, bf_back: 2.1}]);
+    app.evaluate('receiveAlerts([{...state.alerts[0], bf_back: 1.95}]); render()');
+    assert.match(app.output.innerHTML, /2.10 → 1.95/);
+    app.evaluate('receiveAlerts([{...state.alerts[0], bf_back: null}]); render()');
+    assert.match(app.output.innerHTML, /2.10 → 1.95/);
+    assert.match(app.output.innerHTML, /Last available quote/);
+    assert.equal(app.evaluate('betfairPrice(state.alerts[0])'), null);
+    assert.equal(app.evaluate('betfairDisplayPrice(state.alerts[0])'), 1.95);
+    app.evaluate('receiveAlerts([{...state.alerts[0], bf_back: 1.8}]); render()');
+    assert.match(app.output.innerHTML, /2.10 → 1.80/);
+    assert.doesNotMatch(app.output.innerHTML, /Last available quote/);
+    app.advance(420001);
+    app.evaluate('receiveAlerts([]); render()');
+    assert.equal(app.state.alerts.length, 0);
+});
+
+test('unmatched Betfair markets stay blank and archive quotes never inherit live movement', () => {
+    const app = harness([{...base, bf_back: null}]);
+    app.evaluate('receiveAlerts([{...state.alerts[0], bf_back: null}]); render()');
+    assert.equal(app.evaluate('betfairDisplayPrice(state.alerts[0])'), null);
+    assert.doesNotMatch(app.output.innerHTML, /Last available quote/);
+    app.state.archive = true;
+    app.evaluate('receiveAlerts([{...state.alerts[0], bf_back: 2.2, bf_first_back: 3.1, bf_last_back: 2.8}]); render()');
+    assert.equal(app.evaluate('betfairMovement(state.alerts[0])'), '2.20');
+});
+
+
+test('partial snapshots retain the last Betfair quote without treating it as a fresh price', () => {
+    const app = harness([base]);
+    app.evaluate('receiveAlerts([]); render()');
+    assert.equal(app.evaluate('betfairPrice(state.alerts[0])'), null);
+    assert.equal(app.evaluate('betfairDisplayPrice(state.alerts[0])'), 1.54);
+    assert.match(app.output.innerHTML, /Last available quote/);
+});

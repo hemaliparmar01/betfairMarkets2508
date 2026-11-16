@@ -167,6 +167,7 @@ Route::post('contact-us', [ContactController::class, 'store'])->name('contact-us
 Route::middleware('auth:customers')->group(function (): void {
     Route::get('notifications', [NotificationController::class, 'notifications'])->name('notifications');
     Route::get('notifications/status', [NotificationController::class, 'status'])->name('notifications.status');
+    Route::get('notifications/popups', [NotificationController::class, 'popups'])->name('notifications.popups');
     Route::patch('notifications', [NotificationController::class, 'update'])->name('notifications.update');
     Route::post('notifications/telegram/connect', [NotificationController::class, 'connect'])->middleware('throttle:5,1')->name('notifications.connect');
     Route::delete('notifications/telegram', [NotificationController::class, 'disconnect'])->name('notifications.disconnect');

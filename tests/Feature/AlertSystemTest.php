@@ -231,7 +231,8 @@ class AlertSystemTest extends TestCase
         $this->assertSame(2.25, $payload['context']['draw_lay']);
         $this->assertSame(AlertService::STRATEGY['en'], $payload['templates']['en']['strategy_label']);
         $this->assertSame(AlertService::STRATEGY['ka'], $payload['templates']['ka']['strategy_label']);
-        $this->assertStringContainsString('10% of bankroll', app(AlertService::class)->text($payload));
+        $this->assertStringContainsString('Action: LAY THE DRAW (LTD)', app(AlertService::class)->text($payload));
+        $this->assertStringContainsString('Informational signal only. Trade responsibly.', app(AlertService::class)->text($payload));
         $this->assertSame($id, app(AlertService::class)->source($this->source()));
         $this->assertDatabaseCount('alerts', 1);
         Bus::assertDispatched(ProcessAlert::class, fn ($job) => $job->task === 'fanout');
@@ -277,10 +278,59 @@ class AlertSystemTest extends TestCase
         $this->assertDatabaseCount('alerts', 1);
     }
 
+    #[TestWith(["🚀🥳 GOOOOOAAAAAAALLLLL!\nMatch: Torino vs Monza 1912\nLeague: Coppa Italia\nScore: 0 - 1\n1st Half - 33:38"])]
+    #[TestWith(["Match: Torino vs Monza 1912\nLeague: Coppa Italia\nScore: 0 - 1\n1st Half - 33:38\n✅ Won"])]
+    #[TestWith(["Match: Torino vs Monza 1912\nLeague: Coppa Italia\nScore: 0 - 1\nTime: 45+2'\nStatus: SIGNAL WON ✅️"])]
+    #[TestWith(["Match: Torino vs Monza 1912\nLeague: Coppa Italia\nScore: 0 - 1\nTime: 33'\nPaid out ✅"])]
+    #[TestWith(["🚨 GOAL ALERT! 🚨\nMatch: Torino vs Monza 1912\nLeague: Coppa Italia\nScore: 0 - 1\nTime: 33'"])]
+    public function test_source_goal_formats_deliver_only_to_ltd_recipients(string $text): void
+    {
+        $this->fixture();
+        $customer = $this->customer();
+        $excluded = $this->customer(['tg_ltd' => false, 'tg_ht00' => true, 'popup_enabled' => false]);
+        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 80]])]);
+        $parent = app(AlertService::class)->source($this->source());
+        app(AlertService::class)->deliver($this->delivery($parent, $customer));
+        app(AlertService::class)->deliver($this->delivery($parent, $customer, 'platform'));
+        $this->travel(2)->seconds();
+        $goal = app(AlertService::class)->source($this->source($text));
+        $this->assertNotNull($goal);
+        app(AlertService::class)->deliver($this->delivery($goal, $customer));
+        app(AlertService::class)->deliver($this->delivery($goal, $customer, 'platform'));
+        $this->assertDatabaseHas('alert_deliveries', ['alert_id' => $goal, 'customer_id' => $customer->id, 'status' => 'sent']);
+        $this->assertDatabaseMissing('alert_deliveries', ['alert_id' => $goal, 'customer_id' => $excluded->id]);
+        $this->assertSame($goal, app(AlertService::class)->source($this->source($text)));
+        Http::assertSentCount(2);
+        Http::assertSent(fn ($request): bool => str_contains($request['text'], 'GOAL DETECTED!') && ! str_contains($request['text'], '🥳'));
+    }
+
+    #[TestWith(["Time: 48'"])]
+    #[TestWith(["2nd Half - 33:38\nTime: 33'"])]
+    #[TestWith(["Full Time\nTime: 33'"])]
+    public function test_source_rejects_goal_results_outside_first_half(string $period): void
+    {
+        $this->fixture();
+        app(AlertService::class)->source($this->source());
+        $this->assertNull(app(AlertService::class)->source($this->source("GOAL!\nMatch: Torino vs Monza 1912\nLeague: Coppa Italia\nScore: 0 - 1\n".$period)));
+        $this->assertDatabaseCount('alerts', 1);
+    }
+
+    #[TestWith(['ltd', '🟢'])]
+    #[TestWith(['ht00', '🔵'])]
+    #[TestWith(['00_70', '🔴'])]
+    #[TestWith(['fav_losing', '🟠'])]
+    #[TestWith(['prematch_drops', '🟡'])]
+    public function test_telegram_topic_headers_have_the_requested_color(string $type, string $indicator): void
+    {
+        $payload = ['alert_type' => $type, 'match' => 'Home vs Away', 'league' => 'League', 'minute' => 30, 'score' => '0 - 0',
+            'context' => ['movement' => ['from' => 2.2, 'to' => 2, 'market' => 'moneyline', 'selection' => 'Home']]];
+        $this->assertStringStartsWith($indicator.' BF MARKETS |', app(AlertService::class)->text($payload));
+    }
+
     public function test_goal_requires_valid_parent_and_only_reaches_parent_recipients(): void
     {
         $this->fixture();
-        $goal = $this->source("GOOOOAAAALLLLL!\nMatch: Torino vs Monza 1912\nLeague: Coppa Italia\nScore: 0 - 1\nTime: 48'");
+        $goal = $this->source("GOOOOAAAALLLLL!\nMatch: Torino vs Monza 1912\nLeague: Coppa Italia\nScore: 0 - 1\nTime: 33'");
         $this->assertNull(app(AlertService::class)->source($goal));
         $recipient = $this->customer();
         $parent = app(AlertService::class)->source($this->source());
@@ -1267,6 +1317,74 @@ class AlertSystemTest extends TestCase
                 $this->assertSame($expected, $id !== null, $type.' '.$market.' period '.$period);
             }
         }
+    }
+
+    public function test_popup_polling_recovers_ltd_and_goal_without_websocket_or_telegram_connection(): void
+    {
+        $this->fixture();
+        $customer = $this->customer(['telegram_chat_id' => null, 'telegram_available' => false, 'tg_ltd' => false]);
+        $parent = app(AlertService::class)->source($this->source());
+        $goal = app(AlertService::class)->source($this->source("GOAL! Torino 0-1 Monza 1912\n1st Half - 33:38"));
+        $this->assertNotNull($goal);
+        config(['services.telegram.enabled' => false]);
+        $this->actingAs($customer, 'customers');
+        $url = '/notifications/popups?after=0&since='.now()->subSeconds(30)->timestamp;
+        $response = $this->getJson($url)->assertOk()->assertHeader('Cache-Control', 'no-store, private')
+            ->assertJsonCount(2, 'alerts')->assertJsonPath('alerts.0.alert_id', (string) $parent)
+            ->assertJsonPath('alerts.1.alert_type', 'goal')->assertJsonPath('cursor', $goal)
+            ->assertJsonPath('alerts.0.templates.ka.strategy_label', AlertService::STRATEGY['ka'])
+            ->assertJsonPath('alerts.0.templates.en.strategy_label', AlertService::STRATEGY['en'])
+            ->assertJsonPath('alerts.0.url', '/football/market-activity?match=12345');
+        $this->assertArrayNotHasKey('context', $response->json('alerts.0'));
+        $this->getJson('/notifications/popups?after='.$goal.'&since=0')->assertOk()->assertJsonCount(0, 'alerts');
+        Http::assertNothingSent();
+    }
+
+    public function test_popup_polling_excludes_old_alerts_and_respects_mute_and_access(): void
+    {
+        $this->fixture();
+        $customer = $this->customer();
+        $id = app(AlertService::class)->source($this->source());
+        $this->actingAs($customer, 'customers');
+        $url = '/notifications/popups?after=0&since=0';
+        DB::table('alerts')->where('id', $id)->update(['created_at' => now()->subSeconds(91)]);
+        $this->getJson($url)->assertOk()->assertJsonCount(0, 'alerts');
+        DB::table('alerts')->where('id', $id)->update(['created_at' => now()]);
+        $customer->forceFill(['popup_enabled' => false])->save();
+        $this->getJson($url)->assertOk()->assertJsonPath('popup_enabled', false)->assertJsonPath('cursor', $id)->assertJsonCount(0, 'alerts');
+        $customer->forceFill(['popup_enabled' => true, 'is_blocked' => true])->save();
+        $this->getJson($url)->assertForbidden();
+    }
+
+    public function test_source_webhook_authenticates_and_queues_a_signal_for_the_ltd_worker(): void
+    {
+        $this->fixture();
+        $this->postJson('/notifications/telegram/source', $this->source())->assertForbidden();
+        Bus::assertNotDispatched(ProcessAlert::class);
+        $this->postJson('/notifications/telegram/source', $this->source(), ['X-BF-Source-Secret' => 'test-source'])->assertAccepted();
+        Bus::assertDispatched(ProcessAlert::class, function (ProcessAlert $job): bool {
+            if ($job->task !== 'source' || $job->queue !== 'alerts-ltd') {
+                return false;
+            }
+            $job->handle(app(AlertService::class));
+
+            return true;
+        });
+        $this->assertDatabaseHas('alerts', ['type' => 'ltd', 'match_id' => '12345']);
+        $this->assertDatabaseCount('alerts', 1);
+    }
+
+    public function test_source_check_rejects_login_or_missing_source_option(): void
+    {
+        $this->artisan('telegram:listen', ['--check' => true])->assertExitCode(1);
+        $this->artisan('telegram:listen', ['--source' => true, '--check' => true, '--login' => true])->assertExitCode(1);
+    }
+
+    public function test_popup_polling_requires_login_and_valid_cursor(): void
+    {
+        $this->getJson('/notifications/popups?after=0&since=0')->assertUnauthorized();
+        $this->actingAs($this->customer(), 'customers');
+        $this->getJson('/notifications/popups?after=-1&since=invalid')->assertUnprocessable()->assertJsonValidationErrors(['after', 'since']);
     }
 
     public function test_platform_broadcast_contains_both_languages_and_no_telegram_credentials(): void

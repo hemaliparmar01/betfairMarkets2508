@@ -2346,5 +2346,6 @@
     "Pinnacle market limit explanation": "Pinnacle Max Bet Limit (Market Liquidity Indicator)\n\nShows the maximum amount Pinnacle currently accepts on a single bet at this exact odd (not the total volume matched on the event).\n\nHow to read it:\n\nHigh Limit (e.g., €2,000+): Deep, mature market with strong confidence from Pinnacle. Odds drops here are backed by serious money and are much more reliable.\n\nLow Limit (e.g., €100–€300): Low-liquidity or early market. Even a small bet or routine trader adjustment can cause a sharp drop without real \"smart money\" behind it.\n\nPre-Match vs. Live: Limits naturally peak right before kickoff and drop significantly once the match goes Live.",
     "3 months": "3 months",
     "Save :amount GEL": "Save :amount GEL",
-    "Save €:amount": "Save €:amount"
+    "Save €:amount": "Save €:amount",
+    "Last available quote": "Last available quote"
 }

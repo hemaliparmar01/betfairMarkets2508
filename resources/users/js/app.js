@@ -260,50 +260,78 @@ if (notificationPage && notificationState) {
 
 if (alertContainer) {
     const receivedAlerts = new Set();
+    const showPlatformAlert = alert => {
+        if (alertContainer.dataset.popupEnabled !== '1' || !['ltd', 'goal'].includes(alert.alert_type) || receivedAlerts.has(alert.alert_id)) return;
+        receivedAlerts.add(alert.alert_id);
+        if (receivedAlerts.size > 200) receivedAlerts.delete(receivedAlerts.values().next().value);
+        const language = document.documentElement.lang.toLowerCase().split('-')[0];
+        const t = alert.templates[language] || alert.templates.en;
+        const popup = document.createElement('article');
+        popup.className = 'pointer-events-auto translate-x-0 rounded-2xl border border-[var(--border-brand-5)] bg-[rgb(var(--surface))] p-5 text-sm text-[rgb(var(--text-main))] shadow-xl transition-transform duration-300 dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--surface-soft))] dark:text-white';
+        popup.setAttribute('role', 'status');
+        popup.innerHTML = `<header class="flex items-start justify-between gap-3 border-b border-[var(--border-brand-5)] pb-3"><strong data-title></strong><button type="button" data-close class="text-xl" aria-label="${(globalThis.bfTranslations?.["Close"] ?? "Close")}">×</button></header><p data-live class="mt-3 font-bold text-[var(--text-red-600)]"></p><p data-match class="mt-2 font-bold"></p><p data-league class="mt-1 text-[rgb(var(--text-muted))] dark:text-[rgb(var(--text-soft))]"></p><p data-time class="mt-3"></p><p data-odds class="mt-2 font-bold"></p><p data-strategy class="mt-2 font-semibold"></p><footer class="mt-4 flex flex-wrap gap-3 border-t border-[var(--border-brand-5)] pt-3"><a data-view class="rounded-full bg-[var(--surface-primary)] px-4 py-2 font-bold text-white"></a><button type="button" data-mute class="rounded-full border border-[var(--border-brand-5)] px-4 py-2"></button></footer>`;
+        popup.querySelector('[data-title]').textContent = `${alert.alert_type === 'goal' ? '⚽' : '🔔'} ${t.title}`;
+        popup.querySelector('[data-live]').textContent = alert.alert_type === 'goal' ? '' : t.status_label;
+        popup.querySelector('[data-match]').textContent = `⚽ ${alert.match}`;
+        popup.querySelector('[data-league]').textContent = `🏆 ${alert.league}`;
+        popup.querySelector('[data-time]').textContent = alert.alert_type === 'goal' ? `${t.score_label}: ${alert.score} · ${alert.minute}' ${t.minute_label} (${t.half_label})` : `${alert.minute}' ${t.minute_label} | ${t.score_label}: ${alert.score}`;
+        popup.querySelector('[data-odds]').textContent = alert.alert_type === 'ltd' ? `📈 ${t.odds_label}: ${alert.draw_lay == null ? '—' : Number(alert.draw_lay).toFixed(2)}` : '';
+        popup.querySelector('[data-strategy]').textContent = alert.alert_type === 'goal' ? `✅ ${t.status_label}` : `🎯 ${t.strategy_label}`;
+        const view = popup.querySelector('[data-view]');
+        view.textContent = t.view_btn;
+        const target = new URL(alert.url, window.location.origin);
+        view.href = target.origin === window.location.origin ? target.href : '/';
+        const mute = popup.querySelector('[data-mute]');
+        mute.textContent = `🔕 ${t.mute_btn || ((globalThis.bfTranslations?.["Don't show again"] ?? "Don't show again"))}`;
+        mute.addEventListener('click', async () => {
+            if (!window.confirm((globalThis.bfTranslations?.["Disable platform pop-up alerts? Telegram preferences will stay unchanged."] ?? "Disable platform pop-up alerts? Telegram preferences will stay unchanged."))) return;
+            mute.disabled = true;
+            try {
+                updateNotificationStatus(await notificationRequest(alertContainer.dataset.preferencesUrl, 'PATCH', { popup_enabled: false }), true);
+            } catch (error) {
+                mute.textContent = error.message;
+                mute.disabled = false;
+            }
+        });
+        let remaining = 8000;
+        let started = performance.now();
+        let dismiss = setTimeout(() => popup.remove(), remaining);
+        popup.querySelector('[data-close]').addEventListener('click', () => { clearTimeout(dismiss); popup.remove(); });
+        popup.addEventListener('mouseenter', () => { clearTimeout(dismiss); remaining = Math.max(0, remaining - (performance.now() - started)); });
+        popup.addEventListener('mouseleave', () => { started = performance.now(); dismiss = setTimeout(() => popup.remove(), remaining); });
+        if (alertContainer.children.length >= 3) alertContainer.firstElementChild.remove();
+        alertContainer.append(popup);
+        popup.animate?.([{ transform: 'translateX(110%)', opacity: 0 }, { transform: 'translateX(0)', opacity: 1 }], { duration: 300 });
+    };
     window.Echo.private(`customers.${alertContainer.dataset.customerId}.alerts`)
         .listen('.notifications.changed', state => updateNotificationStatus(state))
         .listen('.notification.tested', state => { if (notificationFeedback) notificationFeedback.textContent = state.message; })
-        .listen('.alert.received', alert => {
-            if (alertContainer.dataset.popupEnabled !== '1' || !['ltd', 'goal'].includes(alert.alert_type) || receivedAlerts.has(alert.alert_id)) return;
-            receivedAlerts.add(alert.alert_id);
-            if (receivedAlerts.size > 200) receivedAlerts.delete(receivedAlerts.values().next().value);
-            const language = document.documentElement.lang.toLowerCase().split('-')[0];
-            const t = alert.templates[language] || alert.templates.en;
-            const popup = document.createElement('article');
-            popup.className = 'pointer-events-auto translate-x-0 rounded-2xl border border-[var(--border-brand-5)] bg-[rgb(var(--surface))] p-5 text-sm text-[rgb(var(--text-main))] shadow-xl transition-transform duration-300 dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--surface-soft))] dark:text-white';
-            popup.setAttribute('role', 'status');
-            popup.innerHTML = `<header class="flex items-start justify-between gap-3 border-b border-[var(--border-brand-5)] pb-3"><strong data-title></strong><button type="button" data-close class="text-xl" aria-label="${(globalThis.bfTranslations?.["Close"] ?? "Close")}">×</button></header><p data-live class="mt-3 font-bold text-[var(--text-red-600)]"></p><p data-match class="mt-2 font-bold"></p><p data-league class="mt-1 text-[rgb(var(--text-muted))] dark:text-[rgb(var(--text-soft))]"></p><p data-time class="mt-3"></p><p data-odds class="mt-2 font-bold"></p><p data-strategy class="mt-2 font-semibold"></p><footer class="mt-4 flex flex-wrap gap-3 border-t border-[var(--border-brand-5)] pt-3"><a data-view class="rounded-full bg-[var(--surface-primary)] px-4 py-2 font-bold text-white"></a><button type="button" data-mute class="rounded-full border border-[var(--border-brand-5)] px-4 py-2"></button></footer>`;
-            popup.querySelector('[data-title]').textContent = `${alert.alert_type === 'goal' ? '⚽' : '🔔'} ${t.title}`;
-            popup.querySelector('[data-live]').textContent = alert.alert_type === 'goal' ? '' : t.status_label;
-            popup.querySelector('[data-match]').textContent = `⚽ ${alert.match}`;
-            popup.querySelector('[data-league]').textContent = `🏆 ${alert.league}`;
-            popup.querySelector('[data-time]').textContent = alert.alert_type === 'goal' ? `${t.score_label}: ${alert.score} · ${alert.minute}' ${t.minute_label} (${t.half_label})` : `${alert.minute}' ${t.minute_label} | ${t.score_label}: ${alert.score}`;
-            popup.querySelector('[data-odds]').textContent = alert.alert_type === 'ltd' ? `📈 ${t.odds_label}: ${alert.draw_lay == null ? '—' : Number(alert.draw_lay).toFixed(2)}` : '';
-            popup.querySelector('[data-strategy]').textContent = alert.alert_type === 'goal' ? `✅ ${t.status_label}` : `🎯 ${t.strategy_label}`;
-            const view = popup.querySelector('[data-view]');
-            view.textContent = t.view_btn;
-            const target = new URL(alert.url, window.location.origin);
-            view.href = target.origin === window.location.origin ? target.href : '/';
-            const mute = popup.querySelector('[data-mute]');
-            mute.textContent = `🔕 ${t.mute_btn || ((globalThis.bfTranslations?.["Don't show again"] ?? "Don't show again"))}`;
-            mute.addEventListener('click', async () => {
-                if (!window.confirm((globalThis.bfTranslations?.["Disable platform pop-up alerts? Telegram preferences will stay unchanged."] ?? "Disable platform pop-up alerts? Telegram preferences will stay unchanged."))) return;
-                mute.disabled = true;
-                try {
-                    updateNotificationStatus(await notificationRequest(alertContainer.dataset.preferencesUrl, 'PATCH', { popup_enabled: false }), true);
-                } catch (error) {
-                    mute.textContent = error.message;
-                    mute.disabled = false;
-                }
-            });
-            let remaining = 8000;
-            let started = performance.now();
-            let dismiss = setTimeout(() => popup.remove(), remaining);
-            popup.querySelector('[data-close]').addEventListener('click', () => { clearTimeout(dismiss); popup.remove(); });
-            popup.addEventListener('mouseenter', () => { clearTimeout(dismiss); remaining = Math.max(0, remaining - (performance.now() - started)); });
-            popup.addEventListener('mouseleave', () => { started = performance.now(); dismiss = setTimeout(() => popup.remove(), remaining); });
-            if (alertContainer.children.length >= 3) alertContainer.firstElementChild.remove();
-            alertContainer.append(popup);
-            popup.animate([{ transform: 'translateX(110%)', opacity: 0 }, { transform: 'translateX(0)', opacity: 1 }], { duration: 300 });
-        });
+        .listen('.alert.received', showPlatformAlert);
+
+    let popupCursor = 0;
+    let pollingPopups = false;
+    let popupPollingStopped = false;
+    const pollPlatformAlerts = async () => {
+        if (pollingPopups || popupPollingStopped || !notificationViewActive || document.hidden) return;
+        pollingPopups = true;
+        try {
+            const url = new URL(alertContainer.dataset.popupsUrl, window.location.origin);
+            url.searchParams.set('after', popupCursor);
+            url.searchParams.set('since', alertContainer.dataset.since);
+            const data = await notificationRequest(url, 'GET');
+            if (!notificationViewActive) return;
+            alertContainer.dataset.popupEnabled = data.popup_enabled ? '1' : '0';
+            if (!data.popup_enabled) alertContainer.replaceChildren();
+            data.alerts.forEach(showPlatformAlert);
+            popupCursor = data.cursor;
+        } catch (error) {
+            if ([401, 403, 419].includes(error.status)) popupPollingStopped = true;
+        } finally {
+            pollingPopups = false;
+        }
+    };
+    window.setInterval(pollPlatformAlerts, 5000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) pollPlatformAlerts(); });
+    window.addEventListener('pageshow', pollPlatformAlerts);
+    pollPlatformAlerts();
 }

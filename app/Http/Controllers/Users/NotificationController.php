@@ -24,6 +24,33 @@ class NotificationController extends Controller
         return response()->json($alerts->status($request->user('customers')))->header('Cache-Control', 'no-store');
     }
 
+    public function popups(Request $request, AlertService $alerts): JsonResponse
+    {
+        $data = $request->validate(['after' => ['required', 'integer', 'min:0'], 'since' => ['required', 'integer', 'min:0']]);
+        $customer = $request->user('customers');
+        abort_unless($alerts->eligible($customer), 403);
+        $rows = $customer->popup_enabled
+            ? DB::table('alerts')->whereIn('type', ['ltd', 'goal'])->where('id', '>', $data['after'])
+                ->where('created_at', '>=', date('Y-m-d H:i:s', max((int) $data['since'], now()->subSeconds(90)->timestamp)))
+                ->orderBy('id')->limit(100)->get(['id', 'match_id', 'payload'])
+            : collect();
+        $popups = $rows->map(static function (object $alert): array {
+            $payload = json_decode($alert->payload, true);
+
+            return [
+                ...array_intersect_key($payload, array_flip(['alert_type', 'match_id', 'match', 'league', 'score', 'minute', 'templates'])),
+                'alert_id' => (string) $alert->id,
+                'draw_lay' => $payload['context']['draw_lay'] ?? null,
+                'url' => route('football.market-activity', ['match' => $alert->match_id], false),
+            ];
+        });
+
+        $cursor = $customer->popup_enabled ? ($rows->last()?->id ?? (int) $data['after']) : (int) DB::table('alerts')->max('id');
+
+        return response()->json(['alerts' => $popups, 'cursor' => $cursor, 'popup_enabled' => (bool) $customer->popup_enabled])
+            ->header('Cache-Control', 'no-store');
+    }
+
     public function update(Request $request, AlertService $alerts): JsonResponse
     {
         $data = $request->validate([

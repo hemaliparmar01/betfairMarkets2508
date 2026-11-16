@@ -86,6 +86,41 @@ class ServiceManagerTest(unittest.TestCase):
             '/www/wwwroot/staging777.bfmarketsanalytics.com', str(server / 'services-manager.py'), 'status', 'betfair',
         ], result.stdout.splitlines())
 
+    def test_server_source_check_runs_inside_configured_container_without_changing_services(self):
+        with patch.object(server_module.platform, 'system', return_value='Linux'), patch.dict(os.environ, {
+            'SERVICES_CONFIG': str(SOURCE.parent.parent / 'server/services-manager.json'),
+            'SERVICES_ENV': 'production', 'SERVICES_CONTAINER': 'app', 'SERVICES_CONTAINER_ROOT': '/srv/project',
+        }):
+            manager = server_module.Manager()
+            with patch.object(server_module, 'run', return_value=subprocess.CompletedProcess([], 0, 'Source accessible\n', '')) as command:
+                manager.execute('check', 'telegram-source')
+                command.assert_called_once_with(['docker', 'exec', '-w', '/srv/project', 'app', 'php', 'artisan', 'telegram:listen', '--source', '--check'], False)
+
+    def test_server_source_check_propagates_failures_and_supports_native_php(self):
+        with patch.object(server_module.platform, 'system', return_value='Linux'), patch.dict(os.environ, {
+            'SERVICES_CONFIG': str(SOURCE.parent.parent / 'server/services-manager.json'), 'SERVICES_ENV': 'production',
+        }):
+            manager = server_module.Manager()
+            with patch.object(server_module, 'run', return_value=subprocess.CompletedProcess([], 7, '', 'Source unavailable\n')) as command:
+                with self.assertRaises(SystemExit) as failure:
+                    manager.execute('check', 'telegram-source')
+                self.assertEqual(7, failure.exception.code)
+                command.assert_called_once_with(['/bin/sh', str(self.root / 'artisan'), 'telegram:listen', '--source', '--check'], False)
+
+    def test_server_source_check_rejects_other_services_and_missing_container_directory(self):
+        with patch.object(server_module.platform, 'system', return_value='Linux'), patch.dict(os.environ, {
+            'SERVICES_CONFIG': str(SOURCE.parent.parent / 'server/services-manager.json'), 'SERVICES_ENV': 'production',
+            'SERVICES_CONTAINER': 'app',
+        }):
+            manager = server_module.Manager()
+            with patch.object(server_module, 'run') as command:
+                for name in [None, 'betfair']:
+                    with self.assertRaisesRegex(ValueError, 'check telegram-source'):
+                        manager.execute('check', name)
+                with self.assertRaisesRegex(ValueError, 'SERVICES_CONTAINER_ROOT'):
+                    manager.execute('check', 'telegram-source')
+                command.assert_not_called()
+
     def test_existing_telegram_entry_point_forwards_to_local_listener_without_changing_arguments(self):
         entry = SOURCE.parent.parent / 'telegram-listener.py'
 

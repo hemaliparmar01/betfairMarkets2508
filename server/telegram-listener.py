@@ -21,12 +21,14 @@ session.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
 session.parent.chmod(0o700)
 client = TelegramClient(str(session), int(os.environ['TELEGRAM_API_ID']),
                         os.environ['TELEGRAM_API_HASH'], sequential_updates=True,
-                        auto_reconnect=True, catch_up=True)
+                        auto_reconnect=True)
 
 
 async def main():
-    await client.connect()
-    if not await client.is_user_authorized():
+    if '--check' in sys.argv:
+        print('Checking source connection...', flush=True)
+    await asyncio.wait_for(client.connect(), timeout=20)
+    if not await asyncio.wait_for(client.is_user_authorized(), timeout=15):
         if '--login' not in sys.argv:
             raise SystemExit('Owner login required: php artisan telegram:listen --source --login')
         await client.start()
@@ -37,7 +39,13 @@ async def main():
         await client.disconnect()
         return
     source = os.environ.get('TELEGRAM_SOURCE_CHANNEL', 'wageroddss')
-    entity = await client.get_entity(source)
+    if '--check' in sys.argv:
+        print('Source session authorized. Checking channel access...', flush=True)
+    entity = await asyncio.wait_for(client.get_entity(source), timeout=15)
+    if '--check' in sys.argv:
+        print('Source session authorized and channel accessible. No alerts were delivered.', flush=True)
+        await client.disconnect()
+        return
     ocr = shutil.which('tesseract')
     if not ocr:
         print('Tesseract is unavailable. Telegram image alerts require it.', file=sys.stderr)
@@ -72,7 +80,7 @@ async def main():
         payload = json.dumps({'source': source, 'message_id': event.id,
                               'sent_at': int((event.edit_date or event.date).timestamp()),
                               'text': text[:8192],
-                              'reply_text': (reply.raw_text or '') if reply else None}).encode()
+                              'reply_text': (reply.raw_text or '')[:8192] if reply else None}).encode()
 
         def submit():
             request = urllib.request.Request(os.environ['BF_SOURCE_URL'], data=payload,
@@ -94,6 +102,7 @@ async def main():
                 pass
             await asyncio.sleep(5)
 
+    await client.catch_up()
     print('Passive source listener connected. No messages, reactions or forwards are sent.')
     await client.run_until_disconnected()
 
@@ -102,5 +111,5 @@ try:
     asyncio.run(main())
 except (KeyboardInterrupt, SystemExit):
     raise
-except Exception:
-    raise SystemExit('Source connection failed. Verify credentials, session and source membership.')
+except Exception as error:
+    raise SystemExit(f'Source connection failed ({type(error).__name__}). Verify network access, credentials, session and source membership.')

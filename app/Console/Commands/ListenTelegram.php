@@ -11,12 +11,17 @@ use Throwable;
 
 class ListenTelegram extends Command
 {
-    protected $signature = 'telegram:listen {--source : Run the passive source-channel listener} {--login : Authorize the source account interactively} {--once : Read one batch of bot updates}';
+    protected $signature = 'telegram:listen {--source : Run the passive source-channel listener} {--login : Authorize the source account interactively} {--check : Check source authorization and channel access without delivering alerts} {--once : Read one batch of bot updates}';
 
     protected $description = 'Receive Telegram bot commands locally or run the read-only source listener';
 
     public function handle(AlertService $alerts): int
     {
+        if ($this->option('check') && (! $this->option('source') || $this->option('login'))) {
+            $this->error('Use --source --check without --login for a read-only source check.');
+
+            return self::FAILURE;
+        }
         if (! config('services.telegram.enabled')) {
             $this->error('Configure Telegram secrets and enable BF_ALERTS_ENABLED first.');
 
@@ -29,7 +34,7 @@ class ListenTelegram extends Command
                 return self::FAILURE;
             }
             $listener = base_path(PHP_OS_FAMILY === 'Linux' ? 'server/telegram-listener.py' : 'local/telegram-listener.py');
-            $process = new Process(array_filter([config('services.telegram.python'), $listener, $this->option('login') ? '--login' : null]), base_path(), [
+            $process = new Process(array_filter([config('services.telegram.python'), $listener, $this->option('login') ? '--login' : null, $this->option('check') ? '--check' : null]), base_path(), [
                 'TELEGRAM_API_ID' => (string) config('services.telegram.api_id'), 'TELEGRAM_API_HASH' => config('services.telegram.api_hash'),
                 'TELEGRAM_SOURCE_CHANNEL' => config('services.telegram.source_channel'), 'TELEGRAM_SESSION_FILE' => config('services.telegram.session_file'),
                 'TELEGRAM_SOURCE_SECRET' => config('services.telegram.source_secret'), 'BF_SOURCE_URL' => rtrim(config('app.url'), '/').'/notifications/telegram/source',

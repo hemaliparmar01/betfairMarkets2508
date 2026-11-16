@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Native launchd/systemd adapter. Does not run Laravel or supervise children itself."""
+"""Native service adapter with one-off source checks; supervision stays in systemd/launchd."""
 import argparse
 import fcntl
 import json
@@ -174,6 +174,24 @@ class Manager:
 
     def execute(self, action, name=None):
         selected = self.selected(name)
+        if action == 'check':
+            if name != 'telegram-source' or len(selected) != 1:
+                raise ValueError('Use check telegram-source for the read-only LTD source health check')
+            arguments = ['telegram:listen', '--source', '--check']
+            container = os.environ.get('SERVICES_CONTAINER')
+            if container:
+                directory = os.environ.get('SERVICES_CONTAINER_ROOT')
+                if not directory or not Path(directory).is_absolute():
+                    raise ValueError('Set SERVICES_CONTAINER_ROOT to the application directory inside Docker')
+                command = ['docker', 'exec', '-w', directory, container, 'php', 'artisan'] + arguments
+            else:
+                command = [self.php, str(self.root / 'artisan')] + arguments
+            result = run(command, False)
+            print(result.stdout, end='')
+            print(result.stderr, end='', file=sys.stderr)
+            if result.returncode:
+                raise SystemExit(result.returncode)
+            return
         if action == 'validate':
             for key, spec in selected.items():
                 if self.mac or os.environ.get('SERVICES_USER'):
@@ -348,13 +366,13 @@ class Manager:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['start', 'stop', 'restart', 'status', 'logs', 'reload', 'validate', 'prepare', 'install', 'configure-recovery'])
+    parser.add_argument('action', choices=['start', 'stop', 'restart', 'status', 'logs', 'check', 'reload', 'validate', 'prepare', 'install', 'configure-recovery'])
     parser.add_argument('service', nargs='?')
     args = parser.parse_args()
     manager = Manager()
     manager.state.mkdir(parents=True, exist_ok=True)
     with (manager.state / 'manager.lock').open('w') as lock:
-        if args.action not in ('logs', 'status', 'validate'):
+        if args.action not in ('logs', 'status', 'validate', 'check'):
             fcntl.flock(lock, fcntl.LOCK_EX)
         manager.execute(args.action, args.service)
 

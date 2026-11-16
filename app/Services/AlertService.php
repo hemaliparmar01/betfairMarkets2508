@@ -342,19 +342,19 @@ class AlertService
         $clean = static function (string $text): string {
             $lines = preg_split('/\R/u', $text);
 
-            return trim(implode("\n", array_filter($lines, static fn (string $line): bool => ! preg_match(
+            return trim(preg_replace('/[\p{So}\p{Sk}\x{FE0F}\x{200D}]/u', '', implode("\n", array_filter($lines, static fn (string $line): bool => ! preg_match(
                 '~https?://|t\.me/|\b(?:1xbet|promo(?:tion|\s*code)?|code\s+pomo|register|registration|bonus|deposit|referral|advertisement)\b~i', $line
-            ))));
+            )))));
         };
         $text = $clean((string) ($message['text'] ?? ''));
         $context = trim($text."\n".$clean((string) ($message['reply_text'] ?? '')));
-        $goal = preg_match('/(?:^|\n)\s*(?:⚽\s*)?go+a+l+(?:!+(?=\s|$)|(?=\h+(?:Score:|[^\n]+\h+\d{1,2}\h*[-:]\h*\d{1,2})))/iu', $text) === 1;
-        $goal = $goal || preg_match('/\bStatus\s*:\s*(?:Won|Paid\s*out)\b/im', $text) === 1;
+        $goal = preg_match('/(?:^|\n)\s*(?:⚽\s*)?go+a+l+(?:\h+alert)?(?:!+(?=\s|$)|(?=\h+(?:Score:|[^\n]+\h+\d{1,2}\h*[-:]\h*\d{1,2})))/iu', $text) === 1;
+        $goal = $goal || preg_match('/^\h*(?:Status\s*:\s*)?(?:Signal\h+)?(?:Won|Paid\s*out)[\h\p{So}\p{Sk}\x{FE0F}\x{200D}!]*$/imu', $text) === 1;
         $hasMinute = preg_match('/\b(\d{1,3}(?:\+\d{1,2})?)\s*[\x{0027}\x{2019}\x{2032}]/u', $text, $minute)
             || preg_match('/\b(?:1st\s*half\s*[-–:]|time\s+elapsed\s*:)\s*(\d{1,2}):[0-5]\d\b/iu', $text, $minute);
         $hasScore = preg_match('~(?<![\d:/-])(\d{1,2})\h*[-:–]\h*(\d{1,2})(?![\d:/-])~u', preg_replace('/^.*(?:1st\s*half\s*[-–:]|time\s+elapsed\s*:).*$/imu', '', $text), $score);
         if (! $goal && ! preg_match('/^\h*(?:(?:Market|Prediction|Selection)\h*:\h*)?(?:Totals?\.?\h*)?(?:Over\h*\(?0[.,]5\)?(?:\h*Goals?)?\h*[.\-–:]?\h*(?:1st\h*half|first\h*half|HT)|(?:1st\h*half|first\h*half|HT)\h*[.\-–:]?\h*Over\h*\(?0[.,]5\)?(?:\h*Goals?)?)(?=\h|$)/imu', $text)) {
-            Log::debug('Telegram source post did not contain a supported LTD market.', ['message_id' => $message['message_id']]);
+            Log::info('Telegram source post did not contain a supported LTD market.', ['message_id' => $message['message_id']]);
 
             return null;
         }
@@ -373,7 +373,7 @@ class AlertService
             $hasLeague = preg_match('/^\h*Football[.\h]+[^\n.]+\.\h+([^\n]+)$/mi', $text, $league);
         }
         if (! $hasTeams || (! $goal && ! $hasLeague)) {
-            Log::debug('Telegram source match details could not be parsed.', ['message_id' => $message['message_id']]);
+            Log::info('Telegram source match details could not be parsed.', ['message_id' => $message['message_id']]);
 
             return null;
         }
@@ -397,7 +397,7 @@ class AlertService
                 && ($competition === null ? DB::table('alerts')->where('match_id', $match->sports_api_pro_match_id)->where('type', 'ltd')->exists()
                     : $resolver->teamSimilarity($normalizeLeague($match->tournament ?? ''), $normalizeLeague($competition)) >= 80));
         if ($candidates->count() !== 1) {
-            Log::debug('Telegram source fixture could not be resolved uniquely.', ['message_id' => $message['message_id'], 'matches' => $candidates->count()]);
+            Log::info('Telegram source fixture could not be resolved uniquely.', ['message_id' => $message['message_id'], 'matches' => $candidates->count()]);
 
             return null;
         }
@@ -407,7 +407,8 @@ class AlertService
             return null;
         }
         if ($goal) {
-            if (! $hasScore || ! $hasMinute) {
+            if (! $hasScore || ! $hasMinute || (! str_starts_with($minute[1], '45+') && (int) $minute[1] > 45)
+                || preg_match('/^\h*(?:(?:Status|Period|Half)\h*:\h*)?(?:2nd\h*half|second\h*half|full\h*time|half\h*time)\b/imu', $text)) {
                 return null;
             }
             $parent = DB::table('alerts')->where('type', 'ltd')->where('match_id', (string) $match['sportsApiPro_match_id'])->first();
@@ -421,7 +422,10 @@ class AlertService
                 return null;
             }
 
-            return $this->process('goal', $match, ['parent_alert_id' => $parent->id, 'score' => $score[1].' - '.$score[2], 'minute' => $minute[1]]);
+            $id = $this->process('goal', $match, ['parent_alert_id' => $parent->id, 'score' => $score[1].' - '.$score[2], 'minute' => $minute[1]]);
+            Log::info('Telegram source goal processed.', ['message_id' => $message['message_id'], 'alert_id' => $id]);
+
+            return $id;
         }
         if (($match['result_status'] ?? null) === 'Prematch' && $hasMinute && $hasScore) {
             $match['result_status'] = 'Live';
@@ -444,7 +448,10 @@ class AlertService
             $context['score'] = $score[1].' - '.$score[2];
         }
 
-        return $this->process('ltd', $match, $context);
+        $id = $this->process('ltd', $match, $context);
+        Log::info('Telegram source LTD processed.', ['message_id' => $message['message_id'], 'alert_id' => $id]);
+
+        return $id;
     }
 
     /** @param array<string, mixed> $match @param array<string, mixed> $context */
@@ -846,6 +853,10 @@ class AlertService
                 DB::table('alert_deliveries')->where('id', $deliveryId)->update(['status' => $status, 'error' => $error, 'remote_id' => $remoteId,
                     'delivered_at' => $status === 'sent' ? now() : null, 'updated_at' => now()]);
 
+                if (in_array($alert->type, ['ltd', 'goal'], true)) {
+                    Log::info('LTD alert delivery processed.', ['alert_id' => $alert->id, 'delivery_id' => $deliveryId, 'channel' => $delivery->channel, 'status' => $status]);
+                }
+
                 if ($alert->type === 'test' && $status !== 'retry') {
                     Broadcast::private('customers.'.$customer->id.'.alerts')->as('notification.tested')->with(['alert_id' => (string) $alert->id, 'sent' => $status === 'sent', 'message' => $status === 'sent' ? 'Test notification sent successfully.' : $error])->send();
                 }
@@ -873,10 +884,10 @@ class AlertService
         $time = str_pad((string) ($payload['minute'] ?? '—'), 2, '0', STR_PAD_LEFT);
         $score = $payload['score'] ?? '—';
         if ($type === 'goal') {
-            return "⚽️ GOAL DETECTED! | BF MARKETS UPDATE\n\n{$base}\n🔢 New Score: {$score}\n⏱ Time: {$time}' min (1st Half)\n\n✅ Status: ".self::STRATEGY['en'].' Successful!';
+            return "⚽️ GOAL DETECTED! | BF MARKETS UPDATE\n\n{$base}\n🔢 New Score: {$score}\n⏱ Time: {$time}' min (1st Half)\n\n✅ Status: SIGNAL WON\n💰 ".self::STRATEGY['en']." Successful!\n\n⚠️ Informational signal only. Trade responsibly.";
         }
         if ($type === 'ltd') {
-            return "🔔 BF MARKETS | ALERT DETECTED\n\n🎯 Filter: ".self::STRATEGY['en']."\n{$base}\n⏱ Time: {$time}' min | Score: {$score}\n📈 1st Half Draw Odds: ".(isset($payload['context']['draw_lay']) ? number_format($payload['context']['draw_lay'], 2) : '—')."\n\n💡 Risk Tip: Recommended max stake: 10% of bankroll.";
+            return "🟢 BF MARKETS | ALERT DETECTED\n\n🎯 Filter: ".self::STRATEGY['en']."\n{$base}\n⏱ Time: {$time}' min (1st Half) | Score: {$score}\n📈 1st Half Draw Odds: ".(isset($payload['context']['draw_lay']) ? number_format($payload['context']['draw_lay'], 2) : '—')."\n📊 Action: LAY THE DRAW (LTD)\n💡 Strategy: Lay the draw in the 1st half.\n\n⚠️ Informational signal only. Trade responsibly.";
         }
         if (in_array($type, ['prematch_drops', 'market_shock'], true)) {
             $m = $payload['context']['movement'];
@@ -886,7 +897,7 @@ class AlertService
             $kickoff = isset($payload['kickoff']) ? Carbon::parse($payload['kickoff'])->timezone(getCurrentUserTimezone())->format('d M H:i') : '—';
             $shock = $type === 'market_shock';
             $line = is_numeric($m['point'] ?? null) ? ' '.$m['point'] : '';
-            $text = ($shock ? '⚡️ BF MARKETS | MARKET SHOCK DETECTED' : '📉 BF MARKETS | PREMATCH DROP ALERT')
+            $text = ($shock ? '⚡️ BF MARKETS | MARKET SHOCK DETECTED' : '🟡 BF MARKETS | PREMATCH DROP ALERT')
                 ."\n\n🎯 Filter: ".($shock ? 'Market Shock Detector' : 'Betfair > Pinnacle Drop')."\n{$base}\n⏰ Kickoff: {$kickoff}\n\n📊 Market: ".str_replace('_', ' ', $m['market']).$line.' ('.$m['selection'].")\n📈 Odds Movement: {$from} 📉 {$to}".($drop === null ? '' : " (-{$drop}% Drop)");
 
             if (! $shock && $betfairBack !== null) {
@@ -896,7 +907,8 @@ class AlertService
             return $text.($shock ? "\n💥 Volume Surge: ".($m['volume'] ?? 'No data available') : "\n🔥 Price Drop: ".($drop === null ? '—' : "-{$drop}%"));
         }
         $label = ['ht00' => 'HT 0-0 (Half Time 0-0)', '00_70' => "0-0 @ 70'", 'fav_losing' => 'Favorite Losing In-Play'][$type];
-        $text = "🔔 BF MARKETS | ALERT DETECTED\n\n🎯 Filter: {$label}\n{$base}\n".($type === 'ht00' ? '⏱ Status: Half Time' : "⏱ Time: {$time}' min")." | Score: {$score}";
+        $indicator = ['ht00' => '🔵', '00_70' => '🔴', 'fav_losing' => '🟠'][$type];
+        $text = "{$indicator} BF MARKETS | ALERT DETECTED\n\n🎯 Filter: {$label}\n{$base}\n".($type === 'ht00' ? '⏱ Status: Half Time' : "⏱ Time: {$time}' min")." | Score: {$score}";
         $odds = [];
         foreach ($payload['markets']['MATCH_ODDS'] ?? [] as $runner) {
             if ($type === 'ht00' && (! empty($runner['suspended']) || in_array($runner['market_status'] ?? 'OPEN', ['SUSPENDED', 'CLOSED'], true))) {
