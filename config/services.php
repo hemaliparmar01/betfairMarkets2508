@@ -16,14 +16,14 @@ return [
         'client_id' => env('BOG_CLIENT_ID'),
         'secret' => env('BOG_CLIENT_SECRET'),
         'public_key' => env('BOG_CALLBACK_PUBLIC_KEY'),
-        'recurring_enabled' => env('BOG_RECURRING_ENABLED', false),
+        'recurring_enabled' => env('BOG_RECURRING_ENABLED', true),
     ],
     'flitt' => [
         'base_url' => env('FLITT_BASE_URL', 'https://pay.flitt.com'),
         'merchant_id' => env('FLITT_MERCHANT_ID'),
         'key' => env('FLITT_PAYMENT_KEY'),
         'currency' => env('FLITT_CURRENCY', 'EUR'),
-        'recurring_enabled' => env('FLITT_RECURRING_ENABLED', false),
+        'recurring_enabled' => env('FLITT_RECURRING_ENABLED', true),
         'cycles' => (int) env('FLITT_SUBSCRIPTION_CYCLES', 120),
     ],
 

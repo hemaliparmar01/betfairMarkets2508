@@ -45,7 +45,16 @@ class TennisSyncController extends Controller
             }
         }
 
-        $label = preg_replace('/ - (?:R\d+|Round \d+|Qualifiers?|Quarterfinals?|Semifinals?|Finals?|Groups?|Singles|Doubles)$/i', '', $label);
+        $label = trim(explode(',', $label, 2)[0]);
+        $label = preg_replace('/^(ATP|WTA)\s*[-–—]\s*(?:Singles|Doubles):\s*/iu', '$1 ', $label);
+        $label = preg_replace('/(?:\s+[-–—]\s+(?:play[\s-]*offs?|qualif(?:iers?|ying|ications?)|round\s+(?:\d+|robin)|r\d+|quarter[\s-]*finals?|semi[\s-]*finals?|finals?|(?:[a-z]+\s+)?groups?(?:\s+[a-z0-9]+)?|singles|doubles))+$/iu', '', $label);
+        if (isset($competitions[mb_strtolower($label)])) {
+            return $competitions[mb_strtolower($label)];
+        }
+        if (preg_match('/^(ATP|WTA)\s+Finals\s*[-:]?\s*(Turin|Torino|London|Indian Wells|Riyadh)(?:\s+\([^)]*\))?$/i', $label, $finals)) {
+            $city = strcasecmp($finals[2], 'Torino') === 0 ? 'Turin' : $finals[2];
+            $label = $finals[1].' Finals '.$city;
+        }
         if (preg_match('/^ITF (Men|Women) (M15|M25|W15|W35|W50|W75|W100)(?: |$)/i', $label, $matches)) {
             $men = strcasecmp($matches[1], 'Men') === 0;
             $level = strtoupper($matches[2]);

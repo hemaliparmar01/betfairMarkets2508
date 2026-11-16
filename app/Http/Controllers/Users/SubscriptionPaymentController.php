@@ -109,7 +109,13 @@ class SubscriptionPaymentController extends Controller
             }
             abort_unless(is_array($payload), 422);
             $provider = app(FittService::class);
-            abort_unless($provider->verifySignature($payload) && (string) ($payload['merchant_id'] ?? '') === (string) config('services.flitt.merchant_id'), 401);
+            abort_unless($provider->verifySignature($payload), 401);
+            if (($payload['version'] ?? null) === '2.0') {
+                $decoded = base64_decode($payload['data'], true);
+                $payload = $decoded === false ? null : json_decode($decoded, true, flags: JSON_THROW_ON_ERROR)['order'] ?? null;
+                abort_unless(is_array($payload), 422);
+            }
+            abort_unless((string) ($payload['merchant_id'] ?? '') === (string) config('services.flitt.merchant_id'), 401);
             $merchant = is_string($payload['merchant_data'] ?? null) ? json_decode($payload['merchant_data'], true) : ($payload['merchant_data'] ?? []);
             $key = $merchant['checkout_key'] ?? $payload['order_id'] ?? '';
             $record = CustomerSubscriptions::query()->where('gateway', 'tbc_flitt')->where('checkout_key', $key)->firstOrFail();

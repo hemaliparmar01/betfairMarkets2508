@@ -166,19 +166,56 @@ class SubscriptionTest extends TestCase
 
     public function test_flitt_checkout_requests_provider_managed_schedule(): void
     {
-        $provider = app(FittService::class);
-        $response = ['checkout_url' => 'https://pay.flitt.com/approve', 'response_status' => 'success'];
-        $response['signature'] = $provider->generateSignature($response);
+        $response = [
+            'version' => '2.0',
+            'data' => 'eyJvcmRlciI6eyJjaGVja291dF91cmwiOiJodHRwczpcL1wvcGF5LmZsaXR0LmNvbVwvYXBwcm92ZSIsInJlc3BvbnNlX3N0YXR1cyI6InN1Y2Nlc3MifX0=',
+            'signature' => '481a7e4a998c912ec55baf1d9c69a3ffdb371d0f',
+        ];
         Http::fake(['test.flitt.example/*' => Http::response(['response' => $response])]);
         $this->actingAs($this->customer, 'customers')->post('/subscriptions/'.$this->plan->id.'/checkout',
             ['gateway' => 'tbc_flitt', 'checkout_key' => (string) Str::uuid(), 'auto_renew' => 1])->assertRedirect('https://pay.flitt.com/approve');
         Http::assertSent(function ($request): bool {
-            $data = $request->data()['request'];
-            $schedule = json_decode($data['recurring_data'], true);
+            $envelope = $request->data()['request'];
+            $this->assertSame('2.0', $envelope['version']);
+            $this->assertSame(sha1('test-key|'.$envelope['data']), $envelope['signature']);
+            $data = json_decode(base64_decode($envelope['data'], true), true, flags: JSON_THROW_ON_ERROR)['order'];
+            $schedule = $data['recurring_data'];
 
-            return $data['subscription'] === 'Y' && $schedule['every'] === 30 && $schedule['amount'] === 1000;
+            return is_array($schedule) && $data['subscription'] === 'Y' && $schedule['every'] === 30 && $schedule['amount'] === 1000
+                && $data['merchant_id'] === '123' && ! isset($data['signature']);
         });
         $this->assertNull($this->customer->fresh()->subscription_ends_at);
+    }
+
+    public function test_flitt_rejects_tampered_api_two_response(): void
+    {
+        Http::fake(['test.flitt.example/*' => Http::response(['response' => [
+            'version' => '2.0',
+            'data' => base64_encode('{"order":{"checkout_url":"https://attacker.example"}}'),
+            'signature' => '481a7e4a998c912ec55baf1d9c69a3ffdb371d0f',
+        ]])]);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Invalid fitt response signature.');
+        app(FittService::class)->createCheckout(['recurring_data' => ['every' => 30, 'period' => 'day']]);
+    }
+
+    public function test_flitt_api_two_callbacks_verify_before_activating_once(): void
+    {
+        $record = $this->subscription('tbc_flitt');
+        $order = $this->flittPayload($record);
+        unset($order['signature']);
+        $data = base64_encode(json_encode(['order' => $order], JSON_THROW_ON_ERROR));
+        $payload = ['version' => '2.0', 'data' => $data, 'signature' => sha1('test-key|'.$data)];
+
+        $forged = $payload;
+        $forged['signature'] = str_repeat('0', 40);
+        $this->postJson('/subscriptions/payments/webhooks/tbc_flitt', ['response' => $forged])->assertUnauthorized();
+        $this->assertDatabaseCount('subscription_payments', 0);
+        $this->postJson('/subscriptions/payments/webhooks/tbc_flitt', ['response' => $payload])->assertOk();
+        $this->postJson('/subscriptions/payments/webhooks/tbc_flitt', ['response' => $payload])->assertOk();
+        $this->assertDatabaseCount('subscription_payments', 1);
+        $this->assertTrue($this->customer->fresh()->hasActiveSubscription());
     }
 
     public function test_confirmed_flitt_cancellation_keeps_paid_access_and_is_repeat_safe(): void
@@ -187,15 +224,102 @@ class SubscriptionTest extends TestCase
         app(SubscriptionService::class)->paid($record, 'initial', 'paid', '10', 'EUR', now());
         $end = $this->customer->fresh()->subscription_ends_at->toDateTimeString();
         $response = ['response_status' => 'success', 'status' => 'disabled', 'order_id' => $record->gateway_subscription_id];
-        $response['signature'] = app(FittService::class)->generateSignature($response);
+        $encoded = base64_encode(json_encode(['order' => $response], JSON_THROW_ON_ERROR));
+        $response = ['version' => '2.0', 'data' => $encoded, 'signature' => sha1('test-key|'.$encoded)];
         Http::fake(['test.flitt.example/*' => Http::response(['response' => $response])]);
         $this->actingAs($this->customer, 'customers')->post('/subscriptions/'.$record->id.'/cancel')->assertSessionHas('status');
         $this->post('/subscriptions/'.$record->id.'/cancel')->assertSessionHas('status');
         Http::assertSentCount(1);
+        Http::assertSent(function ($request) use ($record): bool {
+            $envelope = $request->data()['request'];
+            $this->assertSame('2.0', $envelope['version']);
+            $this->assertSame(sha1('test-key|'.$envelope['data']), $envelope['signature']);
+            $this->assertSame([
+                'order_id' => $record->gateway_subscription_id,
+                'action' => 'stop',
+                'merchant_id' => '123',
+            ], json_decode(base64_decode($envelope['data'], true), true, flags: JSON_THROW_ON_ERROR)['order']);
+
+            return $request->url() === 'https://test.flitt.example/api/subscription';
+        });
         $this->assertFalse($record->fresh()->auto_renew);
         $this->assertSame('cancelled', $record->fresh()->status);
         $this->assertTrue($this->customer->fresh()->hasActiveSubscription());
         $this->assertSame($end, $this->customer->fresh()->subscription_ends_at->toDateTimeString());
+    }
+
+    public function test_flitt_cancellation_with_invalid_signature_keeps_autopay_enabled(): void
+    {
+        $record = $this->subscription('tbc_flitt');
+        $encoded = base64_encode(json_encode(['order' => ['response_status' => 'success', 'status' => 'disabled']], JSON_THROW_ON_ERROR));
+        Http::fake(['test.flitt.example/*' => Http::response(['response' => [
+            'version' => '2.0', 'data' => $encoded, 'signature' => str_repeat('0', 40),
+        ]])]);
+
+        $this->actingAs($this->customer, 'customers')->post('/subscriptions/'.$record->id.'/cancel')
+            ->assertSessionHasErrors('subscription');
+        $this->assertTrue($record->fresh()->auto_renew);
+        $this->assertNull($record->fresh()->cancelled_at);
+    }
+
+    public function test_flitt_accepts_documented_cancellation_action_signature_only_for_matching_order(): void
+    {
+        config(['services.flitt.merchant_id' => '1549901', 'services.flitt.key' => 'test']);
+        $record = $this->subscription('tbc_flitt');
+        $record->update(['gateway_subscription_id' => 'test_subscription11']);
+        $response = [
+            'response_status' => 'success', 'merchant_id' => 1549901,
+            'order_id' => 'test_subscription11', 'status' => 'disabled',
+            'signature' => '07736b7a2687b7429af7334f756ddcfb597456f1',
+        ];
+        Http::fake(['test.flitt.example/*' => Http::sequence()
+            ->push(['response' => array_replace($response, ['order_id' => 'another-order'])])
+            ->push(['response' => array_replace($response, ['merchant_id' => 1549902])])
+            ->push(['response' => array_replace($response, ['status' => 'active'])])
+            ->push(['response' => array_replace($response, ['signature' => str_repeat('0', 40)])])
+            ->push(['response' => $response]),
+        ]);
+
+        $this->actingAs($this->customer, 'customers');
+        for ($attempt = 0; $attempt < 4; $attempt++) {
+            $this->post('/subscriptions/'.$record->id.'/cancel')->assertSessionHasErrors('subscription');
+            $this->assertTrue($record->fresh()->auto_renew);
+            $this->assertNull($record->fresh()->cancelled_at);
+        }
+        $this->post('/subscriptions/'.$record->id.'/cancel')->assertSessionHas('status');
+        $this->assertFalse($record->fresh()->auto_renew);
+        $this->assertSame('cancelled', $record->fresh()->status);
+        $this->assertNull($record->fresh()->next_billing_at);
+    }
+
+    public function test_flitt_cancellation_accepts_echoed_api_two_request_signature_only_for_matching_disabled_order(): void
+    {
+        $record = $this->subscription('tbc_flitt');
+        $attempt = 0;
+        Http::fake(function ($request) use ($record, &$attempt) {
+            $response = [
+                'response_status' => 'success', 'merchant_id' => 123,
+                'order_id' => $record->gateway_subscription_id, 'status' => 'disabled',
+                'signature' => $request->data()['request']['signature'],
+            ];
+            $changes = [
+                ['order_id' => 'another-order'], ['merchant_id' => 456],
+                ['status' => 'active'], ['signature' => str_repeat('0', 40)], [],
+            ];
+
+            return Http::response(['response' => array_replace($response, $changes[$attempt++])]);
+        });
+
+        $this->actingAs($this->customer, 'customers');
+        for ($attemptNumber = 0; $attemptNumber < 4; $attemptNumber++) {
+            $this->post('/subscriptions/'.$record->id.'/cancel')->assertSessionHasErrors('subscription');
+            $this->assertTrue($record->fresh()->auto_renew);
+            $this->assertNull($record->fresh()->cancelled_at);
+        }
+        $this->post('/subscriptions/'.$record->id.'/cancel')->assertSessionHas('status');
+        $this->assertFalse($record->fresh()->auto_renew);
+        $this->assertSame('cancelled', $record->fresh()->status);
+        $this->assertNull($record->fresh()->next_billing_at);
     }
 
     public function test_provider_cancellation_failure_is_not_displayed_as_success(): void
@@ -203,6 +327,9 @@ class SubscriptionTest extends TestCase
         $record = $this->subscription('tbc_flitt');
         Http::fake(['test.flitt.example/*' => Http::response([], 500)]);
         $this->actingAs($this->customer, 'customers')->post('/subscriptions/'.$record->id.'/cancel')->assertSessionHasErrors('subscription');
+        $this->withViewErrors(['subscription' => 'Cancellation failed.'])->view('users.profile', [
+            'section' => 'subscription', 'customer' => $this->customer, 'customerSubscriptions' => collect([$record]),
+        ])->assertSee('Cancellation failed.')->assertSee('Cancel AutoPay');
         $this->assertTrue($record->fresh()->auto_renew);
         $this->assertNull($record->fresh()->cancelled_at);
     }
@@ -302,7 +429,7 @@ class SubscriptionTest extends TestCase
         $this->assertFalse($this->customer->fresh()->hasActiveSubscription());
     }
 
-    public function test_bog_accepted_cancellation_remains_pending_and_stops_local_renewals(): void
+    public function test_bog_accepted_cancellation_stops_autopay_and_keeps_paid_access(): void
     {
         $this->bogConfiguration();
         $record = $this->subscription('bog');
@@ -315,11 +442,43 @@ class SubscriptionTest extends TestCase
         $this->actingAs($this->customer, 'customers')->post('/subscriptions/'.$record->id.'/cancel')->assertSessionHas('status');
         $this->post('/subscriptions/'.$record->id.'/cancel')->assertSessionHas('status');
         Http::assertSentCount(2);
-        $this->assertSame('cancellation_pending', $record->fresh()->status);
+        $this->assertSame('cancelled', $record->fresh()->status);
         $this->assertFalse($record->fresh()->auto_renew);
+        $this->assertNotNull($record->fresh()->cancelled_at);
+        $this->assertNull($record->fresh()->next_billing_at);
         $this->assertTrue($this->customer->fresh()->hasActiveSubscription());
         $this->artisan('subscriptions:process')->assertSuccessful();
         Http::assertNotSent(fn ($request): bool => str_ends_with($request->url(), '/subscribe'));
+    }
+
+    public function test_checking_legacy_bog_cancellation_resolves_disabled_autopay_without_repeating_deletion(): void
+    {
+        $record = $this->subscription('bog');
+        $record->update(['status' => 'cancellation_pending', 'auto_renew' => false, 'next_billing_at' => null]);
+        $this->customer->forceFill(['subscription_ends_at' => now()->addDays(5)])->save();
+
+        $this->actingAs($this->customer, 'customers')->post('/subscriptions/'.$record->id.'/cancel')->assertSessionHas('status');
+
+        $this->assertSame('cancelled', $record->fresh()->status);
+        $this->assertNotNull($record->fresh()->cancelled_at);
+        $this->assertFalse($record->fresh()->auto_renew);
+        $this->assertTrue($this->customer->fresh()->hasActiveSubscription());
+        Http::assertNothingSent();
+    }
+
+    public function test_bog_card_deletion_failure_does_not_record_successful_cancellation(): void
+    {
+        $this->bogConfiguration();
+        $record = $this->subscription('bog');
+        Http::fake([
+            'bog.example/oauth' => Http::response(['access_token' => 'bog-token']),
+            'bog.example/payments/v1/charges/card/order-test' => Http::response([], 500),
+        ]);
+
+        $this->actingAs($this->customer, 'customers')->post('/subscriptions/'.$record->id.'/cancel')->assertSessionHasErrors('subscription');
+
+        $this->assertTrue($record->fresh()->auto_renew);
+        $this->assertNull($record->fresh()->cancelled_at);
     }
 
     public function test_legacy_dates_are_archived_before_schema_removal(): void

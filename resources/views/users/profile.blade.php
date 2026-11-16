@@ -17,6 +17,7 @@
         <div class="min-w-0 rounded-3xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-5 sm:p-8 dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--bg))]">
             <h1 class="text-2xl font-extrabold text-[rgb(var(--text-main))] dark:text-white">{{ ['profile' => 'My Profile', 'favorites' => 'Favorites', 'subscription' => 'Subscription Details'][$section] }}</h1>
             @if (session('status'))<p role="status" class="mt-4 rounded-xl bg-[var(--surface-emerald-50)] p-3 text-sm text-[var(--text-emerald-700)] dark:bg-emerald-950 dark:text-[var(--text-emerald-200)]">{{ session('status') }}</p>@endif
+            @error('subscription')<p role="alert" class="mt-4 rounded-xl bg-[var(--surface-red-50)] p-3 text-sm text-[var(--text-red-600)] dark:bg-red-950 dark:text-[var(--text-red-300)]">{{ $message }}</p>@enderror
             @if ($section === 'favorites')
                 <div class="mt-6 space-y-3">
                     @forelse ($favorites as $favorite)

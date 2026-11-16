@@ -92,6 +92,7 @@ class ProcessAlert implements ShouldBeUnique, ShouldQueue
                     $row['betfair_higher'] = $quote !== null ? $quote > (float) $row['payload']['to_price'] : null;
                     $row['payload']['bf_at_drop'] = $quote;
                     $row['payload']['bf_quote_at'] = $comparisons[$key]['bf_quote_at'] ?? null;
+                    $row['payload']['bf_quote_reason'] = $comparisons[$key]['bf_quote_reason'] ?? ($quote === null ? 'resolution_unavailable' : null);
                     $row['payload'] = json_encode($row['payload'], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
                 }
                 unset($row);

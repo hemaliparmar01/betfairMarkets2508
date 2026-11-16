@@ -537,7 +537,9 @@
                                             @endif
                                         </div>
 
-                                        @if ((auth('customers')->user()?->country_code === 'GE' ? 'Georgia' : get_current_country()) == 'Georgia')
+                                        {{-- Temporary payment testing: restore the country condition after testing. --}}
+                                    {{-- @if ((auth('customers')->user()?->country_code === 'GE' ? 'Georgia' : get_current_country()) == 'Georgia') --}}
+                                    @if (true)
                                             <div class="space-y-4">
                                                 <div class="checkout-price">
                                                     {{ number_format((float) $plan->price_for_local, 2) }}
@@ -606,7 +608,9 @@
                                         {{ $formatDuration((int) $selectedPlan->duration_days) }}
                                     </p>
                                     <div class="mt-4 flex items-end gap-2">
-                                        @if ((auth('customers')->user()?->country_code === 'GE' ? 'Georgia' : get_current_country()) == 'Georgia')
+                                        {{-- Temporary payment testing: restore the country condition after testing. --}}
+                                    {{-- @if ((auth('customers')->user()?->country_code === 'GE' ? 'Georgia' : get_current_country()) == 'Georgia') --}}
+                                    @if (true)
                                             <span class="text-3xl font-bold theme-text-main">
                                                 {{ number_format((float) $selectedPlan->price_for_local, 2) }}
                                             </span>
@@ -646,7 +650,9 @@
                                 </div>
                                 <div class="checkout-summary-line">
                                     <span>{{ __('Amount') }}</span>
-                                    @if ((auth('customers')->user()?->country_code === 'GE' ? 'Georgia' : get_current_country()) == 'Georgia')
+                                    {{-- Temporary payment testing: restore the country condition after testing. --}}
+                                    {{-- @if ((auth('customers')->user()?->country_code === 'GE' ? 'Georgia' : get_current_country()) == 'Georgia') --}}
+                                    @if (true)
                                         <strong>
                                             {{ number_format((float) $selectedPlan->price_for_local, 2) }}
                                             {{ __('GEL') }}

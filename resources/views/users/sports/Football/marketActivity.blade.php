@@ -454,6 +454,9 @@
                             const alertIndex = state.alerts.indexOf(alert);
                             const from = number(alert.from_price); const to = number(alert.to_price);
                             const betfairOdds = betfairPrice(alert);
+                            const atDrop = number(alert.bf_at_drop);
+                            const atDropHtml = !state.archive && Number.isFinite(atDrop) && atDrop > 1
+                                ? `<small class="block font-normal">${price(atDrop)} ${escapeHtml(@json(__('(at drop time)')))}</small>` : '';
                             const limit = number(alert.limit);
                             const marketName = escapeHtml(marketLabel(alert));
                             const down = to < from;
@@ -466,7 +469,7 @@
                                 <td class="font-bold"><span class="drop-odds"><span>${price(from)}</span><span aria-hidden="true">→</span><b>${price(to)}</b>${from !== to ? `<span class="${down ? 'drop-down-arrow text-[var(--text-danger-edge)]' : 'text-[var(--text-emerald-600)]'}" aria-label="Odds ${down ? 'decreased' : 'increased'}">${down ? '↓' : '↑'}</span>` : ''}</span>${alert.pinnacle_selection ? `<small class="block font-normal">${escapeHtml(alert.pinnacle_selection)}</small>` : ''}</td>
                                 <td>${limit !== null && Number.isFinite(limit) && limit >= 0 ? escapeHtml(limitFormat.format(limit)) : '—'}</td>
                                 ${advanced ? `<td class="text-[var(--text-slate-700)] dark:text-[var(--text-slate-300)]">${nvpPrice(fairPrice(alert))}</td>` : ''}
-                                <td class="font-semibold text-[var(--text-brand-50-3)] dark:text-[rgb(var(--text-soft))]"${betfairOdds === null ? ` tabindex="0" onmouseenter="showOddsTooltip(event, 'betfair')" onmouseleave="hideOddsTooltip()" onfocus="showOddsTooltip(event, 'betfair')" onblur="hideOddsTooltip()"` : ''}>${hasBetfairValue ? `<span class="drop-betfair-value">${price(betfairOdds)}</span>` : price(betfairOdds)}${alert.bf_selection ? `<small class="block font-normal">${escapeHtml(alert.bf_selection)}</small>` : ''}</td>
+                                <td class="font-semibold text-[var(--text-brand-50-3)] dark:text-[rgb(var(--text-soft))]"${betfairOdds === null ? ` tabindex="0" onmouseenter="showOddsTooltip(event, 'betfair')" onmouseleave="hideOddsTooltip()" onfocus="showOddsTooltip(event, 'betfair')" onblur="hideOddsTooltip()"` : ''}>${hasBetfairValue ? `<span class="drop-betfair-value">${price(betfairOdds)}</span>` : price(betfairOdds)}${atDropHtml}${alert.bf_selection ? `<small class="block font-normal">${escapeHtml(alert.bf_selection)}</small>` : ''}</td>
                                 ${advanced ? `<td class="text-[10px] leading-relaxed"><span class="block ${edgeClass(pinnacleEdge(alert))}">${(globalThis.bfTranslations?.["Pinnacle:"] ?? "Pinnacle:")} ${edgeText(pinnacleEdge(alert))}</span><span class="block ${edgeClass(edge(alert))}">BF: ${betfairEdgeText(alert)}</span></td><td class="text-[9px] text-[var(--text-muted-soft)]">${alertTime(alert.alerted)}</td>` : ''}
                             </tr>`;
                         }).join('');
@@ -629,7 +632,7 @@
                     if (document.hidden) return;
                     if (!state.archive) scheduleRefresh();
                     else if (Date.now() >= state.archiveDayEndsAt) window.location.reload();
-                }, 30000);
+                }, state.archive ? 30000 : 5000);
 
                 const tooltipTexts = {
                     limit: @json(__('Pinnacle market limit explanation')),

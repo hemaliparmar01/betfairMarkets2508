@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Console\Commands\ListenPinnodds;
 use App\Http\Controllers\Users\Football\FootballSyncController;
+use App\Http\Controllers\Users\Tennis\TennisSyncController;
 use App\Jobs\ProcessAlert;
 use App\Models\Customer;
 use App\Models\FootballMarket;
@@ -529,6 +530,28 @@ class AlertSystemTest extends TestCase
 
     }
 
+    public function test_nations_league_stage_names_keep_the_verified_competition_mapping(): void
+    {
+        $mappingId = DB::table('pinnacle_league_mappings')->where('sport', 'soccer')
+            ->where('country', 'UEFA')->where('league', 'UEFA Nations League')->value('id');
+        DB::table('pinnacle_league_mappings')->where('id', $mappingId)
+            ->update(['provider_league_id' => 99001, 'provider_league_name' => 'UEFA - Nations League A']);
+        $command = app(ListenPinnodds::class);
+        (new ReflectionMethod(ListenPinnodds::class, 'loadLeagueMappings'))->invoke($command);
+        $drops = (new ReflectionMethod(ListenPinnodds::class, 'filterCompetitions'))->invoke($command, [
+            'stage' => ['id' => 1, 'sport' => 'soccer', 'country' => 'Europe', 'league_id' => 99001, 'league' => 'Europe - UEFA Nations League - League A'],
+            'alias' => ['id' => 2, 'sport' => 'soccer', 'country' => 'Europe', 'league_id' => 99001, 'league' => 'UEFA - Nations League A'],
+            'group' => ['id' => 3, 'sport' => 'soccer', 'league' => 'Europe - Nations League - League A - Group 1'],
+            'bare-stage' => ['id' => 5, 'sport' => 'soccer', 'country' => 'Europe', 'league_id' => 99001, 'league' => 'UEFA Nations League - League A'],
+            'wrong' => ['id' => 4, 'sport' => 'soccer', 'league_id' => 99001, 'league' => 'England - Premier League'],
+        ]);
+
+        $this->assertSame(['stage', 'alias', 'group', 'bare-stage'], array_keys($drops));
+        foreach ($drops as $drop) {
+            $this->assertSame(['UEFA', 'UEFA Nations League'], $drop['pinnacle_competition']);
+        }
+    }
+
     public function test_pinnacle_monitor_preserves_priority_across_repeated_countries(): void
     {
         $options = collect(app(AlertService::class)->pinnacleMonitorLeagueOptions())->flatMap(
@@ -816,7 +839,7 @@ class AlertSystemTest extends TestCase
         config(['services.telegram.enabled' => false, 'services.sportsmeld.key' => 'must-not-call-provider']);
         Redis::shouldReceive('get')->never();
         $this->actingAs($this->customer(), 'customers');
-        $at = now()->timestamp - 300;
+        $at = now()->timestamp - 600;
         $fixture = $this->fixture(['result_status' => 'Prematch', 'timestamp' => $at + 3600]);
         $fixture->forceFill(['betfair_match_id' => '900', 'data_sync_complete' => true])->save();
         $market = FootballMarket::query()->create(['selection_key' => hash('sha256', 'archive-market'), 'football_match_unique_key' => $fixture->unique_key,
@@ -838,6 +861,10 @@ class AlertSystemTest extends TestCase
         $this->assertDatabaseHas('pinnacle_drop_archives', ['alert_key' => hash('sha256', 'higher'), 'betfair_higher' => true]);
         $this->assertDatabaseHas('pinnacle_drop_archives', ['alert_key' => hash('sha256', 'equal'), 'betfair_higher' => false]);
         $this->assertDatabaseHas('pinnacle_drop_archives', ['alert_key' => hash('sha256', 'missing'), 'betfair_higher' => null]);
+        $missingQuote = json_decode(DB::table('pinnacle_drop_archives')->where('alert_key', hash('sha256', 'missing'))->value('payload'), true);
+        $this->assertSame('market_unavailable', $missingQuote['bf_quote_reason']);
+        $unsupportedQuote = json_decode(DB::table('pinnacle_drop_archives')->where('alert_key', hash('sha256', 'snooker'))->value('payload'), true);
+        $this->assertSame('unsupported_sport', $unsupportedQuote['bf_quote_reason']);
         $payload = $market->payload;
         $payload['backOddsHistory'] = [['timestamp' => $at - 30, 'odds' => 1.2]];
         $market->update(['payload' => $payload]);
@@ -853,6 +880,79 @@ class AlertSystemTest extends TestCase
         Http::assertNothingSent();
     }
 
+    public function test_live_monitor_recovers_missing_cached_alerts_without_restarting_their_seven_minutes(): void
+    {
+        config(['services.sportsmeld.key' => null, 'services.football_fixture_index' => false]);
+        $this->actingAs($this->customer(), 'customers');
+        $now = microtime(true);
+        $base = ['sport' => 'soccer', 'away' => 'Italy', 'sect' => 'Moneyline', 'outcome' => 'Home', 'period' => 0,
+            'from_price' => 2.0, 'to_price' => 1.9, 'starts' => (int) $now + 3600, 'alerted' => (int) $now - 60, 'monitor_received_at' => $now - 60];
+        $drops = [
+            $base + ['id' => 1, 'home' => 'France', 'alert_key' => hash('sha256', 'cached')],
+            $base + ['id' => 2, 'home' => 'Belgium', 'alert_key' => hash('sha256', 'missing')],
+            array_replace($base, ['id' => 3, 'home' => 'Spain', 'alert_key' => hash('sha256', 'expired'), 'monitor_received_at' => $now - 421]),
+            array_replace($base, ['id' => 4, 'home' => 'Croatia', 'alert_key' => hash('sha256', 'delayed'), 'alerted' => (int) $now - 3600]),
+        ];
+        foreach ($drops as $drop) {
+            DB::table('pinnacle_drop_archives')->insert([
+                'alert_key' => $drop['alert_key'], 'alerted_at' => $drop['alerted'], 'sport' => 'soccer', 'is_live' => false,
+                'market_group' => 0, 'payload' => json_encode($drop),
+            ]);
+        }
+        $cached = [$drops[0]];
+        Redis::shouldReceive('get')->andReturnUsing(static function (string $key) use (&$cached): ?string {
+            return $key === 'Pinnacle:drops' ? json_encode(['alerts' => $cached]) : null;
+        });
+
+        $response = $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonCount(3, 'data');
+        $this->assertEqualsCanonicalizing([1, 2, 4], array_column($response->json('data'), 'id'));
+        $receivedAt = collect($response->json('data'))->firstWhere('id', 2)['monitor_received_at'];
+        $this->assertSame($now - 60, $receivedAt);
+        $cached = [];
+        $response = $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonCount(3, 'data');
+        $this->assertSame($receivedAt, collect($response->json('data'))->firstWhere('id', 2)['monitor_received_at']);
+        Http::assertNothingSent();
+    }
+
+    public function test_live_monitor_includes_saved_drop_time_quote_without_overwriting_current_odds(): void
+    {
+        config(['services.sportsmeld.key' => null, 'services.football_fixture_index' => false]);
+        $this->actingAs($this->customer(), 'customers');
+        $at = time() - 5;
+        $fixture = $this->fixture(['result_status' => 'Prematch', 'timestamp' => $at + 3600]);
+        $fixture->forceFill(['betfair_match_id' => '900', 'data_sync_complete' => true])->save();
+        $market = FootballMarket::query()->create([
+            'selection_key' => hash('sha256', 'live-quote'), 'football_match_unique_key' => $fixture->unique_key,
+            'market_id' => 'main', 'market_type' => 'MATCH_ODDS', 'runner' => 'Torino',
+            'payload' => ['marketType' => 'MATCH_ODDS', 'runner' => 'Torino', 'currentBackOdds' => 2.5],
+        ]);
+        $drop = ['alert_key' => hash('sha256', 'live-drop'), 'id' => 100, 'sport' => 'soccer', 'home' => 'Torino', 'away' => 'Monza 1912',
+            'sect' => 'Moneyline', 'outcome' => 'Home', 'starts' => $at + 3600, 'from_price' => 3.2, 'to_price' => 2.8,
+            'alerted' => $at, 'monitor_received_at' => $at];
+        DB::table('pinnacle_drop_archives')->insert([
+            'alert_key' => $drop['alert_key'], 'alerted_at' => $at, 'sport' => 'soccer', 'is_live' => false, 'market_group' => 0,
+            'betfair_higher' => true, 'payload' => json_encode($drop + ['bf_at_drop' => 3.1, 'bf_quote_at' => $at - 10]),
+        ]);
+        Redis::shouldReceive('get')->andReturnUsing(static fn (string $key): ?string => $key === 'Pinnacle:drops' ? json_encode(['alerts' => [$drop]]) : null);
+
+        $this->getJson(route('football.pinnacle-odds'))->assertOk()
+            ->assertJsonPath('data.0.bf_back', 2.5)->assertJsonPath('data.0.bf_at_drop', 3.1)->assertJsonPath('data.0.bf_quote_at', $at - 10);
+        $market->delete();
+        $this->getJson(route('football.pinnacle-odds'))->assertOk()
+            ->assertJsonPath('data.0.bf_back', null)->assertJsonPath('data.0.bf_at_drop', 3.1);
+        $this->assertDatabaseHas('pinnacle_drop_archives', ['alert_key' => $drop['alert_key'], 'betfair_higher' => true]);
+        Http::assertNothingSent();
+    }
+
+    public function test_pinnacle_tennis_finals_labels_accept_stages_and_keep_atp_and_wta_separate(): void
+    {
+        foreach (['ATP Finals - Turin (Italy) - Semi-finals', 'ATP - Singles: Finals - Torino (World) - Play Offs, hard', 'ATP Finals - Turin (World) - Round Robin', 'ATP Finals - Turin - Group A'] as $label) {
+            $this->assertSame(['Year-End Championships', 'ATP Finals'], TennisSyncController::pinnacleCompetition($label));
+        }
+        $this->assertSame(['Year-End Championships', 'WTA Finals'], TennisSyncController::pinnacleCompetition('WTA - Singles: Finals - Indian Wells (World) - Play Offs, hard'));
+        $this->assertNull(TennisSyncController::pinnacleCompetition('WTA Finals - Turin - Play Offs'));
+    }
+
     #[TestWith(['soccer', 'football'])]
     #[TestWith(['tennis', 'tennis'])]
     #[TestWith(['basketball', 'basketball'])]
@@ -865,6 +965,13 @@ class AlertSystemTest extends TestCase
         $this->freezeTime();
         config(['services.telegram.enabled' => false]);
         Redis::shouldReceive('get')->never();
+        if ($sport === 'tennis') {
+            foreach (range(1, 27) as $index) {
+                DB::table('tennis_matches')->insert(['unique_key' => 'other-'.$index, 'betfair_match_id' => (string) (1000 + $index),
+                    'team1' => 'Unrelated Player '.$index, 'team2' => 'Other Player '.$index, 'result_status' => 'Prematch',
+                    'start_timestamp' => now()->addHour()->timestamp, 'data_sync_complete' => true, 'payload' => '{}']);
+            }
+        }
         DB::table($table.'_matches')->insert(['unique_key' => 'archive-fixture', 'betfair_match_id' => '900', 'sports_api_pro_match_id' => '100',
             'team1' => 'Home Club', 'team2' => 'Away Club', 'tournament' => 'League', 'result_status' => 'Prematch',
             'start_timestamp' => now()->addHour()->timestamp, 'data_sync_complete' => true, 'payload' => '{}']);

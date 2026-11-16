@@ -1518,6 +1518,11 @@ class FootballSyncController extends Controller
     /** @return array{string, string}|null */
     public static function pinnacleCompetition(string $country, string $league): ?array
     {
+        if (in_array(strtolower(trim($country)), ['', 'uefa', 'europe', 'world', 'international'], true)
+            && preg_match('/^(?:uefa\s+)?nations\s+league(?:\s*[-:]?\s*(?:league\s+)?[a-d])?(?:\s*-\s*group\s+[a-z0-9]+)?$/i', trim($league))) {
+            return ['UEFA', 'UEFA Nations League'];
+        }
+
         static $competitions = null;
         if ($competitions === null) {
             $competitions = [];

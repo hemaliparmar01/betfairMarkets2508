@@ -1241,6 +1241,7 @@ class FixturesAuditTest extends TestCase
         app()->instance(FootballSyncController::class, $this->sync());
         (require database_path('migrations/2026_10_01_000003_create_football_matches_table.php'))->up();
         (require database_path('migrations/2026_11_05_070607_create_pinnacle_betfair_events_table.php'))->up();
+        (require database_path('migrations/2026_11_06_193054_create_pinnacle_drop_archives_table.php'))->up();
 
         $start = time() + 3600;
         $match = ['unique_key' => 'matched', 'team1' => 'Galatasaray FC', 'team2' => 'Chennaiyin FC', 'timestamp' => $start, 'data_sync_complete' => true, 'result_status' => 'Prematch', 'markets' => [[['marketType' => 'MATCH_ODDS', 'runner' => 'Galatasaray', 'currentBackOdds' => 1.54, 'layOdds' => 1.56, 'backSize' => 10]]]];
@@ -1281,8 +1282,51 @@ class FixturesAuditTest extends TestCase
         $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonPath('data.0.bf_back', null);
     }
 
+    public function test_pinnacle_recovers_current_match_odds_from_database_when_snapshot_market_is_missing(): void
+    {
+        config(['services.sportsmeld.key' => null]);
+        $this->withoutMiddleware(CustomerAuthService::class);
+        $this->app['auth']->guard('customers')->setUser(new Customer(['trial_ends_at' => now()->addDay()]));
+        app()->instance(FootballSyncController::class, $this->sync());
+        (require database_path('migrations/2026_10_01_000003_create_football_matches_table.php'))->up();
+        (require database_path('migrations/2026_10_01_000004_create_football_markets_table.php'))->up();
+        (require database_path('migrations/2026_11_05_070607_create_pinnacle_betfair_events_table.php'))->up();
+        (require database_path('migrations/2026_11_06_193054_create_pinnacle_drop_archives_table.php'))->up();
+        $start = time() + 3600;
+        $match = ['unique_key' => 'belgium-italy', 'betfair_match_id' => '900', 'team1' => 'Belgium', 'team2' => 'Italy',
+            'timestamp' => $start, 'data_sync_complete' => true, 'result_status' => 'Prematch', 'markets' => []];
+        DB::table('football_matches')->insert([
+            'unique_key' => $match['unique_key'], 'betfair_match_id' => '900', 'team1' => 'Belgium', 'team2' => 'Italy',
+            'start_timestamp' => $start, 'result_status' => 'Prematch', 'data_sync_complete' => true, 'payload' => '{}',
+        ]);
+        $runner = ['marketType' => 'MATCH_ODDS', 'runner' => 'Belgium', 'currentBackOdds' => 2.9, 'market_status' => 'OPEN'];
+        DB::table('football_markets')->insert([
+            'selection_key' => 'home', 'football_match_unique_key' => $match['unique_key'], 'market_id' => 'match-odds',
+            'market_type' => 'MATCH_ODDS', 'payload' => json_encode($runner),
+        ]);
+        $alert = ['alerted' => time(), 'id' => 100, 'sport' => 'soccer', 'home' => 'Belgium', 'away' => 'Italy',
+            'starts' => $start, 'sect' => 'moneyline', 'outcome' => 'home', 'period' => 0, 'from_price' => 3.0, 'to_price' => 2.8];
+        Redis::shouldReceive('get')->andReturnUsing(function (string $key) use (&$match, $alert): ?string {
+            return match ($key) {
+                'Football:matches' => json_encode([$match]),
+                'Pinnacle:drops' => json_encode(['alerts' => [$alert]]),
+                default => null,
+            };
+        });
+        $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonPath('data.0.bf_back', 2.9);
+        DB::table('football_markets')->where('selection_key', 'home')->update(['payload' => json_encode(array_replace($runner, ['currentBackOdds' => 2.6]))]);
+        $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonPath('data.0.bf_back', 2.6);
+        $match['markets'] = [[array_replace($runner, ['market_status' => 'CLOSED'])], [array_replace($runner, ['currentBackOdds' => 2.6])]];
+        $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonPath('data.0.bf_back', 2.6);
+        $match['markets'] = [[array_replace($runner, ['market_status' => 'SUSPENDED'])]];
+        $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonPath('data.0.bf_back', null);
+    }
+
     public function test_pinnacle_binary_selections_use_cached_parent_teams_and_never_become_fixture_names(): void
     {
+        (require database_path('migrations/2026_10_01_000003_create_football_matches_table.php'))->up();
+        (require database_path('migrations/2026_11_05_070607_create_pinnacle_betfair_events_table.php'))->up();
+        (require database_path('migrations/2026_11_06_193054_create_pinnacle_drop_archives_table.php'))->up();
         config(['services.sportsmeld.key' => null]);
         $this->withoutMiddleware(CustomerAuthService::class);
         $this->app['auth']->guard('customers')->setUser(new Customer(['trial_ends_at' => now()->addDay()]));
@@ -1330,6 +1374,7 @@ class FixturesAuditTest extends TestCase
         (require database_path('migrations/2026_10_01_000003_create_football_matches_table.php'))->up();
         (require database_path('migrations/2026_10_01_000004_create_football_markets_table.php'))->up();
         (require database_path('migrations/2026_11_05_070607_create_pinnacle_betfair_events_table.php'))->up();
+        (require database_path('migrations/2026_11_06_193054_create_pinnacle_drop_archives_table.php'))->up();
 
         $start = time() + 3600;
         DB::table('football_matches')->insert([

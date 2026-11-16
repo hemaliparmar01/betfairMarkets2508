@@ -24,12 +24,13 @@ class SubscriptionService
         if (filled(config('services.paypal.client_id')) && filled(config('services.paypal.secret')) && filled(config('services.paypal.webhook_id'))) {
             $result['paypal'] = ['label' => 'PayPal (EUR)', 'recurring' => true];
         }
-        if (filled(config('services.bog.client_id')) && filled(config('services.bog.secret')) && filled(config('services.bog.public_key'))) {
-            $result['bog'] = ['label' => 'Bank of Georgia (GEL)', 'recurring' => (bool) config('services.bog.recurring_enabled')];
-        }
-        if (filled(config('services.flitt.merchant_id')) && filled(config('services.flitt.key'))) {
-            $result['tbc_flitt'] = ['label' => 'TBC / Flitt ('.config('services.flitt.currency').')', 'recurring' => (bool) config('services.flitt.recurring_enabled')];
-        }
+        // Temporary payment testing: restore this credential visibility check after testing.
+        // if (filled(config('services.bog.client_id')) && filled(config('services.bog.secret')) && filled(config('services.bog.public_key'))) {
+        $result['bog'] = ['label' => 'Bank of Georgia (GEL)', 'recurring' => (bool) config('services.bog.recurring_enabled')];
+        // }
+        // if (filled(config('services.flitt.merchant_id')) && filled(config('services.flitt.key'))) {
+        $result['tbc_flitt'] = ['label' => 'TBC / Flitt ('.config('services.flitt.currency').')', 'recurring' => (bool) config('services.flitt.recurring_enabled')];
+        // }
 
         return $result;
     }
@@ -51,24 +52,15 @@ class SubscriptionService
 
         return Cache::lock('subscription-customer:'.$customer->id, 120)->block(5, function () use ($customer, $plan, $gateway, $autoRenew, $key): CustomerSubscriptions {
             $record = DB::transaction(function () use ($customer, $plan, $gateway, $autoRenew, $key): CustomerSubscriptions {
-                $lockedCustomer = Customer::query()->whereKey($customer->id)->lockForUpdate()->firstOrFail();
-                if ($lockedCustomer->hasLifetimeAccess() || (($lockedCustomer->subscription_ends_at?->isFuture() ?? false) && ($lockedCustomer->admin_free_days > 0 || $lockedCustomer->subscriptions()->where('gateway', 'admin')->where('status', 'active')->exists()))) {
-                    throw ValidationException::withMessages(['subscription' => 'Admin-granted access is already available. A paid checkout is not required.']);
-                }
-                if ($lockedCustomer->hasActiveSubscription() && CustomerSubscriptions::query()->where('customer_id', $customer->id)
-                    ->where('gateway', '!=', 'admin')->where('status', 'cancelled')->exists()) {
-                    throw ValidationException::withMessages(['subscription' => 'Your paid subscription remains available until its expiry. Start another subscription after that period ends.']);
-                }
-                $existing = CustomerSubscriptions::query()->where('customer_id', $customer->id)
-                    ->where('gateway', '!=', 'admin')->whereIn('status', ['pending', 'active', 'past_due', 'cancellation_pending'])->latest('id')->first();
+                Customer::query()->whereKey($customer->id)->lockForUpdate()->firstOrFail();
+                $existing = CustomerSubscriptions::query()->where('checkout_key', $key)->first();
                 if ($existing !== null) {
-                    if ($existing->status === 'pending' && $existing->subscription_id === $plan->id && $existing->gateway === $gateway) {
-                        return $existing;
+                    if ($existing->customer_id !== $customer->id || $existing->subscription_id !== $plan->id || $existing->gateway !== $gateway
+                        || $existing->auto_renew !== $autoRenew) {
+                        throw ValidationException::withMessages(['subscription' => 'This checkout request has already been used.']);
                     }
-                    throw ValidationException::withMessages(['subscription' => 'An existing subscription or checkout must be resolved before starting another.']);
-                }
-                if (CustomerSubscriptions::query()->where('checkout_key', $key)->exists()) {
-                    throw ValidationException::withMessages(['subscription' => 'This checkout request has already been used.']);
+
+                    return $existing;
                 }
                 $currency = $gateway === 'bog' ? 'GEL' : ($gateway === 'paypal' ? 'EUR' : config('services.flitt.currency'));
                 if (! in_array($currency, ['EUR', 'GEL'], true)) {
@@ -82,7 +74,7 @@ class SubscriptionService
                 return CustomerSubscriptions::query()->create([
                     'customer_id' => $customer->id, 'subscription_id' => $plan->id,
                     'gateway' => $gateway, 'amount' => $amount, 'currency' => $currency,
-                    'status' => 'pending', 'checkout_key' => $key, 'active_customer_id' => $customer->id,
+                    'status' => 'pending', 'checkout_key' => $key, 'active_customer_id' => null,
                     'auto_renew' => $autoRenew, 'duration_days' => $plan->duration_days,
                     'provider_plan_id' => $gateway === 'paypal' ? $plan->paypal_plan_id : null,
                 ]);
@@ -215,6 +207,12 @@ class SubscriptionService
         return Cache::lock('subscription-customer:'.$customer->id, 120)->block(5, function () use ($subscription): bool {
             $record = $subscription->refresh();
             if ($record->status === 'cancellation_pending') {
+                if ($record->gateway === 'bog' && ! $record->auto_renew) {
+                    $record->update(['status' => 'cancelled', 'next_billing_at' => null, 'cancelled_at' => $record->cancelled_at ?? now()]);
+
+                    return true;
+                }
+
                 return false;
             }
             if (! $record->auto_renew && $record->status !== 'cancellation_pending') {
@@ -234,9 +232,6 @@ class SubscriptionService
                 app(FittService::class)->stopSubscription($record->gateway_subscription_id);
             } elseif ($record->gateway === 'bog') {
                 app(BogPaymentService::class)->deleteSavedCard($record->gateway_subscription_id, $record->checkout_key);
-                $record->update(['status' => 'cancellation_pending', 'auto_renew' => false, 'next_billing_at' => null]);
-
-                return false;
             } else {
                 throw ValidationException::withMessages(['subscription' => 'This gateway does not support provider cancellation.']);
             }

@@ -85,6 +85,14 @@ class FittService
 
     public function generateSignature(array $parameters): string
     {
+        if (($parameters['version'] ?? null) === '2.0') {
+            if (! is_string($parameters['data'] ?? null)) {
+                throw new RuntimeException('Invalid Flitt API 2.0 data.');
+            }
+
+            return sha1($this->paymentKey.'|'.$parameters['data']);
+        }
+
         unset(
             $parameters['signature'],
             $parameters['response_signature_string']
@@ -176,11 +184,18 @@ class FittService
     private function request(string $endpoint, array $parameters): array
     {
         foreach ($parameters as $key => $value) {
-            if (is_array($value)) {
+            if (is_array($value) && $key !== 'recurring_data') {
                 $parameters[$key] = json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
             }
         }
         $parameters['merchant_id'] = $this->merchantId;
+        $subscriptionRequest = $endpoint === '/api/subscription' ? $parameters : null;
+        if (isset($parameters['recurring_data']) || $endpoint === '/api/subscription') {
+            $parameters = [
+                'version' => '2.0',
+                'data' => base64_encode(json_encode(['order' => $parameters], JSON_THROW_ON_ERROR)),
+            ];
+        }
         $parameters['signature'] = $this->generateSignature($parameters);
 
         $response = Http::acceptJson()
@@ -206,8 +221,30 @@ class FittService
             );
         }
 
-        if (! $this->verifySignature($data)) {
+        // The subscription endpoint can return the action signature shown in Flitt's cancellation reference.
+        $subscriptionSignatureMatches = $subscriptionRequest !== null
+            && ($subscriptionRequest['action'] ?? null) === 'stop'
+            && ($data['response_status'] ?? null) === 'success'
+            && ($data['status'] ?? null) === 'disabled'
+            && (string) ($data['merchant_id'] ?? '') === $this->merchantId
+            && ($data['order_id'] ?? null) === $subscriptionRequest['order_id']
+            && is_string($data['signature'] ?? null)
+            && (hash_equals($parameters['signature'], $data['signature'])
+                || hash_equals($this->generateSignature($subscriptionRequest), $data['signature']));
+
+        if (! $this->verifySignature($data) && ! $subscriptionSignatureMatches) {
             throw new RuntimeException('Invalid fitt response signature.');
+        }
+
+        if (($data['version'] ?? null) === '2.0') {
+            $decoded = base64_decode($data['data'], true);
+            $data = $decoded === false ? null : json_decode($decoded, true, flags: JSON_THROW_ON_ERROR)['order'] ?? null;
+            if (! is_array($data)) {
+                throw new RuntimeException('Invalid Flitt API 2.0 response.');
+            }
+            if (($data['response_status'] ?? null) === 'failure') {
+                throw new RuntimeException((string) ($data['error_message'] ?? 'fitt request failed.'));
+            }
         }
 
         return $data;

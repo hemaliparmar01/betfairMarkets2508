@@ -399,6 +399,54 @@ test('Pinnacle league filter turns off when no leagues are checked', () => {
     assert.equal(app.evaluate('filtered().length'), 1);
 });
 
+test('live Betfair refresh fallback runs every five seconds and skips hidden tabs', () => {
+    const app = harness();
+    app.evaluate(`
+        globalThis.polls = 0;
+        globalThis.scheduleRefresh = () => { polls++; };
+        globalThis.window = {setInterval(callback, interval) {this.tick = callback; this.interval = interval;}};
+    `);
+    app.evaluate(source.slice(source.indexOf('                window.setInterval(() => {'), source.indexOf('                const tooltipTexts =')));
+    assert.equal(app.evaluate('window.interval'), 5000);
+    app.evaluate('window.tick()');
+    assert.equal(app.evaluate('polls'), 1);
+    app.evaluate('document.hidden = true; window.tick()');
+    assert.equal(app.evaluate('polls'), 1);
+});
+
+test('falling Betfair prices stay displayed and recalculate the comparison filter without extending alert lifetime', () => {
+    const app = harness([base], { higher: true });
+    const receivedAt = app.evaluate('monitorTimestamp(state.alerts[0])');
+    assert.equal(app.evaluate('filtered().length'), 1);
+    app.evaluate('receiveAlerts([{...state.alerts[0], bf_back: 1.6}])');
+    assert.equal(app.evaluate('betfairPrice(state.alerts[0])'), 1.6);
+    app.evaluate('receiveAlerts([{...state.alerts[0], bf_back: 1.4}])');
+    assert.equal(app.evaluate('betfairPrice(state.alerts[0])'), 1.4);
+    assert.equal(app.evaluate('filtered().length'), 0);
+    assert.equal(app.state.alerts.length, 1);
+    assert.equal(app.evaluate('monitorTimestamp(state.alerts[0])'), receivedAt);
+    app.evaluate('receiveAlerts([{...state.alerts[0], bf_back: 1.7}])');
+    assert.equal(app.evaluate('filtered().length'), 1);
+});
+
+test('saved drop-time odds stay visible as history and never masquerade as a current quote', () => {
+    const app = harness([{...base, bf_back: null, bf_at_drop: 3.1}], {higher: true});
+    assert.equal(app.evaluate('betfairPrice(state.alerts[0])'), null);
+    assert.equal(app.evaluate('filtered().length'), 0);
+    const visible = harness([{...base, bf_back: null, bf_at_drop: 3.1}]);
+    visible.evaluate('render()');
+    assert.match(visible.output.innerHTML, /3\.10 \(at drop time\)/);
+    visible.evaluate('receiveAlerts([{...state.alerts[0], bf_back: 1.6}]); render()');
+    assert.equal(visible.evaluate('betfairPrice(state.alerts[0])'), 1.6);
+    assert.match(visible.output.innerHTML, /3\.10 \(at drop time\)/);
+});
+
+test('main monitor renders every eligible row beyond the animation limit', () => {
+    const app = harness(Array.from({length: 250}, (_, index) => ({...base, alert_key: `row-${index}`})));
+    app.evaluate('render()');
+    assert.equal((app.output.innerHTML.match(/data-alert-key=/g) || []).length, 250);
+});
+
 test('late provider alerts sort by monitor arrival and keep their full seven minutes', () => {
     const now = 1800000000000;
     const app = harness([

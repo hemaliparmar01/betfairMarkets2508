@@ -137,6 +137,26 @@ class FootballController extends Controller
             if (! $pinnacleArchive && ! $capture) {
                 $cutoff = microtime(true) - 420;
                 $pinnacleAlerts = array_values(array_filter($pinnacleAlerts, static fn (array $alert): bool => (float) ($alert['monitor_received_at'] ?? $alert['alerted'] ?? 0) > $cutoff));
+                $archivedMonitor = Cache::remember('pinnacle:active-archive:'.$pinnacleArchiveStart->timestamp, 5, static function () use ($cutoff, $pinnacleArchiveStart): array {
+                    return DB::table('pinnacle_drop_archives')->where('alerted_at', '>=', $pinnacleArchiveStart->timestamp)
+                        ->where(function ($query) use ($cutoff): void {
+                            $query->where('payload->monitor_received_at', '>', (int) $cutoff)
+                                ->orWhere(fn ($query) => $query->whereNull('payload->monitor_received_at')->where('alerted_at', '>', (int) $cutoff));
+                        })->get(['alert_key', 'payload'])->mapWithKeys(static fn (object $row): array => [$row->alert_key => json_decode($row->payload, true) ?? []])->all();
+                });
+                $cachedAlertKeys = array_fill_keys(array_column($pinnacleAlerts, 'alert_key'), true);
+                foreach ($archivedMonitor as $key => $drop) {
+                    if (! isset($cachedAlertKeys[$key]) && (float) ($drop['monitor_received_at'] ?? $drop['alerted'] ?? 0) > $cutoff) {
+                        $pinnacleAlerts[] = $drop + ['alert_key' => $key];
+                    }
+                }
+            }
+            $dropTimeQuotes = [];
+            $alertKeys = array_values(array_filter(array_column($pinnacleAlerts, 'alert_key')));
+            if (! $capture && ! $pinnacleArchive && $alertKeys !== []) {
+                foreach (DB::table('pinnacle_drop_archives')->whereIn('alert_key', $alertKeys)->get(['alert_key', 'payload']) as $row) {
+                    $dropTimeQuotes[$row->alert_key] = array_intersect_key(json_decode($row->payload, true) ?? [], array_flip(['bf_at_drop', 'bf_quote_at', 'bf_quote_reason', 'archive_parent']));
+                }
             }
             $pinnacleFeeds = [];
             foreach (['live', 'prematch'] as $mode) {
@@ -197,6 +217,7 @@ class FootballController extends Controller
             $footballIndex = ($sportsmeldKey !== '' || $currentPinnacleQuote) && isset($eventIds['soccer']) ? getInRedis('Football:matches', fixtureIndex: true, marketActivityIndex: true) : null;
 
             foreach ($pinnacleAlerts as &$alert) {
+                $alert = array_replace($alert, $dropTimeQuotes[$alert['alert_key'] ?? ''] ?? []);
                 $alert['bf_back'] = $pinnacleArchive ? ($alert['bf_at_drop'] ?? null) : null;
                 $alert['bf_lay'] = $alert['bf_back_size'] = $alert['bf_lay_size'] = null;
                 $alert['full_market'] = [];
@@ -205,7 +226,7 @@ class FootballController extends Controller
                 $selectionHome = strtolower(trim((string) ($alert['home'] ?? '')));
                 $selectionAway = strtolower(trim((string) ($alert['away'] ?? '')));
                 $selectionNames = in_array($selectionHome, ['yes', 'no'], true) && in_array($selectionAway, ['yes', 'no'], true);
-                $parent = ($pinnacleArchive || $capture ? ($alert['archive_parent'] ?? null) : null)
+                $parent = ($alert['archive_parent'] ?? null)
                     ?? $pinnacleEvents[$sport][$alert['parent_id'] ?? ''] ?? ($selectionNames ? ($pinnacleEvents[$sport][$alert['id'] ?? ''] ?? null) : null);
                 $hasFixtureNames = ! $selectionNames || $parent !== null;
                 if ($parent !== null) {
@@ -240,7 +261,6 @@ class FootballController extends Controller
                                 ->where('data_sync_complete', true)
                                 ->where('result_status', $status)
                                 ->whereNotNull('betfair_match_id')
-                                ->when($sport !== 'soccer' || $mappedId !== null, fn ($query) => $query->limit(26))
                                 ->get(['unique_key', 'sports_api_pro_match_id', 'betfair_match_id', 'team1', 'team2', 'tournament', 'result_status', 'start_timestamp as timestamp', 'data_sync_complete', 'payload'])
                                 ->map(static fn (object $fixture): array => array_replace(array_intersect_key(json_decode($fixture->payload, true) ?? [], ['internal_backup' => true, 'provider_lifecycle' => true]), array_diff_key((array) $fixture, ['payload' => true]), ['data_sync_complete' => true]))
                                 ->all();
@@ -255,7 +275,7 @@ class FootballController extends Controller
                         $candidates = [];
                         foreach ($fixtures as $fixture) {
                             $sameTime = $startTimestamp === 0 || abs((int) ($fixture['timestamp'] ?? 0) - $startTimestamp) <= 3600;
-                            if (MatchBackup::isHidden($fixture, str_replace('_', '', $sportTable))) {
+                            if (MatchBackup::isHidden($fixture, str_replace('_', '', $sportTable), $capture && ! $currentPinnacleQuote ? (int) ($alert['alerted'] ?? time()) : null)) {
                                 if ($sport === 'soccer' && (($mappedId !== null && (string) ($fixture['betfair_match_id'] ?? '') === $mappedId)
                                     || ($sameTime && $normalizeName((string) $fixture['team1']) === $normalizeName((string) $alert['home'])
                                         && $normalizeName((string) $fixture['team2']) === $normalizeName((string) $alert['away'])))) {
@@ -316,13 +336,10 @@ class FootballController extends Controller
                             }
                         }
                         if ($fallback) {
-                            $candidates = [];
-                            if ($sport === 'soccer' || ($sportsmeldKey === '' && count($fixtures) < 26)) {
-                                $exact = $sport === 'soccer' ? array_values(array_filter($localCandidates, static fn (array $fixture): bool => $sameClubName((string) $fixture['team1'], (string) $alert['home'])
-                                    && $sameClubName((string) $fixture['team2'], (string) $alert['away']))) : [];
-                                $candidates = $exact !== [] ? $exact : array_values(array_filter($localCandidates, static fn (array $fixture): bool => $matchingController->teamSimilarity((string) $fixture['team1'], (string) $alert['home']) >= 80
-                                    && $matchingController->teamSimilarity((string) $fixture['team2'], (string) $alert['away']) >= 80));
-                            }
+                            $exact = array_values(array_filter($localCandidates, static fn (array $fixture): bool => $sameClubName((string) $fixture['team1'], (string) $alert['home'])
+                                && $sameClubName((string) $fixture['team2'], (string) $alert['away'])));
+                            $candidates = $exact !== [] ? $exact : array_values(array_filter($localCandidates, static fn (array $fixture): bool => $matchingController->teamSimilarity((string) $fixture['team1'], (string) $alert['home']) >= 80
+                                && $matchingController->teamSimilarity((string) $fixture['team2'], (string) $alert['away']) >= 80));
                         }
                         $resolvedEvents[$resolutionKey] = [
                             'hidden' => ! empty($alert['internal_hidden']),
@@ -397,8 +414,7 @@ class FootballController extends Controller
                             break;
                         }
                         if ($useDatabase) {
-                            if ($runners !== [] || empty($matchedFixture['unique_key'])
-                                || ($markets !== null && ($marketType !== 'ASIAN_HANDICAP' || $status !== 'Prematch' || $sportsmeldKey === ''))) {
+                            if ($runners !== [] || empty($matchedFixture['unique_key'])) {
                                 break;
                             }
                             $marketKey = $resolutionKey.'|'.$marketType;
@@ -441,6 +457,9 @@ class FootballController extends Controller
                         }
                     }
                 }
+                $marketUnavailable = $runners !== [];
+                $runners = array_values(array_filter($runners, static fn (array $runner): bool => ! in_array($runner['market_status'] ?? 'OPEN', ['SUSPENDED', 'CLOSED'], true)));
+                $marketUnavailable = $marketUnavailable && $runners === [];
                 $matchesOutcome = static function (array $runner, string $selection) use ($matchedHome, $matchedAway, $normalizeName, $matchingController): bool {
                     $name = $normalizeName((string) ($runner['runner'] ?? ''));
 
@@ -465,6 +484,17 @@ class FootballController extends Controller
                         continue;
                     }
                     $alert['bf_at_drop'] = $alert['bf_quote_at'] = null;
+                    $alert['bf_quote_reason'] = match (true) {
+                        ! isset($sportKeys[$sport]) => 'unsupported_sport',
+                        $marketType === null => 'unsupported_market',
+                        $matchedFixture === null => 'event_unmatched',
+                        $marketUnavailable => 'market_suspended_or_closed',
+                        $runners === [] => 'market_unavailable',
+                        count($matchingRunners) > 1 => 'selection_ambiguous',
+                        $selectedRunner === null => 'selection_unmatched',
+                        ! empty($selectedRunner['odds_history_incomplete']) => 'history_incomplete',
+                        default => 'no_verified_quote_before_drop',
+                    };
                     if ($selectedRunner !== null) {
                         $quoteAt = (float) ($selectedRunner['odds_history_processed_at'] ?? 0);
                         if ($quoteAt > 0 && $quoteAt <= $at && ! in_array($selectedRunner['market_status'] ?? 'OPEN', ['SUSPENDED', 'CLOSED'], true)) {
@@ -483,7 +513,10 @@ class FootballController extends Controller
                             }
                         }
                     }
-                    $marketSnapshots[$quoteKey] = ['bf_at_drop' => $alert['bf_at_drop'], 'bf_quote_at' => $alert['bf_quote_at']];
+                    if ($alert['bf_at_drop'] !== null) {
+                        $alert['bf_quote_reason'] = null;
+                    }
+                    $marketSnapshots[$quoteKey] = array_intersect_key($alert, array_flip(['bf_at_drop', 'bf_quote_at', 'bf_quote_reason']));
 
                     continue;
                 }

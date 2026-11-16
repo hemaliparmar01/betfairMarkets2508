@@ -301,7 +301,8 @@ class ListenPinnodds extends Command
             $country = $drop['country'] ?? '';
             $country = trim((string) (is_array($country) ? ($country['name'] ?? '') : $country));
             if ($country !== '' && $sport === 'soccer' && $mappedByName !== null
-                && strcasecmp($country, explode(' - ', $name, 2)[0]) !== 0) {
+                && strcasecmp($country, explode(' - ', $name, 2)[0]) !== 0
+                && ! in_array(strtolower(trim(explode(' - ', $name, 2)[0])), ['uefa', 'europe', 'fifa', 'world', 'international'], true)) {
                 continue;
             }
 

@@ -78,6 +78,10 @@ class AlertService
 
         $country = $drop['country'] ?? '';
         $country = trim((string) (is_array($country) ? ($country['name'] ?? '') : $country));
+        $competition = FootballSyncController::pinnacleCompetition($country, $label);
+        if ($competition === ['UEFA', 'UEFA Nations League']) {
+            return $competition;
+        }
         $parts = explode(' - ', $label, 2);
         if (isset($parts[1])) {
             if ($country !== '' && strcasecmp($country, trim($parts[0])) !== 0
