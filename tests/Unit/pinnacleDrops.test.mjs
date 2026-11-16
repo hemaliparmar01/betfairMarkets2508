@@ -394,6 +394,65 @@ test('Pinnacle filters require a selected league and Betfair strictly above the 
     assert.equal(app.evaluate("filtered().map(alert => alert.alert_key).join(',')"), 'first');
 });
 
+test('minimum drop defaults to one percent and includes exact percentage boundaries', () => {
+    const app = harness([
+        { ...base, alert_key: 'below-one', from_price: 2, to_price: 1.9802 },
+        { ...base, alert_key: 'one', from_price: 2, to_price: 1.98 },
+        { ...base, alert_key: 'below-large', from_price: 2, to_price: 1.9302 },
+        { ...base, alert_key: 'large', from_price: 1.2, to_price: 1.158 },
+    ]);
+    assert.equal(app.evaluate('filtered().map(alert => alert.alert_key).join(",")'), 'one,below-large,large');
+    app.state.minDrop = 3.5;
+    assert.equal(app.evaluate('filtered().map(alert => alert.alert_key).join(",")'), 'large');
+    app.state.archive = true;
+    assert.equal(app.evaluate('filtered().length'), 4);
+});
+
+test('minimum drop buttons update their selected state and restore smaller alerts without discarding them', () => {
+    const app = harness([
+        { ...base, alert_key: 'small', from_price: 2, to_price: 1.96 },
+        { ...base, alert_key: 'large', from_price: 2, to_price: 1.9 },
+    ]);
+    app.evaluate(`
+        globalThis.buttons = ['1', '3.5'].map(value => ({
+            dataset: {minDrop: value}, attributes: {}, classes: new Set(),
+            setAttribute(key, value) { this.attributes[key] = value; },
+            classList: {toggle() {}},
+        }));
+        root.querySelectorAll = selector => selector === '[data-min-drop]' ? buttons : [];
+        root.addEventListener = (name, listener) => { globalThis.clickHandler = listener; };
+    `);
+    app.evaluate(source.slice(source.indexOf("                root.addEventListener('click'"), source.indexOf("                root.addEventListener('keydown'")));
+    app.evaluate("clickHandler({target: {closest: selector => selector === '[data-min-drop]' ? buttons[1] : null}})");
+    assert.equal(app.state.minDrop, 3.5);
+    assert.equal(app.evaluate("buttons.map(button => button.attributes['aria-pressed']).join(',')"), 'false,true');
+    assert.doesNotMatch(app.output.innerHTML, /data-alert-key="small"/);
+    assert.match(app.output.innerHTML, /data-alert-key="large"/);
+    assert.equal(app.state.alerts.length, 2);
+    app.evaluate("clickHandler({target: {closest: selector => selector === '[data-min-drop]' ? buttons[0] : null}})");
+    assert.equal(app.state.minDrop, 1);
+    assert.equal(app.evaluate("buttons.map(button => button.attributes['aria-pressed']).join(',')"), 'true,false');
+    assert.match(app.output.innerHTML, /data-alert-key="small"/);
+});
+
+test('minimum drop persists through live updates and composes with league and Betfair filters', () => {
+    const app = harness([
+        { ...base, alert_key: 'selected', league_filter_key: 'selected' },
+        { ...base, alert_key: 'other', league_filter_key: 'other' },
+        { ...base, alert_key: 'lower-betfair', league_filter_key: 'selected', bf_back: 1.1 },
+    ], { higher: true, leagues: ['selected'] });
+    app.state.minDrop = 3.5;
+    assert.equal(app.evaluate('filtered().map(alert => alert.alert_key).join(",")'), 'selected');
+    app.evaluate('receiveAlerts(state.alerts.map(alert => ({...alert, from_price: 2, to_price: 1.96})))');
+    assert.equal(app.state.minDrop, 3.5);
+    assert.equal(app.evaluate('filtered().length'), 0);
+    app.state.minDrop = 1;
+    app.evaluate('receiveAlerts(state.alerts.map(alert => ({...alert, bf_back: 2.1})))');
+    assert.equal(app.evaluate('filtered().map(alert => alert.alert_key).join(",")'), 'selected,lower-betfair');
+    app.advance(420000);
+    assert.equal(app.evaluate('filtered().length'), 0);
+});
+
 test('Pinnacle league filter turns off when no leagues are checked', () => {
     const app = harness([base], { leagues: [] });
     assert.equal(app.evaluate('filtered().length'), 1);

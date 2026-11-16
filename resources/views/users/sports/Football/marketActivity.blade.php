@@ -219,7 +219,15 @@
         <div class="overflow-hidden rounded-2xl border border-[var(--border-neutral-5-6)] bg-[rgb(var(--surface))] dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--surface))]">
             <div class="flex flex-wrap items-center justify-between gap-3 bg-[var(--surface-heading)] px-4 py-3 text-white">
                 <h2 class="flex items-center gap-2 text-sm font-extrabold uppercase tracking-wide"><span class="size-2 rounded-full bg-[var(--surface-danger-0-3)]"></span>{{ $pinnacleArchive ? __('Daily Archive') : __('Real-Time Pinnacle Odds Drops') }}</h2>
-                <span class="text-xs font-semibold text-white/70" data-alert-meta>{{ __('All') }} {{ $pinnacleArchive ? '· ODDS-DROP' : __('· ODDS-DROP · ≥1%') }}</span>
+                <div class="flex flex-wrap items-center gap-3">
+                    @unless ($pinnacleArchive)
+                        <div role="group" aria-label="{{ __('Minimum odds drop') }}" class="inline-flex gap-1 rounded-lg border border-white/30 p-1">
+                            <button type="button" data-min-drop="1" aria-pressed="true" class="rounded-md bg-white px-3 py-1.5 text-xs font-bold text-[var(--text-brand-70)]">≥1%</button>
+                            <button type="button" data-min-drop="3.5" aria-pressed="false" class="rounded-md px-3 py-1.5 text-xs font-bold text-white">≥3.5%</button>
+                        </div>
+                    @endunless
+                    <span class="text-xs font-semibold text-white/70" data-alert-meta>{{ __('All') }} {{ $pinnacleArchive ? '· ODDS-DROP' : __('· ODDS-DROP · ≥1%') }}</span>
+                </div>
             </div>
             <div class="min-w-0" data-alerts></div>
         </div>
@@ -241,7 +249,7 @@
                 const modal = document.getElementById('pinnacleModal');
                 if (!root || !modal) return;
 
-                const state = { alerts: @json($pinnacleAlerts ?? []), archive: @json($pinnacleArchive), archiveDayEndsAt: @json($pinnacleArchiveEnd->timestamp * 1000), archiveHasMore: @json($pinnacleArchiveHasMore ?? false), archiveCursor: @json($pinnacleArchiveCursor ?? null), sport: @json($pinnacleArchive ? request('sport', 'all') : 'all'), mode: @json($pinnacleArchive ? request('mode', 'all') : 'all'), view: @json($pinnacleArchive ? request('view', 'simple') : 'simple'), marketFilter: @json($pinnacleArchive ? request('market_filter', 'all') : 'all'), timeFilter: @json($pinnacleArchive ? request('time_filter', 'all') : 'all'), connected: @json($pinnacleFeedConnected ?? false), feeds: @json($pinnacleFeeds ?? []), openAlertKey: null, collapsedGroups: new Set(), flashes: new Map() };
+                const state = { alerts: @json($pinnacleAlerts ?? []), archive: @json($pinnacleArchive), archiveDayEndsAt: @json($pinnacleArchiveEnd->timestamp * 1000), archiveHasMore: @json($pinnacleArchiveHasMore ?? false), archiveCursor: @json($pinnacleArchiveCursor ?? null), sport: @json($pinnacleArchive ? request('sport', 'all') : 'all'), mode: @json($pinnacleArchive ? request('mode', 'all') : 'all'), view: @json($pinnacleArchive ? request('view', 'simple') : 'simple'), marketFilter: @json($pinnacleArchive ? request('market_filter', 'all') : 'all'), timeFilter: @json($pinnacleArchive ? request('time_filter', 'all') : 'all'), connected: @json($pinnacleFeedConnected ?? false), feeds: @json($pinnacleFeeds ?? []), minDrop: 1, openAlertKey: null, collapsedGroups: new Set(), flashes: new Map() };
                 const matchStartLabels = {{ Illuminate\Support\Js::from(['minutes' => __('Starts in :minutesm'), 'hoursMinutes' => __('Starts in :hoursh :minutesm'), 'daysHours' => __('Starts in :daysd :hoursh'), 'now' => __('Starting now')]) }};
                 const sportKey = value => { const key = String(value || '').toLowerCase().trim().replace(/\s+/g, '-'); return key === 'hockey' ? 'ice-hockey' : key; };
                 const matchDayFormat = new Intl.DateTimeFormat('en-CA', { timeZone: root.dataset.timezone || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' });
@@ -381,6 +389,7 @@
                     const matching = state.alerts.filter(alert => {
                         if (leagues.size && !leagues.has(alert.league_filter_key)) return false;
                         if (state.archive && higherOnly?.checked && !(betfairPrice(alert) > number(alert.to_price) && number(alert.to_price) > 1)) return false;
+                        if (!state.archive && Math.round(drop(alert) * 1e8) / 1e8 < (state.minDrop ?? 1)) return false;
                         const received = monitorTimestamp(alert);
                         if (!state.archive && (!Number.isFinite(received) || received <= 0 || now - received >= 420000)) return false;
                         if (!matchesMarketFilter(alert) || (state.mode !== 'all' && (state.mode === 'live') !== isLive(alert))) return false;
@@ -428,7 +437,7 @@
                         button.querySelector('[data-count]').textContent = button.dataset.sport === 'all' ? alerts.length : (sportCounts.get(button.dataset.sport) || 0);
                         button.querySelector('[data-count]').hidden = Boolean(state.archive);
                     });
-                    root.querySelector('[data-alert-meta]').textContent = `${state.archive ? (globalThis.bfTranslations?.['Daily Archive'] ?? 'Daily Archive') + ' · ' : ''}${modeLabels[state.mode]} ${state.archive ? '· ODDS-DROP' : @json(__('· ODDS-DROP · ≥1%'))}`;
+                    root.querySelector('[data-alert-meta]').textContent = `${state.archive ? (globalThis.bfTranslations?.['Daily Archive'] ?? 'Daily Archive') + ' · ' : ''}${modeLabels[state.mode]} ${state.archive ? '· ODDS-DROP' : `· ODDS-DROP · ≥${state.minDrop ?? 1}%`}`;
 
                     if (!groups.size) {
                         root.querySelector('[data-alerts]').innerHTML = `<div class="px-5 py-14 text-center text-sm font-semibold text-[var(--text-muted-soft)]"><div class="mb-2 text-4xl opacity-50">🔍</div>{{ __('No alerts match the current filters.') }}</div>`;
@@ -518,6 +527,21 @@
                 };
 
                 root.addEventListener('click', event => {
+                    const percentageButton = event.target.closest('[data-min-drop]');
+                    if (percentageButton && !state.archive) {
+                        const threshold = Number(percentageButton.dataset.minDrop);
+                        if (![1, 3.5].includes(threshold)) return;
+                        state.minDrop = threshold;
+                        root.querySelectorAll('[data-min-drop]').forEach(button => {
+                            const active = button === percentageButton;
+                            button.setAttribute('aria-pressed', String(active));
+                            button.classList.toggle('bg-white', active);
+                            button.classList.toggle('text-[var(--text-brand-70)]', active);
+                            button.classList.toggle('text-white', !active);
+                        });
+                        render();
+                        return;
+                    }
                     if (event.target.closest('[data-load-archive]')) { refresh(true); return; }
                     const sportButton = event.target.closest('[data-sport]');
                     const switchButton = event.target.closest('[data-mode], [data-view]');

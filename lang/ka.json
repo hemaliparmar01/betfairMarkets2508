@@ -2353,5 +2353,6 @@
     "3 months": "3 თვე",
     "Save :amount GEL": "დაზოგეთ :amount GEL",
     "Save €:amount": "დაზოგეთ €:amount",
-    "Last available quote": "ბოლო ხელმისაწვდომი კოეფიციენტი"
+    "Last available quote": "ბოლო ხელმისაწვდომი კოეფიციენტი",
+    "Minimum odds drop": "კოეფიციენტის მინიმალური ვარდნა"
 }
