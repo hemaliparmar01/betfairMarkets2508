@@ -18,6 +18,7 @@ use Illuminate\Broadcasting\BroadcastManager;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Queue\CallQueuedClosure;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Broadcast;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
@@ -694,6 +695,76 @@ class AlertSystemTest extends TestCase
         $cached = $stored;
         $store->invoke($command, $pending, []);
         $this->assertSame($payload['alerts'][0]['monitor_received_at'], json_decode($stored, true)['alerts'][0]['monitor_received_at']);
+    }
+
+    public function test_pinnacle_check_reports_cached_sports_and_stale_listener_code_without_connecting(): void
+    {
+        Redis::shouldReceive('get')->with('Pinnacle:drops')->once()->andReturn(json_encode([
+            'alerts' => [['sport' => 'soccer'], ['sport' => 'basketball']],
+            'signals' => [['sport' => 'cricket']], 'feeds' => ['live' => ['status' => 'connected']],
+            'listener' => ['code_sha256' => 'old-code'],
+        ]));
+        $this->assertSame(0, Artisan::call('pinnodds:listen', ['--check' => true]));
+        $output = json_decode(Artisan::output(), true);
+        $this->assertSame(['soccer' => 1, 'basketball' => 1], $output['sports']['alerts']);
+        $this->assertSame(['cricket' => 1], $output['sports']['signals']);
+        $this->assertFalse($output['code_matches_disk']);
+        Http::assertNothingSent();
+        Bus::assertNothingDispatched();
+    }
+
+    public function test_pinnacle_monitor_keeps_all_supported_sports_without_a_betfair_match(): void
+    {
+        config(['cache.stores.redis.driver' => 'array', 'services.sportsmeld.key' => null]);
+        $this->actingAs($this->customer(), 'customers');
+        $command = app(ListenPinnodds::class);
+        $drops = [];
+        foreach ([1, 2, 3, 4, 5, 6, 11, 13] as $sportId) {
+            $drops[] = ['id' => 100 + $sportId, 'sport_id' => $sportId, 'home' => 'Home', 'away' => 'Away',
+                'league' => 'Example League', 'sect' => 'Total', 'point' => 22.5, 'outcome' => 'Over', 'period' => 0,
+                'from_price' => 2, 'to_price' => 1.9, 'alerted' => time(), 'starts' => time() + 3600];
+        }
+        $pending = (new ReflectionMethod(ListenPinnodds::class, 'normalizeDrops'))->invoke($command, $drops, 'prematch');
+        $cached = null;
+        Redis::shouldReceive('get')->andReturnNull()->byDefault();
+        Redis::shouldReceive('get')->with('Pinnacle:drops')->andReturnUsing(function () use (&$cached): ?string {
+            return $cached;
+        });
+        Redis::shouldReceive('set')->with('Pinnacle:drops', \Mockery::type('string'))->andReturnUsing(function (string $key, string $value) use (&$cached): bool {
+            $cached = $value;
+
+            return true;
+        });
+        Redis::shouldReceive('expire')->with('Pinnacle:drops', 10800)->andReturnTrue();
+        (new ReflectionMethod(ListenPinnodds::class, 'storeDrops'))->invoke($command, $pending, []);
+        $response = $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonCount(8, 'data');
+        $this->assertEqualsCanonicalizing(['soccer', 'tennis', 'basketball', 'ice-hockey', 'american-football', 'baseball', 'esports', 'cricket'], array_column($response->json('data'), 'sport'));
+        foreach ($response->json('data') as $drop) {
+            $this->assertNull($drop['bf_back']);
+        }
+        Http::assertNothingSent();
+    }
+
+    #[TestWith(['soccer', 2.5, 1])]
+    #[TestWith(['soccer', 6.5, 4])]
+    #[TestWith(['tennis', 22.5, 1])]
+    #[TestWith(['basketball', 220.5, 1])]
+    #[TestWith(['ice-hockey', 5.5, 1])]
+    #[TestWith(['baseball', 8.5, 1])]
+    #[TestWith(['cricket', 180.5, 1])]
+    #[TestWith(['esports', 26.5, 1])]
+    #[TestWith(['american-football', 47.5, 1])]
+    public function test_pinnacle_archive_classifies_full_match_totals_for_each_sport(string $sport, float $line, int $group): void
+    {
+        config(['services.telegram.enabled' => false]);
+        $key = hash('sha256', $sport.'|'.$line);
+        $drop = ['id' => 100, 'alert_key' => $key, 'sport' => $sport, 'home' => 'Home', 'away' => 'Away',
+            'sect' => 'Total', 'outcome' => 'Over', 'point' => $line, 'period' => 0,
+            'from_price' => 2, 'to_price' => 1.9, 'alerted' => time(), 'starts' => time() + 3600];
+        (new ProcessAlert('pinnacle', ['alerts' => [$drop]]))->handle(app(AlertService::class));
+        $this->assertDatabaseHas('pinnacle_drop_archives', ['alert_key' => $key, 'sport' => $sport, 'market_group' => $group]);
+        $this->assertDatabaseCount('alerts', 0);
+        Http::assertNothingSent();
     }
 
     public function test_pinnacle_archive_retains_all_markets_and_sports_once_without_enabling_notifications(): void

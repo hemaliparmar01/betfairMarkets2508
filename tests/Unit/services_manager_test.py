@@ -96,6 +96,16 @@ class ServiceManagerTest(unittest.TestCase):
                 manager.execute('check', 'telegram-source')
                 command.assert_called_once_with(['docker', 'exec', '-w', '/srv/project', 'app', 'php', 'artisan', 'telegram:listen', '--source', '--check'], False)
 
+    def test_server_pinnacle_check_uses_the_existing_container_without_starting_a_listener(self):
+        with patch.object(server_module.platform, 'system', return_value='Linux'), patch.dict(os.environ, {
+            'SERVICES_CONFIG': str(SOURCE.parent.parent / 'server/services-manager.json'),
+            'SERVICES_ENV': 'production', 'SERVICES_CONTAINER': 'app', 'SERVICES_CONTAINER_ROOT': '/srv/project',
+        }):
+            manager = server_module.Manager()
+            with patch.object(server_module, 'run', return_value=subprocess.CompletedProcess([], 0, '{}\n', '')) as command:
+                manager.execute('check', 'pinnodds')
+                command.assert_called_once_with(['docker', 'exec', '-w', '/srv/project', 'app', 'php', 'artisan', 'pinnodds:listen', '--check'], False)
+
     def test_server_source_check_propagates_failures_and_supports_native_php(self):
         with patch.object(server_module.platform, 'system', return_value='Linux'), patch.dict(os.environ, {
             'SERVICES_CONFIG': str(SOURCE.parent.parent / 'server/services-manager.json'), 'SERVICES_ENV': 'production',

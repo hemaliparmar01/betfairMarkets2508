@@ -497,3 +497,37 @@ test('partial snapshots retain the last Betfair quote without treating it as a f
     assert.equal(app.evaluate('betfairDisplayPrice(state.alerts[0])'), 1.54);
     assert.match(app.output.innerHTML, /Last available quote/);
 });
+
+
+test('Main Markets accepts full-match totals for every sport using its own scoring range', () => {
+    const sports = [['soccer', 2.5], ['tennis', 22.5], ['basketball', 220.5], ['ice-hockey', 5.5], ['baseball', 8.5], ['cricket', 180.5], ['esports', 26.5], ['american-football', 47.5]];
+    const app = harness(sports.map(([sport, point]) => ({...base, sport, point, sect: 'Total', alert_key: sport, period: 0, bf_back: null})));
+    app.state.marketFilter = 'main';
+    assert.equal(app.evaluate('filtered().length'), 8);
+    for (const [sport] of sports) {
+        app.state.sport = sport;
+        app.evaluate('render()');
+        assert.match(app.output.innerHTML, new RegExp(`data-alert-key="${sport}"`));
+    }
+    app.evaluate('receiveAlerts([{...state.alerts[0], alert_key: "football-large-total", sport: "soccer", point: 6.5}])');
+    assert.equal(app.evaluate('filtered().some(alert => alert.alert_key === "football-large-total")'), false);
+    app.state.marketFilter = 'handicap';
+    assert.equal(app.evaluate('filtered().length'), 0);
+});
+
+
+test('unavailable Betfair tooltip anchors to its cell when no child element exists', () => {
+    const app = harness([{...base, bf_back: null}]);
+    app.evaluate(`
+        globalThis.tooltipTexts = {betfair: 'Betfair quote unavailable'};
+        globalThis.tooltip = {style: {}, offsetWidth: 280, offsetHeight: 80};
+        globalThis.cell = {firstElementChild: null, setAttribute() {}, getBoundingClientRect() {return {left: 100, top: 200, bottom: 235, width: 100};}};
+        document.getElementById = () => tooltip;
+        globalThis.window = {innerWidth: 1000, innerHeight: 800};
+    `);
+    app.evaluate(source.slice(source.indexOf('                window.showOddsTooltip ='), source.indexOf('            })();')));
+    app.evaluate("window.showOddsTooltip({currentTarget: cell}, 'betfair')");
+    assert.equal(app.evaluate('tooltip.textContent'), 'Betfair quote unavailable');
+    assert.equal(app.evaluate('tooltip.style.visibility'), 'visible');
+    assert.equal(app.evaluate('tooltip.style.top'), '116px');
+});

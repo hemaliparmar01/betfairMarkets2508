@@ -175,9 +175,10 @@ class Manager:
     def execute(self, action, name=None):
         selected = self.selected(name)
         if action == 'check':
-            if name != 'telegram-source' or len(selected) != 1:
-                raise ValueError('Use check telegram-source for the read-only LTD source health check')
-            arguments = ['telegram:listen', '--source', '--check']
+            checks = {'telegram-source': ['telegram:listen', '--source', '--check'], 'pinnodds': ['pinnodds:listen', '--check']}
+            if name not in checks or len(selected) != 1:
+                raise ValueError('Use check telegram-source or check pinnodds for a read-only listener check')
+            arguments = checks[name]
             container = os.environ.get('SERVICES_CONTAINER')
             if container:
                 directory = os.environ.get('SERVICES_CONTAINER_ROOT')

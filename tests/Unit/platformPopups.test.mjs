@@ -10,10 +10,10 @@ const templates = {
     ka: { title: 'LTD შეტყობინება', score_label: 'ანგარიში', minute_label: 'წთ', odds_label: 'ფრის კოეფიციენტი', view_btn: 'ნახვა', mute_btn: 'გამორთვა', status_label: 'LIVE', strategy_label: 'პირველი ტაიმი LTD' },
 };
 const alert = { alert_id: '1', alert_type: 'ltd', match: 'Home v Away', league: 'League', score: '0-0', minute: 10, draw_lay: 2.1, url: '/football/market-activity?match=1', templates };
-function harness(locale = 'en', response = { alerts: [alert], cursor: 1, popup_enabled: true }) {
+function harness(locale = 'en', response = { alerts: [alert], cursor: 1, popup_enabled: true }, dataset = {}) {
     const events = {};
     const children = [];
-    const container = { dataset: { customerId: '5', popupEnabled: '1', popupsUrl: '/notifications/popups', since: '1000' }, children,
+    const container = { dataset: { customerId: '5', popupEnabled: '1', popupsUrl: '/notifications/popups', since: '1000', ...dataset }, children,
         append(node) { children.push(node); }, replaceChildren() { children.splice(0); } };
     const requests = [];
     const context = vm.createContext({ URL, Set, console, performance: { now: () => 0 }, setTimeout() {}, clearTimeout() {},
@@ -64,3 +64,20 @@ test('failed popup polls retain the cursor and retry; hidden pages do not fetch'
     await app.events.poll();
     assert.equal(app.requests.length, count);
 });
+
+
+for (const dataset of [{popupsUrl: undefined}, {since: undefined}, {since: 'undefined'}]) {
+    test(`old or invalid popup markup never sends an undefined request (${JSON.stringify(dataset)})`, async () => {
+        const app = harness('en', {alerts: [], cursor: 0, popup_enabled: true}, dataset);
+        await app.context.initialPoll;
+        await app.events.poll();
+        assert.equal(app.requests.length, 0);
+        app.events['.alert.received'](alert);
+        assert.equal(app.children.length, 1);
+        app.container.dataset.popupsUrl = '/notifications/popups';
+        app.container.dataset.since = '1000';
+        await app.events.poll();
+        assert.equal(app.requests.length, 1);
+        assert.match(app.requests[0], /notifications\/popups\?after=0&since=1000/);
+    });
+}

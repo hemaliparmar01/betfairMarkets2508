@@ -335,7 +335,8 @@
                     if (/^(money[ _]?line|1x2|match odds)$/.test(section) && Number(alert.period ?? 0) === 0) return 0;
                     if (/^(total|totals|o\/u)(?:\s|$)/.test(section) && Number(alert.period ?? 0) === 0) {
                         const line = marketLine(alert) ?? (String(alert.outcome ?? '').match(/\d+(?:\.\d+)?/) ?? section.match(/\d+(?:\.\d+)?/))?.[0];
-                        if ([0.5, 1.5, 2.5, 3.5, 4.5].includes(Number(line))) return 1;
+                        if ([0.5, 1.5, 2.5, 3.5, 4.5].includes(Number(line))
+                            || (sportKey(alert.sport) !== 'soccer' && line != null && String(line).trim() !== '' && Number.isFinite(Number(line)))) return 1;
                     }
                     if (/^(btts|both teams to score)$/.test(section) && Number(alert.period ?? 0) === 0) return 2;
                     return /^(spreads?|asian handicap|handicap)(?:\s|$)/.test(section) ? 3 : 4;
@@ -691,7 +692,7 @@
                 tooltip.style.left = '0px';
                 tooltip.style.top = '0px';
 
-                const anchor = type === 'betfair' ? event.currentTarget.firstElementChild : event.currentTarget;
+                const anchor = type === 'betfair' ? (event.currentTarget.firstElementChild ?? event.currentTarget) : event.currentTarget;
                 const rect = anchor.getBoundingClientRect();
                 const width = tooltip.offsetWidth;
                 const height = tooltip.offsetHeight;

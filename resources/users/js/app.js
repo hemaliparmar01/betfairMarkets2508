@@ -313,11 +313,14 @@ if (alertContainer) {
     let popupPollingStopped = false;
     const pollPlatformAlerts = async () => {
         if (pollingPopups || popupPollingStopped || !notificationViewActive || document.hidden) return;
+        const popupUrl = alertContainer.dataset.popupsUrl;
+        const popupSince = alertContainer.dataset.since;
+        if (!popupUrl || !/^\d+$/.test(popupSince ?? '')) return;
         pollingPopups = true;
         try {
-            const url = new URL(alertContainer.dataset.popupsUrl, window.location.origin);
+            const url = new URL(popupUrl, window.location.origin);
             url.searchParams.set('after', popupCursor);
-            url.searchParams.set('since', alertContainer.dataset.since);
+            url.searchParams.set('since', popupSince);
             const data = await notificationRequest(url, 'GET');
             if (!notificationViewActive) return;
             alertContainer.dataset.popupEnabled = data.popup_enabled ? '1' : '0';

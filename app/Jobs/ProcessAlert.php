@@ -71,14 +71,15 @@ class ProcessAlert implements ShouldBeUnique, ShouldQueue
                     $line = $lineMatch[1];
                 }
                 $period = (int) ($drop['period'] ?? 0);
+                $sport = preg_replace('/\s+/', '-', strtolower(trim((string) ($drop['sport'] ?? 'other'))));
                 $group = match (true) {
                     $period === 0 && preg_match('/^(money[ _]?line|1x2|match odds)$/', $section) === 1 => 0,
-                    $period === 0 && preg_match('/^(total|totals|o\/u)(?:\s|$)/', $section) === 1 && is_numeric($line) && in_array((float) $line, [0.5, 1.5, 2.5, 3.5, 4.5], true) => 1,
+                    $period === 0 && preg_match('/^(total|totals|o\/u)(?:\s|$)/', $section) === 1 && is_numeric($line)
+                        && ($sport !== 'soccer' || in_array((float) $line, [0.5, 1.5, 2.5, 3.5, 4.5], true)) => 1,
                     $period === 0 && in_array($section, ['btts', 'both teams to score'], true) => 2,
                     preg_match('/^(spreads?|asian handicap|handicap)(?:\s|$)/', $section) === 1 => 3,
                     default => 4,
                 };
-                $sport = preg_replace('/\s+/', '-', strtolower(trim((string) ($drop['sport'] ?? 'other'))));
                 $rows[$drop['alert_key']] = ['alert_key' => $drop['alert_key'], 'alerted_at' => $at, 'sport' => $sport === 'hockey' ? 'ice-hockey' : $sport,
                     'is_live' => (bool) ($drop['is_live'] ?? false), 'market_group' => $group,
                     'start_timestamp' => $starts > 0 ? $starts : null, 'payload' => $drop];

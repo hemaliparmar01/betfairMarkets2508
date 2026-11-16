@@ -23,7 +23,7 @@ use function Amp\Future\await;
 
 class ListenPinnodds extends Command
 {
-    protected $signature = 'pinnodds:listen';
+    protected $signature = 'pinnodds:listen {--check : Inspect cached sports and listener version without opening a feed connection}';
 
     protected $description = 'Listen to Pinnodds live and prematch drops and share them through Redis';
 
@@ -35,8 +35,26 @@ class ListenPinnodds extends Command
 
     private int $lastParentCleanup = 0;
 
+    /** @var array<string, mixed> */
+    private array $runtime = [];
+
     public function handle(): int
     {
+        if ($this->option('check')) {
+            $cached = getInRedis('Pinnacle:drops', readOnly: true) ?? [];
+            $counts = [];
+            foreach (['alerts', 'signals'] as $group) {
+                $counts[$group] = array_count_values(array_map(static fn (array $drop): string => (string) ($drop['sport'] ?? 'unknown'), $cached[$group] ?? []));
+            }
+            $runningHash = $cached['listener']['code_sha256'] ?? null;
+            $this->line(json_encode([
+                'sports' => $counts, 'feeds' => $cached['feeds'] ?? [], 'updated_at' => $cached['updated_at'] ?? null,
+                'listener' => $cached['listener'] ?? null,
+                'code_matches_disk' => $runningHash === null ? null : hash_equals(hash_file('sha256', __FILE__), $runningHash),
+            ], JSON_THROW_ON_ERROR));
+
+            return self::SUCCESS;
+        }
         $key = (string) config('services.pinnodds.key');
         if ($key === '') {
             $this->error('PINACLE_ODDS_KEY is missing.');
@@ -44,6 +62,7 @@ class ListenPinnodds extends Command
             return self::FAILURE;
         }
 
+        $this->runtime = ['started_at' => time(), 'pid' => getmypid(), 'code_sha256' => hash_file('sha256', __FILE__), 'received_by_sport' => []];
         $this->loadLeagueMappings();
 
         $lockSeconds = 120;
@@ -192,6 +211,10 @@ class ListenPinnodds extends Command
                                         continue;
                                     }
                                     $drops = $this->normalizeDrops($frame, $mode);
+                                    foreach ($drops as $drop) {
+                                        $sport = $drop['sport'];
+                                        $this->runtime['received_by_sport'][$sport] = ($this->runtime['received_by_sport'][$sport] ?? 0) + 1;
+                                    }
                                     $drops = array_replace($drops, $this->filterCompetitions($drops));
                                     if ($drops !== []) {
                                         $pending = array_replace($pending, $drops);
@@ -368,7 +391,7 @@ class ListenPinnodds extends Command
             $dashboardCutoff = $receivedAt - 420;
             $dashboardAlerts = array_values(array_filter($alerts, static fn (array $alert): bool => ($alert['monitor_received_at'] ?? $alert['alerted']) > $dashboardCutoff));
             usort($dashboardAlerts, static fn (array $left, array $right): int => ($right['monitor_received_at'] ?? $right['alerted']) <=> ($left['monitor_received_at'] ?? $left['alerted']));
-            Redis::set('Pinnacle:drops', json_encode(['alerts' => $dashboardAlerts, 'signals' => $signals, 'feeds' => $feeds, 'updated_at' => time()], JSON_THROW_ON_ERROR));
+            Redis::set('Pinnacle:drops', json_encode(['alerts' => $dashboardAlerts, 'signals' => $signals, 'feeds' => $feeds, 'updated_at' => time(), 'listener' => $this->runtime ?: null], JSON_THROW_ON_ERROR));
             Redis::expire('Pinnacle:drops', 10800);
             $parentIds = [];
             foreach ($pending as $drop) {
