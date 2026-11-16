@@ -171,15 +171,52 @@ class FootballController extends Controller
 
                 return trim(str_replace([' utd ', ' ath ', ' st '], [' united ', ' athletic ', ' saint '], $name));
             };
-            $sameClubName = static function (string $left, string $right) use ($normalizeName): bool {
+            $sameClubName = static function (string $left, string $right, bool $football = false) use ($normalizeName): bool {
                 $left = $normalizeName($left);
                 $right = $normalizeName($right);
+                if ($football) {
+                    $left = preg_replace(['/ iii$/', '/ ii$/'], [' c', ' b'], $left);
+                    $right = preg_replace(['/ iii$/', '/ ii$/'], [' c', ' b'], $right);
+                }
                 $suffix = '/ (?:city|town|(?:18|19|20)\d{2})$/';
 
                 return $left !== '' && $right !== '' && ($left === $right
                     || preg_replace($suffix, '', $left) === $right
                     || preg_replace($suffix, '', $right) === $left);
             };
+            $squadProfile = static function (string $name) use ($normalizeName): array {
+                $name = $normalizeName($name);
+                preg_match('/(?:^| )(iii|ii|b|c)(?: (?:u[0-9]{2}|women|ladies|w))*$/', $name, $reserve);
+                preg_match('/(?:^| )(?:u|under ?)([0-9]{2})(?: |$)/', $name, $age);
+
+                return [match ($reserve[1] ?? '') {
+                    'ii', 'b' => 'b', 'iii', 'c' => 'c', default => 'first'
+                },
+                    $age[1] ?? null, preg_match('/(?:^| )(?:women|womens|ladies)(?: |$)| w$/', $name) === 1];
+            };
+            $aliasScope = static function (array $drop): string {
+                [$country, $league] = AlertService::pinnacleLeague($drop);
+
+                return $country.'|'.$league;
+            };
+            $aliasKey = static fn (string $league, string $name): string => hash('sha256', $normalizeName($league).'|'.$normalizeName($name));
+            $teamAliases = [];
+            if (! $pinnacleArchive) {
+                $aliasKeys = [];
+                foreach ($pinnacleAlerts as $drop) {
+                    foreach (['home', 'away'] as $side) {
+                        $aliasKeys[] = $aliasKey($aliasScope($drop), (string) ($drop[$side] ?? ''));
+                    }
+                }
+                if ($aliasKeys !== []) {
+                    foreach (array_chunk(array_values(array_unique($aliasKeys)), 500) as $keys) {
+                        foreach (DB::table('pinnacle_betfair_team_aliases')->whereIn('sport', array_unique(array_column($pinnacleAlerts, 'sport')))
+                            ->whereIn('name_key', $keys)->get(['sport', 'name_key', 'betfair_name']) as $alias) {
+                            $teamAliases[$alias->sport][$alias->name_key] = $alias->betfair_name;
+                        }
+                    }
+                }
+            }
             $sportsmeldKey = $pinnacleArchive || ($capture && ! $currentPinnacleQuote) ? '' : (string) config('services.sportsmeld.key');
             $sportKeys = ['soccer' => 'football', 'tennis' => 'tennis', 'basketball' => 'basketball', 'ice-hockey' => 'ice_hockey', 'american-football' => 'american_football', 'baseball' => 'baseball', 'cricket' => 'cricket'];
             $eventIds = [];
@@ -214,6 +251,7 @@ class FootballController extends Controller
             }
             $remainingLookups = 1;
             $legacyFootballMatches = ! $pinnacleArchive && (! $capture || $currentPinnacleQuote) && $sportsmeldKey === '' && isset($eventIds['soccer']) ? (getInRedis('Football:matches', readOnly: true) ?? []) : [];
+            $legacyFootballByEvent = array_column($legacyFootballMatches, null, 'betfair_match_id');
             $footballIndex = ($sportsmeldKey !== '' || $currentPinnacleQuote) && isset($eventIds['soccer']) ? getInRedis('Football:matches', fixtureIndex: true, marketActivityIndex: true) : null;
 
             foreach ($pinnacleAlerts as &$alert) {
@@ -245,30 +283,30 @@ class FootballController extends Controller
                 $alert['start_timestamp'] = $startTimestamp > 0 ? $startTimestamp : null;
                 $status = ($alert['is_live'] ?? false) ? 'Live' : 'Prematch';
                 $matchedFixture = null;
-                if (! $pinnacleArchive && isset($sportKeys[$sport]) && ($sportsmeldKey !== '' || $capture || $sport === 'soccer')
+                if (! $pinnacleArchive && isset($sportKeys[$sport])
                     && ($hasFixtureNames || isset($eventMappings[$sport][$eventId]))) {
                     $sportTable = $sportKeys[$sport];
                     $resolutionKey = $sport.'|'.$eventId.'|'.$status;
                     if (! array_key_exists($resolutionKey, $resolvedEvents)) {
                         $mappedId = $eventMappings[$sport][$eventId] ?? null;
                         $fixtures = $legacyFootballMatches;
-                        if ($mappedId !== null || (($sport === 'soccer' || $sportsmeldKey !== '' || $capture) && $startTimestamp > 0)) {
+                        if ($mappedId !== null || $startTimestamp > 0) {
                             $fixtureWindow = $sportTable.'|'.$status.'|'.($mappedId !== null ? 'id:'.$mappedId : 'start:'.$startTimestamp);
                             $storedFixtures = $fixtureWindows[$fixtureWindow] ??= DB::table($sportTable.'_matches')
                                 ->when($mappedId !== null,
                                     fn ($query) => $query->where('betfair_match_id', $mappedId),
                                     fn ($query) => $query->whereBetween('start_timestamp', [$startTimestamp - 3600, $startTimestamp + 3600]))
-                                ->where('data_sync_complete', true)
                                 ->where('result_status', $status)
                                 ->whereNotNull('betfair_match_id')
                                 ->get(['unique_key', 'sports_api_pro_match_id', 'betfair_match_id', 'team1', 'team2', 'tournament', 'result_status', 'start_timestamp as timestamp', 'data_sync_complete', 'payload'])
-                                ->map(static fn (object $fixture): array => array_replace(array_intersect_key(json_decode($fixture->payload, true) ?? [], ['internal_backup' => true, 'provider_lifecycle' => true]), array_diff_key((array) $fixture, ['payload' => true]), ['data_sync_complete' => true]))
+                                ->map(static fn (object $fixture): array => array_replace(array_intersect_key(json_decode($fixture->payload, true) ?? [], ['internal_backup' => true, 'provider_lifecycle' => true]), array_diff_key((array) $fixture, ['payload' => true])))
                                 ->all();
                             $fixtures = $storedFixtures;
-                            if ($mappedId === null && $legacyFootballMatches !== []) {
+                            $legacyCandidates = $mappedId === null ? $legacyFootballMatches : (isset($legacyFootballByEvent[$mappedId]) ? [$legacyFootballByEvent[$mappedId]] : []);
+                            if ($legacyCandidates !== []) {
                                 $fixtures = array_values(array_replace(
                                     array_column($storedFixtures, null, 'unique_key'),
-                                    array_column($legacyFootballMatches, null, 'unique_key'),
+                                    array_column($legacyCandidates, null, 'unique_key'),
                                 ));
                             }
                         }
@@ -284,62 +322,75 @@ class FootballController extends Controller
 
                                 continue;
                             }
-                            if (($fixture['result_status'] ?? null) !== $status || ($fixture['data_sync_complete'] ?? false) !== true) {
+                            if (($fixture['result_status'] ?? null) !== $status || (empty($fixture['betfair_match_id']) && ($fixture['data_sync_complete'] ?? false) !== true)) {
                                 continue;
                             }
                             if ($mappedId !== null ? (string) ($fixture['betfair_match_id'] ?? '') === $mappedId : $sameTime) {
                                 $candidates[] = $fixture;
                             }
                         }
-                        $fallback = $mappedId === null;
-                        $localCandidates = $candidates;
-                        if ($mappedId === null && $sportsmeldKey !== '') {
-                            $candidates = array_values(array_filter($candidates, static fn (array $fixture): bool => ! empty($fixture['betfair_match_id'])));
-                            $league = $normalizeName((string) ($alert['league'] ?? $alert['league_name'] ?? ''));
-                            $tooManyCandidates = $sport !== 'soccer' && count($fixtures) === 26;
+                        $leagueLabel = (string) ($alert['league'] ?? $alert['league_name'] ?? '');
+                        $league = $normalizeName($leagueLabel);
+                        $competitionScope = $aliasScope($alert);
+                        $compatibleSquads = static fn (array $fixture): bool => $sport !== 'soccer'
+                            || ($squadProfile((string) $fixture['team1']) === $squadProfile((string) $alert['home'])
+                                && $squadProfile((string) $fixture['team2']) === $squadProfile((string) $alert['away']));
+                        $candidates = array_values(array_filter($candidates, $compatibleSquads));
+                        $learnAliases = false;
+                        if ($mappedId === null) {
                             $leagueMatches = array_values(array_filter($candidates, static fn (array $fixture): bool => $league !== '' && $normalizeName((string) ($fixture['tournament'] ?? '')) === $league));
-                            $candidates = $leagueMatches ?: $candidates;
-                            if (! $tooManyCandidates && empty($alert['internal_hidden']) && $startTimestamp > 0 && $remainingLookups > 0 && $candidates !== [] && count($candidates) <= 25
+                            $localCandidates = $leagueMatches ?: $candidates;
+                            $homeReference = $teamAliases[$sport][$aliasKey($competitionScope, (string) $alert['home'])] ?? (string) $alert['home'];
+                            $awayReference = $teamAliases[$sport][$aliasKey($competitionScope, (string) $alert['away'])] ?? (string) $alert['away'];
+                            $exact = array_values(array_filter($localCandidates, static fn (array $fixture): bool => $sameClubName((string) $fixture['team1'], $homeReference, $sport === 'soccer')
+                                && $sameClubName((string) $fixture['team2'], $awayReference, $sport === 'soccer')));
+                            $candidates = $exact !== [] ? $exact : array_values(array_filter($localCandidates, static fn (array $fixture): bool => $matchingController->teamSimilarity((string) $fixture['team1'], $homeReference) >= 80
+                                && $matchingController->teamSimilarity((string) $fixture['team2'], $awayReference) >= 80));
+                            $learnAliases = count($exact) === 1;
+                            if ($candidates === [] && $sportsmeldKey !== '' && empty($alert['internal_hidden']) && $startTimestamp > 0
+                                && $remainingLookups > 0 && $localCandidates !== [] && count($localCandidates) <= 25
                                 && Cache::add('sportsmeld:'.$resolutionKey, true, 60)) {
                                 $remainingLookups--;
                                 try {
                                     $matchedNames = ['team1' => [], 'team2' => []];
-                                    $fallback = false;
                                     foreach (['home' => 'team1', 'away' => 'team2'] as $side => $field) {
                                         $reference = $sport === 'tennis' ? preg_replace('/\s+\((?:games|sets)\)$/i', '', $alert[$side]) : $alert[$side];
                                         $response = Http::withToken($sportsmeldKey)->acceptJson()->connectTimeout(1)->timeout(2)
                                             ->post('https://sportsmeld.arbitragex.pro/api/match', [
                                                 'reference' => $reference,
-                                                'names' => array_values(array_unique(array_column($candidates, $field))),
+                                                'names' => array_values(array_unique(array_column($localCandidates, $field))),
                                                 'sport' => $sport,
                                             ]);
                                         $details = $response->ok() ? $response->json('details') : null;
                                         if (! is_array($details)) {
-                                            $fallback = true;
                                             break;
                                         }
                                         $matchedNames[$field] = array_column(array_filter($details, static fn (mixed $detail): bool => is_array($detail) && ($detail['match'] ?? false) === true && ($detail['ambiguous'] ?? true) === false), 'name');
                                     }
-                                    $candidates = array_values(array_filter($candidates, static fn (array $fixture): bool => in_array($fixture['team1'], $matchedNames['team1'], true)
+                                    $candidates = array_values(array_filter($localCandidates, static fn (array $fixture): bool => in_array($fixture['team1'], $matchedNames['team1'], true)
                                         && in_array($fixture['team2'], $matchedNames['team2'], true)));
-                                    $fallback = $fallback || count($candidates) !== 1;
-                                    if (! $fallback) {
-                                        DB::table('pinnacle_betfair_events')->insertOrIgnore([
-                                            'sport' => $sport,
-                                            'pinnacle_event_id' => $eventId,
-                                            'betfair_event_id' => (string) $candidates[0]['betfair_match_id'],
-                                        ]);
-                                    }
+                                    $learnAliases = count($candidates) === 1;
                                 } catch (ConnectionException) {
-                                    $fallback = true;
+                                    $candidates = [];
                                 }
                             }
-                        }
-                        if ($fallback) {
-                            $exact = array_values(array_filter($localCandidates, static fn (array $fixture): bool => $sameClubName((string) $fixture['team1'], (string) $alert['home'])
-                                && $sameClubName((string) $fixture['team2'], (string) $alert['away'])));
-                            $candidates = $exact !== [] ? $exact : array_values(array_filter($localCandidates, static fn (array $fixture): bool => $matchingController->teamSimilarity((string) $fixture['team1'], (string) $alert['home']) >= 80
-                                && $matchingController->teamSimilarity((string) $fixture['team2'], (string) $alert['away']) >= 80));
+                            if (count($candidates) === 1 && filled($candidates[0]['betfair_match_id'] ?? null) && ! $capture) {
+                                DB::transaction(function () use ($sport, $eventId, $candidates, $learnAliases, $competitionScope, $alert, $aliasKey, &$teamAliases): void {
+                                    DB::table('pinnacle_betfair_events')->insertOrIgnore([
+                                        'sport' => $sport, 'pinnacle_event_id' => $eventId, 'betfair_event_id' => (string) $candidates[0]['betfair_match_id'],
+                                    ]);
+                                    if ($learnAliases) {
+                                        foreach (['home' => 'team1', 'away' => 'team2'] as $side => $field) {
+                                            $nameKey = $aliasKey($competitionScope, (string) $alert[$side]);
+                                            DB::table('pinnacle_betfair_team_aliases')->upsert([[
+                                                'sport' => $sport, 'name_key' => $nameKey, 'competition' => $competitionScope,
+                                                'source_name' => $alert[$side], 'betfair_name' => $candidates[0][$field], 'created_at' => now(), 'updated_at' => now(),
+                                            ]], ['sport', 'name_key'], ['betfair_name', 'updated_at']);
+                                            $teamAliases[$sport][$nameKey] = $candidates[0][$field];
+                                        }
+                                    }
+                                });
+                            }
                         }
                         $resolvedEvents[$resolutionKey] = [
                             'hidden' => ! empty($alert['internal_hidden']),

@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Console\Commands\ListenBetfairOdds;
 use App\Console\Commands\ListenPinnodds;
 use App\Http\Controllers\Users\Football\FootballSyncController;
 use App\Http\Controllers\Users\Tennis\TennisSyncController;
@@ -1032,6 +1033,106 @@ class AlertSystemTest extends TestCase
         $cached = [];
         $response = $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonCount(3, 'data');
         $this->assertSame($receivedAt, collect($response->json('data'))->firstWhere('id', 2)['monitor_received_at']);
+        Http::assertNothingSent();
+    }
+
+    #[TestWith([true])]
+    #[TestWith([false])]
+    public function test_pinnacle_reserve_team_alias_matches_celta_vigo_ii_to_b_locally_and_persists(bool $complete): void
+    {
+        config(['services.sportsmeld.key' => 'must-not-call', 'services.football_fixture_index' => false]);
+        $this->actingAs($this->customer(), 'customers');
+        $start = time() + 3600;
+        $fixture = $this->fixture(['team1' => 'Albacete', 'team2' => 'Celta Vigo B', 'tournament' => 'LaLiga 2', 'result_status' => 'Prematch', 'timestamp' => $start]);
+        $fixture->forceFill(['betfair_match_id' => '900', 'sports_api_pro_match_id' => $complete ? '12345' : null, 'data_sync_complete' => $complete])->save();
+        FootballMarket::query()->create(['selection_key' => hash('sha256', 'celta-away'), 'football_match_unique_key' => $fixture->unique_key,
+            'market_id' => 'main', 'market_type' => 'MATCH_ODDS', 'runner' => 'Celta Vigo B',
+            'payload' => ['marketType' => 'MATCH_ODDS', 'runner' => 'Celta Vigo B', 'currentBackOdds' => 5.5]]);
+        $drop = ['id' => 100, 'alert_key' => hash('sha256', 'celta'), 'sport' => 'soccer', 'home' => 'Albacete', 'away' => 'Celta Vigo II',
+            'league' => 'LaLiga 2', 'sect' => 'Moneyline', 'outcome' => 'Away', 'period' => 0,
+            'from_price' => 5.6, 'to_price' => 5.3, 'alerted' => time(), 'starts' => $start];
+        Redis::shouldReceive('get')->andReturnUsing(static fn (string $key): ?string => $key === 'Pinnacle:drops' ? json_encode(['alerts' => [$drop]]) : null);
+        $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonPath('data.0.bf_back', 5.5)->assertJsonPath('data.0.bf_away', 'Celta Vigo B');
+        $this->assertDatabaseHas('pinnacle_betfair_events', ['sport' => 'soccer', 'pinnacle_event_id' => '100', 'betfair_event_id' => '900']);
+        $this->assertDatabaseHas('pinnacle_betfair_team_aliases', ['sport' => 'soccer', 'source_name' => 'Celta Vigo II', 'betfair_name' => 'Celta Vigo B']);
+        $this->assertSame($complete, $fixture->refresh()->data_sync_complete);
+        if (! $complete) {
+            config(['cache.stores.redis.driver' => 'array']);
+            Redis::shouldReceive('zrangebyscore')->with('Football:matches:cleaned', \Mockery::any(), '+inf')->andReturn([]);
+            Redis::shouldReceive('set')->with('Football:matches', \Mockery::any())->never();
+            $runner = ['marketId' => 'main', 'marketType' => 'MATCH_ODDS', 'runnerId' => '22', 'runner' => 'Celta Vigo B',
+                'backOdds' => 5.2, 'backSize' => 100, 'layOdds' => 5.3, 'laySize' => 100, 'market_status' => 'OPEN'];
+            $update = new ReflectionMethod(ListenBetfairOdds::class, 'updateFootballCache');
+            $this->assertTrue($update->invoke(app(ListenBetfairOdds::class), ['900' => ['markets' => [$runner]]], false));
+            $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonPath('data.0.bf_back', 5.2);
+            $this->assertFalse($fixture->refresh()->data_sync_complete);
+            $runner['market_status'] = 'SUSPENDED';
+            $update->invoke(app(ListenBetfairOdds::class), ['900' => ['markets' => [$runner]]], false);
+            $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonPath('data.0.bf_back', null);
+        }
+        Http::assertNothingSent();
+    }
+
+    #[TestWith([false])]
+    #[TestWith([true])]
+    public function test_sportsmeld_only_learns_confirmed_aliases_and_reuses_them_offline(bool $ambiguous): void
+    {
+        config(['services.sportsmeld.key' => 'test-key', 'services.football_fixture_index' => false]);
+        $this->actingAs($this->customer(), 'customers');
+        $start = time() + 3600;
+        $fixture = $this->fixture(['team1' => 'Albacete Balompie', 'team2' => 'Celta B', 'tournament' => 'LaLiga 2', 'result_status' => 'Prematch', 'timestamp' => $start]);
+        $fixture->forceFill(['betfair_match_id' => '900', 'data_sync_complete' => true])->save();
+        $drop = ['id' => 100, 'alert_key' => hash('sha256', 'learned-celta'), 'sport' => 'soccer', 'home' => 'Albacete', 'away' => 'Celta Vigo II',
+            'league' => 'LaLiga 2', 'sect' => 'Moneyline', 'outcome' => 'Home', 'from_price' => 2, 'to_price' => 1.9, 'starts' => $start, 'alerted' => time()];
+        Redis::shouldReceive('get')->andReturnUsing(static function (string $key) use (&$drop): ?string {
+            return $key === 'Pinnacle:drops' ? json_encode(['alerts' => [$drop]]) : null;
+        });
+        Http::fake(['https://sportsmeld.arbitragex.pro/api/match' => static fn ($request) => Http::response(['details' => [['name' => $request['reference'] === 'Albacete' ? 'Albacete Balompie' : 'Celta B', 'match' => true, 'ambiguous' => $ambiguous && $request['reference'] !== 'Albacete']]])]);
+        $response = $this->getJson(route('football.pinnacle-odds'))->assertOk();
+        if ($ambiguous) {
+            $response->assertJsonMissingPath('data.0.bf_home');
+            $this->assertDatabaseCount('pinnacle_betfair_team_aliases', 0);
+            $this->assertDatabaseCount('pinnacle_betfair_events', 0);
+            Http::assertSentCount(2);
+
+            return;
+        }
+        $response->assertJsonPath('data.0.bf_home', 'Albacete Balompie');
+        Http::assertSentCount(2);
+        $this->assertDatabaseHas('pinnacle_betfair_team_aliases', ['source_name' => 'Albacete', 'betfair_name' => 'Albacete Balompie']);
+        $nextStart = $start + 3 * 86400;
+        $next = $this->fixture(['unique_key' => 'next-albacete', 'sportsApiPro_match_id' => 54321, 'team1' => 'Albacete Balompie', 'team2' => 'Next Club',
+            'tournament' => 'LaLiga 2', 'result_status' => 'Prematch', 'timestamp' => $nextStart]);
+        $next->forceFill(['betfair_match_id' => '901', 'data_sync_complete' => true])->save();
+        $drop = array_replace($drop, ['id' => 101, 'alert_key' => hash('sha256', 'next-albacete'), 'away' => 'Next Club', 'starts' => $nextStart]);
+        config(['services.sportsmeld.key' => null]);
+        $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonPath('data.0.bf_home', 'Albacete Balompie')->assertJsonPath('data.0.bf_away', 'Next Club');
+        $this->assertDatabaseHas('pinnacle_betfair_events', ['pinnacle_event_id' => '101', 'betfair_event_id' => '901']);
+        Http::assertSentCount(2);
+    }
+
+    #[TestWith(['Celta Vigo', 0, false])]
+    #[TestWith(['Celta Vigo U21', 0, false])]
+    #[TestWith(['Celta Vigo B Women', 0, false])]
+    #[TestWith(['Celta Vigo III', 0, false])]
+    #[TestWith(['Celta Vigo B', 7200, false])]
+    #[TestWith(['Celta Vigo B', 0, true])]
+    public function test_pinnacle_reserve_matching_rejects_first_teams_youth_wrong_time_and_ambiguous_fixtures(string $away, int $offset, bool $duplicate): void
+    {
+        config(['services.sportsmeld.key' => 'must-not-call', 'services.football_fixture_index' => false]);
+        $this->actingAs($this->customer(), 'customers');
+        $start = time() + 3600;
+        foreach ($duplicate ? [900, 901] : [900] as $id) {
+            $fixture = $this->fixture(['unique_key' => 'candidate-'.$id, 'sportsApiPro_match_id' => $id, 'team1' => 'Albacete', 'team2' => $away,
+                'tournament' => 'LaLiga 2', 'result_status' => 'Prematch', 'timestamp' => $start + $offset]);
+            $fixture->forceFill(['betfair_match_id' => (string) $id, 'data_sync_complete' => true])->save();
+        }
+        $drop = ['id' => 100, 'alert_key' => hash('sha256', 'ambiguous-celta'), 'sport' => 'soccer', 'home' => 'Albacete', 'away' => 'Celta Vigo II',
+            'league' => 'LaLiga 2', 'sect' => 'Moneyline', 'outcome' => 'Away', 'from_price' => 2, 'to_price' => 1.9, 'starts' => $start, 'alerted' => time()];
+        Redis::shouldReceive('get')->andReturnUsing(static fn (string $key): ?string => $key === 'Pinnacle:drops' ? json_encode(['alerts' => [$drop]]) : null);
+        $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonPath('data.0.bf_back', null)->assertJsonMissingPath('data.0.bf_home');
+        $this->assertDatabaseCount('pinnacle_betfair_events', 0);
+        $this->assertDatabaseCount('pinnacle_betfair_team_aliases', 0);
         Http::assertNothingSent();
     }
 

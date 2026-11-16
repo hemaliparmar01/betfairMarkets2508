@@ -22,6 +22,7 @@ use App\Http\Controllers\Users\HorseRacing\HorseRacingSyncController;
 use App\Http\Controllers\Users\IceHockey\IceHockeySyncController;
 use App\Http\Controllers\Users\Tennis\TennisSyncController;
 use App\Models\FootballMarket;
+use App\Models\FootballMatch;
 use Illuminate\Console\Command;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Facades\Cache;
@@ -623,16 +624,31 @@ class ListenBetfairOdds extends Command
     private function updateFootballCache(array $events, bool $isLive): bool
     {
         $matches = getInRedis('Football:matches') ?? [];
-        if ($matches === []) {
-            return false;
-        }
-
         $existingMatches = $matches;
+        $databaseOnly = [];
+        $visibleEventIds = array_column(array_filter($matches, static fn (array $match): bool => ($match['data_sync_complete'] ?? false) === true), 'betfair_match_id');
+        $unmatchedEventIds = array_diff(array_map('strval', array_keys($events)), array_map('strval', $visibleEventIds));
+        if ($unmatchedEventIds !== []) {
+            $records = FootballMatch::query()->whereIn('betfair_match_id', $unmatchedEventIds)->where('data_sync_complete', false)
+                ->where('result_status', '!=', 'Finished')->whereExists(function ($query): void {
+                    $query->selectRaw('1')->from('pinnacle_betfair_events')->where('sport', 'soccer')
+                        ->whereColumn('betfair_event_id', 'football_matches.betfair_match_id');
+                })->get();
+            foreach ($records as $record) {
+                $matches[$record->unique_key] = array_replace($record->payload, [
+                    'unique_key' => $record->unique_key, 'betfair_match_id' => $record->betfair_match_id,
+                    'sportsApiPro_match_id' => $record->sports_api_pro_match_id, 'team1' => $record->team1, 'team2' => $record->team2,
+                    'tournament' => $record->tournament, 'timestamp' => $record->start_timestamp,
+                    'result_status' => $record->result_status, 'data_sync_complete' => false,
+                ]);
+                $databaseOnly[$record->unique_key] = true;
+            }
+        }
 
         $matchKeys = [];
         foreach ($matches as $matchKey => $match) {
             if (
-                ($match['data_sync_complete'] ?? false) === true
+                (($match['data_sync_complete'] ?? false) === true || isset($databaseOnly[$matchKey]))
                 && ($match['result_status'] ?? null) !== 'Finished'
                 && isset($match['betfair_match_id'])
             ) {
@@ -854,8 +870,10 @@ class ListenBetfairOdds extends Command
         unset($databaseMarkets, $previousMarkets, $storedMarkets, $previousRunner, $runner, $updatedMarkets, $marketLiquidity, $snapshots);
         if ($updated) {
             app(FootballSyncController::class)->persistOddsSnapshots($changedMatches);
+            if (array_diff_key($changedMatches, $databaseOnly) !== []) {
+                storeInRedis('Football:matches', array_replace($existingMatches, array_diff_key($matches, $databaseOnly)), 30, false, $existingMatches);
+            }
             unset($changedMatches);
-            storeInRedis('Football:matches', $matches, 30, false, $existingMatches);
         }
 
         return $updated;

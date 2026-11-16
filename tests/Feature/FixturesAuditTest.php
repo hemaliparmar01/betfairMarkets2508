@@ -1241,6 +1241,7 @@ class FixturesAuditTest extends TestCase
         app()->instance(FootballSyncController::class, $this->sync());
         (require database_path('migrations/2026_10_01_000003_create_football_matches_table.php'))->up();
         (require database_path('migrations/2026_11_05_070607_create_pinnacle_betfair_events_table.php'))->up();
+        (require database_path('migrations/2026_11_16_164658_create_pinnacle_betfair_team_aliases_table.php'))->up();
         (require database_path('migrations/2026_11_06_193054_create_pinnacle_drop_archives_table.php'))->up();
 
         $start = time() + 3600;
@@ -1291,6 +1292,7 @@ class FixturesAuditTest extends TestCase
         (require database_path('migrations/2026_10_01_000003_create_football_matches_table.php'))->up();
         (require database_path('migrations/2026_10_01_000004_create_football_markets_table.php'))->up();
         (require database_path('migrations/2026_11_05_070607_create_pinnacle_betfair_events_table.php'))->up();
+        (require database_path('migrations/2026_11_16_164658_create_pinnacle_betfair_team_aliases_table.php'))->up();
         (require database_path('migrations/2026_11_06_193054_create_pinnacle_drop_archives_table.php'))->up();
         $start = time() + 3600;
         $match = ['unique_key' => 'belgium-italy', 'betfair_match_id' => '900', 'team1' => 'Belgium', 'team2' => 'Italy',
@@ -1326,6 +1328,7 @@ class FixturesAuditTest extends TestCase
     {
         (require database_path('migrations/2026_10_01_000003_create_football_matches_table.php'))->up();
         (require database_path('migrations/2026_11_05_070607_create_pinnacle_betfair_events_table.php'))->up();
+        (require database_path('migrations/2026_11_16_164658_create_pinnacle_betfair_team_aliases_table.php'))->up();
         (require database_path('migrations/2026_11_06_193054_create_pinnacle_drop_archives_table.php'))->up();
         config(['services.sportsmeld.key' => null]);
         $this->withoutMiddleware(CustomerAuthService::class);
@@ -1374,6 +1377,7 @@ class FixturesAuditTest extends TestCase
         (require database_path('migrations/2026_10_01_000003_create_football_matches_table.php'))->up();
         (require database_path('migrations/2026_10_01_000004_create_football_markets_table.php'))->up();
         (require database_path('migrations/2026_11_05_070607_create_pinnacle_betfair_events_table.php'))->up();
+        (require database_path('migrations/2026_11_16_164658_create_pinnacle_betfair_team_aliases_table.php'))->up();
         (require database_path('migrations/2026_11_06_193054_create_pinnacle_drop_archives_table.php'))->up();
 
         $start = time() + 3600;
