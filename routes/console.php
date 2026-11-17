@@ -173,4 +173,4 @@ Schedule::call(function () {
     queueSportsSynchronization(HorseRacingSyncController::class, 'syncSportsApiProPrematchData');
 })->name('horseracing-sports-prematch')->everyFifteenMinutes()->withoutOverlapping(2);
 
-Schedule::command('subscriptions:process')->everyFiveMinutes()->withoutOverlapping(10);
+Schedule::command('subscriptions:process')->dailyAt('04:00')->timezone('Asia/Tbilisi')->withoutOverlapping(10);

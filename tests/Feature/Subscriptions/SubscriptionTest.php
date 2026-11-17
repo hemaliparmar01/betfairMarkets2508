@@ -15,9 +15,11 @@ use Database\Factories\SubscriptionsFactory;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Schedule;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use PHPUnit\Framework\Attributes\TestWith;
 use Tests\TestCase;
 
 class SubscriptionTest extends TestCase
@@ -340,14 +342,45 @@ class SubscriptionTest extends TestCase
         $this->actingAs(CustomerFactory::new()->create(), 'customers')->post('/subscriptions/'.$record->id.'/cancel')->assertForbidden();
     }
 
-    public function test_cancelled_access_expires_and_is_not_renewed(): void
+    #[TestWith(['paypal'])]
+    #[TestWith(['bog'])]
+    #[TestWith(['tbc_flitt'])]
+    public function test_cancelled_access_expires_and_is_not_renewed(string $gateway): void
     {
-        $record = $this->subscription('bog');
+        $record = $this->subscription($gateway);
         $record->update(['status' => 'cancelled', 'auto_renew' => false]);
         $this->customer->forceFill(['subscription_ends_at' => now()->subMinute()])->save();
         $this->artisan('subscriptions:process')->assertSuccessful();
         $this->assertSame('expired', $record->fresh()->status);
         $this->assertFalse($this->customer->fresh()->hasActiveSubscription());
+        Http::assertNothingSent();
+    }
+
+    public function test_all_gateways_share_one_daily_subscription_schedule(): void
+    {
+        $events = collect(Schedule::events())->filter(fn ($event): bool => str_contains($event->command ?? '', 'subscriptions:process'));
+
+        $this->assertCount(1, $events);
+        $this->assertSame('0 4 * * *', $events->sole()->expression);
+        $this->assertSame('Asia/Tbilisi', $events->sole()->timezone);
+        $this->assertTrue($events->sole()->withoutOverlapping);
+    }
+
+    #[TestWith(['paypal'])]
+    #[TestWith(['tbc_flitt'])]
+    public function test_common_processor_does_not_duplicate_provider_managed_renewal_charges(string $gateway): void
+    {
+        $record = $this->subscription($gateway);
+        $record->update(['status' => 'active', 'next_billing_at' => now()->subMinute()]);
+        $this->customer->forceFill(['subscription_ends_at' => now()->subMinute()])->save();
+
+        $this->artisan('subscriptions:process')->assertSuccessful();
+        $this->artisan('subscriptions:process')->assertSuccessful();
+
+        $this->assertSame('past_due', $record->fresh()->status);
+        $this->assertTrue($record->fresh()->auto_renew);
+        $this->assertFalse($this->customer->fresh()->hasActiveSubscription());
+        $this->assertDatabaseCount('subscription_payments', 0);
         Http::assertNothingSent();
     }
 
