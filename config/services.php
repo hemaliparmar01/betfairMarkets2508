@@ -171,7 +171,13 @@ return [
                 'Wuhan Open' => ['WTA Wuhan'],
             ],
             'Year-End Championships' => [
-                'ATP Finals' => ['ATP Finals', 'ATP Finals Turin', 'ATP Finals London'],
+                'ATP Finals' => [
+                    'ATP Finals', 'ATP Finals Turin', 'ATP Finals London',
+                    'ATP Finals - Turin', 'ATP Finals - Turin (World)',
+                    'Finals - Turin', 'Finals - Turin (World)',
+                    'Finals - Torino', 'Finals - Torino (World)',
+                    'ATP - Singles: Finals - Turin (World)',
+                ],
                 'Next Gen ATP Finals' => ['ATP Next Gen Finals', 'ATP Next Gen Finals Jeddah'],
                 'WTA Finals' => [
                     'WTA Finals', 'WTA Finals Indian Wells', 'WTA Finals Riyadh',

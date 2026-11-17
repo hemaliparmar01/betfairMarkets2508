@@ -1356,6 +1356,23 @@ class AlertSystemTest extends TestCase
         $this->assertNull(TennisSyncController::tennisCompetition(['tournament' => 'ATP Finals Turin 2026', 'tournament_tour' => 'WTA']));
     }
 
+    #[TestWith(['ATP - SINGLES: Finals - Turin (World), hard (indoor)'])]
+    #[TestWith(['ATP - SINGLES: Finals - Turin (World), hard (indoor) (Tennis)'])]
+    #[TestWith(['Finals - Turin (World)'])]
+    #[TestWith(['Finals - Turin'])]
+    #[TestWith(['Finals - Torino (World)'])]
+    #[TestWith(['Finals - Turin (World) - Round Robin'])]
+    public function test_turin_finals_provider_labels_admit_live_and_prematch_singles_without_admitting_wta(string $label): void
+    {
+        $this->assertSame(['Year-End Championships', 'ATP Finals'], TennisSyncController::pinnacleCompetition($label));
+        foreach (['Live', 'Prematch'] as $status) {
+            $this->assertSame(['Year-End Championships', 'ATP Finals'], TennisSyncController::tennisCompetition([
+                'tournament' => $label, 'sport' => 'tennis', 'result_status' => $status, 'tournament_tour' => 'ATP - Singles',
+            ]));
+        }
+        $this->assertNull(TennisSyncController::tennisCompetition(['tournament' => $label, 'tournament_tour' => 'WTA - Singles']));
+    }
+
     public function test_betfair_only_tennis_fixture_is_queued_and_persisted_from_individual_cache_without_a_sports_api_id(): void
     {
         Bus::fake();
