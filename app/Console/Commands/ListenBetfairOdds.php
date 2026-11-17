@@ -626,7 +626,8 @@ class ListenBetfairOdds extends Command
         $matches = getInRedis('Football:matches') ?? [];
         $existingMatches = $matches;
         $databaseOnly = [];
-        $visibleEventIds = array_column(array_filter($matches, static fn (array $match): bool => ($match['data_sync_complete'] ?? false) === true), 'betfair_match_id');
+        $visibleEventIds = array_column(array_filter($matches, static fn (array $match): bool => ($match['result_status'] ?? '') !== 'Finished'
+            && filled($match['betfair_match_id'] ?? null)), 'betfair_match_id');
         $unmatchedEventIds = array_diff(array_map('strval', array_keys($events)), array_map('strval', $visibleEventIds));
         if ($unmatchedEventIds !== []) {
             $records = FootballMatch::query()->whereIn('betfair_match_id', $unmatchedEventIds)->where('data_sync_complete', false)
@@ -648,11 +649,14 @@ class ListenBetfairOdds extends Command
         $matchKeys = [];
         foreach ($matches as $matchKey => $match) {
             if (
-                (($match['data_sync_complete'] ?? false) === true || isset($databaseOnly[$matchKey]))
-                && ($match['result_status'] ?? null) !== 'Finished'
-                && isset($match['betfair_match_id'])
+                ($match['result_status'] ?? null) !== 'Finished'
+                && filled($match['betfair_match_id'] ?? null)
             ) {
-                $matchKeys[(string) $match['betfair_match_id']] = $matchKey;
+                $eventId = (string) $match['betfair_match_id'];
+                $existingKey = $matchKeys[$eventId] ?? null;
+                if ($existingKey === null || ! ($matches[$existingKey]['data_sync_complete'] ?? false) || ($match['data_sync_complete'] ?? false)) {
+                    $matchKeys[$eventId] = $matchKey;
+                }
             }
         }
 

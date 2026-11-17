@@ -352,7 +352,7 @@ class AlertService
         $goal = $goal || preg_match('/^\h*(?:Status\s*:\s*)?(?:Signal\h+)?(?:Won|Paid\s*out)[\h\p{So}\p{Sk}\x{FE0F}\x{200D}!]*$/imu', $text) === 1;
         $hasMinute = preg_match('/\b(\d{1,3}(?:\+\d{1,2})?)\s*[\x{0027}\x{2019}\x{2032}]/u', $text, $minute)
             || preg_match('/\b(?:1st\s*half\s*[-–:]|time\s+elapsed\s*:)\s*(\d{1,2}):[0-5]\d\b/iu', $text, $minute);
-        $hasScore = preg_match('~(?<![\d:/-])(\d{1,2})\h*[-:–]\h*(\d{1,2})(?![\d:/-])~u', preg_replace('/^.*(?:1st\s*half\s*[-–:]|time\s+elapsed\s*:).*$/imu', '', $text), $score);
+        $hasScore = preg_match('~(?<![\d:/-])(\d{1,2})\h*[-:–]\h*(\d{1,2})(?![\d:/-])~u', preg_replace('/^.*(?:1st\s*half\s*[-–:]|time\s+elapsed\s*:|\b\d{1,2}\h+[\p{L}.]+\h+20\d{2}\h*\(\d{1,2}:\d{2}\)).*$/imu', '', $text), $score);
         if (! $goal && ! preg_match('/^\h*(?:(?:Market|Prediction|Selection)\h*:\h*)?(?:Totals?\.?\h*)?(?:Over\h*\(?0[.,]5\)?(?:\h*Goals?)?\h*[.\-–:]?\h*(?:1st\h*half|first\h*half|HT)|(?:1st\h*half|first\h*half|HT)\h*[.\-–:]?\h*Over\h*\(?0[.,]5\)?(?:\h*Goals?)?)(?=\h|$)/imu', $text)) {
             Log::info('Telegram source post did not contain a supported LTD market.', ['message_id' => $message['message_id']]);
 
@@ -370,7 +370,7 @@ class AlertService
             }
         }
         if (! $hasLeague) {
-            $hasLeague = preg_match('/^\h*Football[.\h]+[^\n.]+\.\h+([^\n]+)$/mi', $text, $league);
+            $hasLeague = preg_match('/^\h*Football[.\h]+(?:[^\n.]+\.\h+)?([^\n]+)$/mi', $text, $league);
         }
         if (! $hasTeams || (! $goal && ! $hasLeague)) {
             Log::info('Telegram source match details could not be parsed.', ['message_id' => $message['message_id']]);
@@ -723,6 +723,61 @@ class AlertService
             ? (float) $price : null;
     }
 
+    /** @return array{source: string, market_id: string, home: float, draw: float, away: float}|null */
+    private function betfairMatchOdds(string $matchId, ?string $score): ?array
+    {
+        $fixtures = FootballMatch::query()->where('sports_api_pro_match_id', $matchId)->whereNotNull('betfair_match_id')
+            ->with(['markets' => fn ($query) => $query->where('market_type', 'MATCH_ODDS')])->get();
+        if ($fixtures->count() !== 1) {
+            return null;
+        }
+        $fixture = $fixtures->first();
+        $match = $fixture->payload;
+        if (blank($fixture->betfair_match_id) || ($match['result_status'] ?? '') !== 'Live' || $score === null
+            || (($match['home_score'] ?? null).' - '.($match['away_score'] ?? null)) !== $score) {
+            return null;
+        }
+        $resolver = app(FootballSyncController::class);
+        $books = [];
+        foreach ($fixture->markets->groupBy('market_id') as $marketId => $runners) {
+            if (blank($marketId) || $runners->count() !== 3) {
+                continue;
+            }
+            $prices = [];
+            foreach ($runners as $runner) {
+                $quote = $runner->payload;
+                $price = $quote['backOdds'] ?? null;
+                $size = $quote['backSize'] ?? null;
+                $updated = $quote['liquidity_updated_at'] ?? null;
+                if (($quote['marketType'] ?? '') !== 'MATCH_ODDS' || ($quote['liquidity_feed'] ?? '') !== 'live'
+                    || ! empty($quote['suspended']) || ($quote['market_status'] ?? '') !== 'OPEN'
+                    || ($quote['liquidity_valid'] ?? true) !== true || (float) ($runner->handicap ?? 0) !== 0.0
+                    || ! is_numeric($price) || ! is_finite((float) $price) || (float) $price <= 1 || (float) $price > 1000
+                    || ! is_numeric($size) || ! is_finite((float) $size) || (float) $size <= 0
+                    || ! is_numeric($updated) || (float) $updated < microtime(true) - 75 || (float) $updated > microtime(true) + 5) {
+                    continue 2;
+                }
+                $name = trim((string) ($quote['runner'] ?? $runner->runner));
+                if (in_array(strtolower($name), ['draw', 'the draw', 'x'], true)) {
+                    $side = 'draw';
+                } else {
+                    $home = $resolver->teamSimilarity($name, $fixture->team1);
+                    $away = $resolver->teamSimilarity($name, $fixture->team2);
+                    $side = $home >= 80 && $home > $away ? 'home' : ($away >= 80 && $away > $home ? 'away' : null);
+                }
+                if ($side === null || isset($prices[$side])) {
+                    continue 2;
+                }
+                $prices[$side] = (float) $price;
+            }
+            if (count($prices) === 3 && array_sum(array_map(static fn (float $price): float => 1 / $price, $prices)) <= 1.20) {
+                $books[] = ['source' => 'betfair_best_available_back', 'market_id' => (string) $marketId, ...$prices];
+            }
+        }
+
+        return count($books) === 1 ? $books[0] : null;
+    }
+
     public function deliver(int $deliveryId): int
     {
         if (! config('services.telegram.enabled')) {
@@ -780,6 +835,22 @@ class AlertService
                     return 0;
                 }
                 if ($delivery->channel === 'telegram') {
+                    if (in_array($alert->type, ['ht00', '00_70'], true)) {
+                        $quote = $this->betfairMatchOdds((string) $alert->match_id, $payload['score'] ?? null);
+                        if ($quote === null) {
+                            if (now()->diffInSeconds(Carbon::parse($alert->created_at), true) < 120) {
+                                DB::table('alert_deliveries')->where('id', $deliveryId)->update(['status' => 'retry',
+                                    'error' => 'Waiting for fresh valid Betfair Match Odds (1X2).', 'updated_at' => now()]);
+
+                                return 5;
+                            }
+                            DB::table('alert_deliveries')->where('id', $deliveryId)->update(['status' => 'skipped',
+                                'error' => 'Fresh valid Betfair Match Odds (1X2) unavailable.', 'updated_at' => now()]);
+
+                            return 0;
+                        }
+                        $payload['context']['betfair_match_odds'] = $quote;
+                    }
                     if ($alert->type === 'fav_losing') {
                         $payload['context']['bet365_live_odds'] = $this->favoriteLiveBet365Odds((string) $alert->match_id, $payload['score'] ?? null, $payload['favorite']['favorite_side'] ?? null);
                         if ($payload['context']['bet365_live_odds'] === null) {
@@ -909,13 +980,6 @@ class AlertService
         $label = ['ht00' => 'HT 0-0 (Half Time 0-0)', '00_70' => "0-0 @ 70' (Late Goal Radar)", 'fav_losing' => 'Fav Losing (Favorite Losing)'][$type];
         $indicator = ['ht00' => '🔵', '00_70' => '🔴', 'fav_losing' => '🟧'][$type];
         $text = "{$indicator} BF MARKETS | ALERT DETECTED 🎯\n{$indicator} Filter: {$label}\n{$base}\n".($type === 'ht00' ? '⏱ Status: Half Time' : "⏱ Time: {$time}' min")." | Score: {$score}";
-        $odds = [];
-        foreach ($payload['markets']['MATCH_ODDS'] ?? [] as $runner) {
-            if ($type === 'ht00' && (! empty($runner['suspended']) || in_array($runner['market_status'] ?? 'OPEN', ['SUSPENDED', 'CLOSED'], true))) {
-                continue;
-            }
-            $odds[strtolower((string) ($runner['runner'] ?? ''))] = $runner['currentBackOdds'] ?? $runner['backOdds'] ?? null;
-        }
         if ($type === 'fav_losing') {
             $side = $payload['favorite']['favorite_side'] ?? null;
             $teams = explode(' vs ', $payload['match'], 2);
@@ -923,9 +987,10 @@ class AlertService
 
             return $text."\n\n🔥 Fav Team: {$favorite} (Pre-match @ ".($payload['favorite']['favorite_odds'] ?? '—').")\n📈 Current Live Odds: ".($payload['context']['bet365_live_odds'] ?? '—');
         }
-        $teams = explode(' vs ', $payload['match'], 2);
+        $odds = $payload['context']['betfair_match_odds'] ?? [];
+        $format = static fn (string $side): string => isset($odds[$side]) ? number_format($odds[$side], 2) : '—';
 
         return $text."\n\n".($type === 'ht00' ? '📊 Match Odds (1X2):' : '📉 In-Play Odds:')
-            ."\n• Home: ".($odds[strtolower($teams[0])] ?? '—')."\n• Draw: ".($odds['the draw'] ?? $odds['draw'] ?? '—')."\n• Away: ".($odds[strtolower($teams[1])] ?? '—');
+            ."\n• Home: ".$format('home')."\n• Draw: ".$format('draw')."\n• Away: ".$format('away');
     }
 }

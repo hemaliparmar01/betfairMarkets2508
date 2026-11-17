@@ -243,6 +243,21 @@ class AlertSystemTest extends TestCase
         Bus::assertDispatched(ProcessAlert::class, fn ($job) => $job->task === 'fanout');
     }
 
+    public function test_ltd_parses_international_image_cards_without_country_and_does_not_read_kickoff_as_a_score(): void
+    {
+        $this->fixture(['team1' => 'Ukraine', 'team2' => 'Georgia', 'tournament' => 'UEFA Nations League']);
+        $text = "Football. UEFA Nations League\n17 Nov 2026 (21:45)\nUkraine VS Georgia\nTotal. Over (0.5). 1st half\n1.49\nStatus: Accepted\n👉 A goal in the first half\nRegistration link on the 1Xbet website\nhttps://example.test\nCODE POMO: HNV3";
+
+        $id = app(AlertService::class)->source($this->source($text));
+
+        $this->assertNotNull($id);
+        $payload = json_decode(DB::table('alerts')->find($id)->payload, true);
+        $this->assertSame('Ukraine vs Georgia', $payload['match']);
+        $this->assertSame('0 - 0', $payload['score']);
+        $this->assertStringNotContainsString('21 - 45', json_encode($payload));
+        $this->assertStringNotContainsString('HNV3', json_encode($payload));
+    }
+
     public function test_ltd_parses_image_card_text_and_drops_the_promotional_footer(): void
     {
         $this->fixture(['team1' => 'Leeds', 'team2' => 'Tottenham', 'tournament' => 'English Premier League']);
@@ -1391,6 +1406,170 @@ class AlertSystemTest extends TestCase
             app(AlertService::class)->deliver($delivery);
             $this->assertDatabaseHas('alert_deliveries', ['id' => $delivery, 'status' => 'skipped']);
         }
+        Http::assertNothingSent();
+    }
+
+    #[TestWith([false])]
+    #[TestWith([true])]
+    public function test_betfair_updates_cached_partial_football_fixtures_without_requiring_a_pinnacle_mapping(bool $hasPinnacleMapping): void
+    {
+        config(['services.football_fixture_index' => false, 'services.football_match_cache' => false, 'cache.stores.redis.driver' => 'array']);
+        $fixture = $this->fixture(['tournament' => 'Premier League', 'tournament_country' => 'England',
+            'result_status' => 'Prematch', 'minutes_status' => 'Prematch', 'timestamp' => time() + 3600]);
+        $fixture->forceFill(['betfair_match_id' => '900', 'sports_api_pro_match_id' => null, 'data_sync_complete' => false])->save();
+        if ($hasPinnacleMapping) {
+            DB::table('pinnacle_betfair_events')->insert(['sport' => 'soccer', 'pinnacle_event_id' => '100', 'betfair_event_id' => '900']);
+        }
+        $match = array_replace($fixture->payload, ['betfair_match_id' => '900', 'sportsApiPro_match_id' => null,
+            'data_sync_complete' => false, 'markets' => []]);
+        $cache = [$fixture->unique_key => $match];
+        Redis::shouldReceive('get')->andReturnUsing(static fn (string $key): ?string => $key === 'Football:matches' ? json_encode($cache) : null);
+        Redis::shouldReceive('set')->with('Football:matches', \Mockery::type('string'))->once()->andReturnUsing(function (string $key, string $value) use (&$cache): bool {
+            $cache = json_decode($value, true);
+
+            return true;
+        });
+        Redis::shouldReceive('expire')->andReturnTrue();
+        Redis::shouldReceive('zrangebyscore')->andReturn([]);
+        $session = microtime(true);
+        Cache::store('redis')->put('Betfair:racing:connection', ['state' => 'connected', 'at' => time(), 'session' => $session]);
+        Cache::store('redis')->put('Betfair:racing:feed:prematch', ['state' => 'live', 'at' => time()]);
+        $runner = ['marketId' => 'main', 'marketType' => 'MATCH_ODDS', 'runnerId' => '1', 'runner' => 'Torino',
+            'backOdds' => 2.28, 'backSize' => 85.16, 'layOdds' => 2.3, 'laySize' => 321.2,
+            'market_status' => 'OPEN', 'liquidity_session' => $session, 'liquidity_feed' => 'prematch'];
+
+        $updated = (new ReflectionMethod(ListenBetfairOdds::class, 'updateFootballCache'))->invoke(
+            app(ListenBetfairOdds::class), ['900' => ['markets' => [$runner]]], false,
+        );
+
+        $this->assertTrue($updated);
+        $stored = array_values($cache[$fixture->unique_key]['markets']['main_MATCH_ODDS'])[0];
+        $this->assertSame(2.28, $stored['backOdds']);
+        $this->assertSame(85.16, $stored['backSize']);
+        $this->assertSame($session, $stored['liquidity_session']);
+        $this->assertSame('prematch', $stored['liquidity_feed']);
+        $this->assertFalse($cache[$fixture->unique_key]['data_sync_complete']);
+        $indicator = prepareMatchOddsMonitoring($cache[$fixture->unique_key], true)['market_indicators']['main_MATCH_ODDS'];
+        $this->assertFalse($indicator['stale']);
+        $this->assertSame(79.0, round($indicator['favorite_back_percent'], 1));
+    }
+
+    /** @return list<FootballMarket> */
+    private function betfairMatchOddsBook(FootballMatch $fixture): array
+    {
+        $fixture->forceFill(['betfair_match_id' => 'bf-12345'])->save();
+        $rows = [];
+        foreach (['Torino' => 2.4, 'The Draw' => 3.2, 'Monza 1912' => 4.0] as $name => $price) {
+            $rows[] = FootballMarket::query()->create([
+                'selection_key' => hash('sha256', $fixture->unique_key.$name), 'football_match_unique_key' => $fixture->unique_key,
+                'market_id' => 'bf-full-time', 'market_type' => 'MATCH_ODDS', 'runner' => $name,
+                'payload' => ['marketType' => 'MATCH_ODDS', 'runner' => $name, 'backOdds' => $price, 'backSize' => 50,
+                    'currentBackOdds' => 1.1, 'lastTradedPrice' => 1.14, 'liquidity_feed' => 'live',
+                    'liquidity_updated_at' => microtime(true), 'market_status' => 'OPEN'],
+            ]);
+        }
+
+        return $rows;
+    }
+
+    #[TestWith(['ht00'])]
+    #[TestWith(['00_70'])]
+    public function test_telegram_match_odds_use_latest_betfair_best_back_and_ignore_trigger_snapshot_and_other_markets(string $type): void
+    {
+        $fixture = $this->fixture(['minutes_status' => 'Half Time']);
+        $rows = $this->betfairMatchOddsBook($fixture);
+        $customer = $this->customer(['tg_'.$type => true]);
+        $payload = $fixture->payload;
+        if ($type === '00_70') {
+            $payload['minutes_status'] = '2nd half';
+            $payload['current_period_start_timestamp'] = time() - 25 * 60;
+        }
+        $payload['markets']['MATCH_ODDS'] = [['runner' => 'Torino', 'currentBackOdds' => 1.1]];
+        $id = app(AlertService::class)->process($type, $payload);
+        $this->assertNotNull($id);
+        $delivery = $this->delivery($id, $customer);
+        $rows[0]->update(['payload' => array_replace($rows[0]->payload, ['backOdds' => 2.5])]);
+        FootballMarket::query()->create(['selection_key' => hash('sha256', 'over-under-noise'),
+            'football_match_unique_key' => $fixture->unique_key, 'market_id' => 'totals', 'market_type' => 'OVER_UNDER_25',
+            'payload' => ['runner' => 'Torino', 'backOdds' => 1.1]]);
+        Http::fake(['https://api.telegram.org/bottest-token/sendMessage' => Http::response(['ok' => true, 'result' => ['message_id' => 42]])]);
+
+        $this->assertSame(0, app(AlertService::class)->deliver($delivery));
+        $this->assertSame(0, app(AlertService::class)->deliver($delivery));
+
+        Http::assertSentCount(1);
+        Http::assertSent(fn ($request): bool => str_contains($request['text'], "• Home: 2.50\n• Draw: 3.20\n• Away: 4.00")
+            && ! str_contains($request['text'], '1.10') && ! str_contains($request['text'], '1.14'));
+        $this->assertDatabaseHas('alert_deliveries', ['id' => $delivery, 'status' => 'sent']);
+    }
+
+    #[TestWith(['all_low'])]
+    #[TestWith(['missing'])]
+    #[TestWith(['stale'])]
+    #[TestWith(['suspended'])]
+    #[TestWith(['empty_size'])]
+    #[TestWith(['wrong_feed'])]
+    #[TestWith(['wrong_market'])]
+    #[TestWith(['unknown_runner'])]
+    #[TestWith(['future'])]
+    #[TestWith(['split_book'])]
+    #[TestWith(['unlinked'])]
+    #[TestWith(['score_changed'])]
+    public function test_telegram_match_odds_wait_for_a_valid_betfair_tick_and_then_send_once(string $reason): void
+    {
+        $fixture = $this->fixture(['minutes_status' => 'Half Time']);
+        $rows = $this->betfairMatchOddsBook($fixture);
+        $customer = $this->customer(['tg_ht00' => true]);
+        $id = app(AlertService::class)->process('ht00', $fixture->payload);
+        $delivery = $this->delivery($id, $customer);
+        $original = $rows[0]->payload;
+        if ($reason === 'all_low') {
+            foreach ($rows as $row) {
+                $row->update(['payload' => array_replace($row->payload, ['backOdds' => 1.1])]);
+            }
+        } elseif ($reason === 'split_book') {
+            $rows[0]->update(['market_id' => 'other-book']);
+        } elseif ($reason === 'unlinked') {
+            $fixture->update(['betfair_match_id' => null]);
+        } elseif ($reason === 'score_changed') {
+            $fixture->update(['payload' => array_replace($fixture->payload, ['home_score' => 1])]);
+        } else {
+            $changes = match ($reason) {
+                'missing' => ['backOdds' => null], 'stale' => ['liquidity_updated_at' => microtime(true) - 76],
+                'suspended' => ['market_status' => 'SUSPENDED'], 'empty_size' => ['backSize' => 0],
+                'wrong_feed' => ['liquidity_feed' => 'prematch'], 'wrong_market' => ['marketType' => 'HALF_TIME'],
+                'unknown_runner' => ['runner' => 'Over 2.5 Goals'], 'future' => ['liquidity_updated_at' => microtime(true) + 60],
+            };
+            $rows[0]->update(['payload' => array_replace($original, $changes)]);
+        }
+
+        $this->assertSame(5, app(AlertService::class)->deliver($delivery));
+        Http::assertNothingSent();
+        $this->assertDatabaseHas('alert_deliveries', ['id' => $delivery, 'status' => 'retry', 'error' => 'Waiting for fresh valid Betfair Match Odds (1X2).']);
+
+        $fixture->update(['betfair_match_id' => 'bf-12345', 'payload' => array_replace($fixture->payload, ['home_score' => 0])]);
+        foreach ($rows as $index => $row) {
+            $row->update(['market_id' => 'bf-full-time', 'payload' => array_replace($index === 0 ? $original : $row->payload,
+                ['backOdds' => [2.4, 3.2, 4.0][$index], 'liquidity_updated_at' => microtime(true)])]);
+        }
+        Http::fake(['https://api.telegram.org/bottest-token/sendMessage' => Http::response(['ok' => true, 'result' => ['message_id' => 42]])]);
+        $this->assertSame(0, app(AlertService::class)->deliver($delivery));
+        $this->assertSame(0, app(AlertService::class)->deliver($delivery));
+        Http::assertSentCount(1);
+        $this->assertDatabaseHas('alert_deliveries', ['id' => $delivery, 'status' => 'sent']);
+    }
+
+    public function test_telegram_match_odds_do_not_send_an_old_alert_when_a_valid_quote_never_arrives(): void
+    {
+        $fixture = $this->fixture(['minutes_status' => 'Half Time']);
+        $customer = $this->customer(['tg_ht00' => true]);
+        $id = app(AlertService::class)->process('ht00', $fixture->payload);
+        $delivery = $this->delivery($id, $customer);
+        DB::table('alerts')->where('id', $id)->update(['created_at' => now()->subSeconds(121)]);
+
+        $this->assertSame(0, app(AlertService::class)->deliver($delivery));
+
+        $this->assertDatabaseHas('alert_deliveries', ['id' => $delivery, 'status' => 'skipped', 'error' => 'Fresh valid Betfair Match Odds (1X2) unavailable.']);
         Http::assertNothingSent();
     }
 

@@ -76,6 +76,7 @@ async def main():
     @client.on(events.NewMessage(chats=entity, incoming=True))
     @client.on(events.MessageEdited(chats=entity, incoming=True))
     async def receive(event):
+        print(f'Source post {event.id} received (photo={bool(event.photo)}).', flush=True)
         reply = await event.get_reply_message() if event.is_reply else None
         text = event.raw_text or ''
         if ocr and event.photo and ' vs ' not in text.lower():
@@ -96,11 +97,13 @@ async def main():
                         raise
                     if process.returncode == 0:
                         text = extracted.decode('utf-8', errors='replace') + '\n' + text
+                        print(f'Source post {event.id} image OCR completed ({len(extracted)} bytes).', flush=True)
                     else:
                         print(f'Source post {event.id} image OCR failed (exit {process.returncode}).', file=sys.stderr)
             except (OSError, asyncio.TimeoutError):
                 print('Could not read Telegram alert image.', file=sys.stderr)
         if not text.strip():
+            print(f'Source post {event.id} skipped: no readable text.', flush=True)
             return
         payload = json.dumps({'source': source, 'message_id': event.id,
                               'sent_at': int((event.edit_date or event.date).timestamp()),

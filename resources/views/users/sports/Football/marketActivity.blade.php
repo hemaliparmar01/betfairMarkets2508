@@ -924,7 +924,7 @@
             </span>
             <span class="feed-indicator inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold   [gap:6px] [padding:4px_12px] [border-radius:30px] [background:var(--surface-control)] [border:1px_solid_var(--border-control)] [font-size:11.5px]  [color:rgb(var(--text-muted))] [font-variant-numeric:tabular-nums] dark:[background:rgb(var(--surface-soft))] dark:[border-color:rgb(var(--border))] dark:[color:rgb(var(--text-soft))] [&_.feed-dot]:[width:6px] [&_.feed-dot]:[height:6px] [&_.feed-dot]:[border-radius:50%] [&_.feed-dot]:[background:var(--surface-success)] [&_.feed-dot]:[animation:pulse_1s_infinite] dark:[&_.feed-dot]:[background:var(--status-success-fill)]">
                 <span class="feed-dot"></span>
-                {{ __('WS Feed') }} · <span class="feed-latency [color:rgb(var(--primary))] dark:[color:rgb(var(--primary))]" id="latencyDisplay">154</span> {{ __('ms') }}
+                {{ __('Refresh latency') }} · <span class="feed-latency [color:rgb(var(--primary))] dark:[color:rgb(var(--primary))]" id="latencyDisplay">—</span> {{ __('ms') }}
             </span>
         </div>
     </div>
@@ -1158,26 +1158,8 @@
                     }
                 });
 
-                // ===== SIMULATION =====
-                const SIM = {
-                    tickInterval: 3000,
-                    isProMode: false,
-                    latency: 154,
-                    previousRunners: {},
-                    timerId: null
-                };
-
-                function rand(min, max) {
-                    return Math.random() * (max - min) + min;
-                }
-
-                function randInt(min, max) {
-                    return Math.floor(rand(min, max + 1));
-                }
-
-                function r2(n) {
-                    return Math.round(n * 100) / 100;
-                }
+                let marketRefreshInterval = 3000;
+                let marketRefreshLoop = null;
 
                 function fmtSize(n) {
                     return n >= 1000
@@ -1185,116 +1167,11 @@
                         : Number(n.toFixed(2)).toString();
                 }
 
-                function fmtDelta(prev, curr) {
-                    if (prev === 0) return '0%';
-                    const pct = ((curr - prev) / prev) * 100;
-                    if (Math.abs(pct) < 0.05) return '0%';
-                    return (pct > 0 ? '+' : '') + pct.toFixed(1) + '%';
-                }
-
                 // ===== MARKET TAGS =====
                 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[char]));
                 const MARKET_TAGS = @json($marketTags);
                 const events = JSON.parse(document.querySelector('[data-market-events]').textContent);
                 const displayOdds = @json((bool) $checkAuthAndSubscription['display_odds']);
-
-                // ===== SIMULATE =====
-                function simulateTick() {
-                    const numUpdates = SIM.isProMode ? randInt(2, 5) : randInt(1, 3);
-                    const shuffled = events.slice().sort(function() {
-                        return Math.random() - 0.5;
-                    });
-                    for (let i = 0; i < numUpdates && i < shuffled.length; i++) {
-                        updateEvent(shuffled[i]);
-                    }
-                    SIM.latency = SIM.isProMode ? randInt(140, 177) : randInt(80, 150);
-                    const latEl = document.getElementById('latencyDisplay');
-                    if (latEl) latEl.textContent = SIM.latency;
-                    updateVisibleCells();
-                    if (currentEventId !== null) updateDetailPanel();
-                }
-
-                function updateEvent(ev) {
-                    if (!SIM.previousRunners[ev.id]) {
-                        SIM.previousRunners[ev.id] = ev.runners.map(function(r) {
-                            return {
-                                back: r.back,
-                                lay: r.lay,
-                                backSize: r.backSize,
-                                laySize: r.laySize
-                            };
-                        });
-                    }
-
-                    ev.runners.forEach(function(runner) {
-                        const backDrift = rand(-0.025, 0.025);
-                        const layDrift = rand(-0.025, 0.025);
-
-                        let volatilityFactor = 1;
-                        if (ev.sport === 'horseracing' || ev.sport === 'greyhounds') volatilityFactor = 1.6;
-                        else if (ev.sport === 'football' && ev.status === 'LIVE') volatilityFactor = 1.4;
-                        else if (ev.sport === 'tennis') volatilityFactor = 1.2;
-
-                        let speedFactor = 1;
-                        if (SIM.tickInterval >= 5000) speedFactor = 1.8;
-                        else if (SIM.tickInterval >= 3000) speedFactor = 1.4;
-                        else if (SIM.tickInterval >= 2000) speedFactor = 1.2;
-
-                        let newBack = r2(runner.back * (1 + backDrift * volatilityFactor * speedFactor));
-                        let newLay = r2(runner.lay * (1 + layDrift * volatilityFactor * speedFactor));
-                        if (newLay <= newBack) newLay = r2(newBack + Math.max(0.01, newBack * 0.01));
-                        newBack = Math.max(1.01, Math.min(50, newBack));
-                        newLay = Math.max(1.02, Math.min(60, newLay));
-
-                        const backSizeChange = rand(-0.12, 0.16) * speedFactor;
-                        const laySizeChange = rand(-0.12, 0.16) * speedFactor;
-                        let newBackSize = Math.round(runner.backSize * (1 + backSizeChange));
-                        let newLaySize = Math.round(runner.laySize * (1 + laySizeChange));
-                        newBackSize = Math.max(500, Math.min(200000, newBackSize));
-                        newLaySize = Math.max(500, Math.min(200000, newLaySize));
-
-                        runner.back = newBack;
-                        runner.lay = newLay;
-                        runner.backSize = newBackSize;
-                        runner.laySize = newLaySize;
-                    });
-
-                    let totalBack = 0,
-                        totalLay = 0;
-                    ev.runners.forEach(function(r) {
-                        totalBack += r.backSize;
-                        totalLay += r.laySize;
-                    });
-                    const ratio = totalBack / (totalBack + totalLay);
-                    if (ratio > 0.58) ev.balance = 'back';
-                    else if (ratio < 0.42) ev.balance = 'lay';
-                    else ev.balance = 'balanced';
-
-                    const favRunner = ev.runners[ev.favIdx];
-                    const prevFav = SIM.previousRunners[ev.id][ev.favIdx];
-                    if (prevFav) ev.delta = fmtDelta(prevFav.backSize, favRunner.backSize);
-
-                    const deltaNum = parseFloat(ev.delta.replace('%', '').replace('+', ''));
-                    if (deltaNum > 10) ev.momentum = 'strong_back';
-                    else if (deltaNum > 3) ev.momentum = 'back';
-                    else if (deltaNum < -10) ev.momentum = 'strong_lay';
-                    else if (deltaNum < -3) ev.momentum = 'lay';
-                    else ev.momentum = 'neutral';
-
-                    const absDelta = Math.abs(deltaNum);
-                    if (absDelta > 15) ev.volatility = 'high';
-                    else if (absDelta > 5) ev.volatility = 'medium';
-                    else ev.volatility = 'low';
-
-                    SIM.previousRunners[ev.id] = ev.runners.map(function(r) {
-                        return {
-                            back: r.back,
-                            lay: r.lay,
-                            backSize: r.backSize,
-                            laySize: r.laySize
-                        };
-                    });
-                }
 
                 // ===== HELPERS =====
                 function balanceClass(bal) {
@@ -1594,7 +1471,9 @@
                             url.searchParams.set('_market_versions', JSON.stringify(marketRowVersions));
                         }
                         marketRequest = new AbortController();
+                        const requestedAt = performance.now();
                         const response = await fetch(url, {
+                            cache: 'no-store',
                             headers: { 'Accept': 'application/json' },
                             signal: marketRequest?.signal,
                         });
@@ -1602,6 +1481,8 @@
 
                         const payload = await response.json();
                         if (marketRequest?.signal.aborted) return;
+                        const latency = document.getElementById('latencyDisplay');
+                        if (latency) latency.textContent = Math.round(performance.now() - requestedAt);
                         receiveMarketRows(payload, false, !reset && flashChanges);
                         if (reset) marketLoadedPages = 1;
                         updateMarketLoader(payload.has_more, marketLoadedPages + 1);
@@ -1690,33 +1571,28 @@
                         event.target.classList.remove('flash-yellow', 'flash-yellow-alt');
                     }
                 });
-                let receivedLiveSnapshot = false;
                 function refreshLiveMarketActivity() {
-                    const flashChanges = receivedLiveSnapshot;
-                    receivedLiveSnapshot = true;
-                    reloadMarketActivity(false, flashChanges);
+                    return reloadMarketActivity(false, true);
                 }
-                let marketRealtimeRefreshTimer = null;
                 document.addEventListener('DOMContentLoaded', function() {
+                    marketRefreshLoop = window.createMarketRefreshLoop(refreshLiveMarketActivity, { interval: marketRefreshInterval });
+                    marketRefreshLoop.start();
                     @if ($raceActivity)
-                    racingFeedMonitor = window.watchRacingFeed(document.getElementById('eventsWrap').parentElement, () => {
-                        if (marketRealtimeRefreshTimer !== null) return;
-                        marketRealtimeRefreshTimer = window.setTimeout(() => { marketRealtimeRefreshTimer = null; refreshLiveMarketActivity(); }, 100);
-                    }, @json($marketActivitySport));
-                    return;
+                    racingFeedMonitor = window.watchRacingFeed(document.getElementById('eventsWrap').parentElement,
+                        () => marketRefreshLoop.request(), @json($marketActivitySport));
+                    @else
+                    window.Echo?.channel(@json('sports.'.$marketActivitySport.'.live'))
+                        .listen('.score.updated', () => marketRefreshLoop.request());
                     @endif
-                    if (!window.Echo) return;
-
-                    window.Echo.channel(@json('sports.'.$marketActivitySport.'.live'))
-                        .listen('.score.updated', function() {
-                            if (marketRealtimeRefreshTimer !== null) return;
-
-                            marketRealtimeRefreshTimer = window.setTimeout(function() {
-                                marketRealtimeRefreshTimer = null;
-                                refreshLiveMarketActivity();
-                            }, SIM.tickInterval);
-                        });
                 }, { once: true });
+                window.addEventListener('pagehide', () => {
+                    marketRefreshLoop?.stop();
+                    marketRequest?.abort();
+                    window.clearTimeout(availabilityTimer);
+                });
+                window.addEventListener('pageshow', event => {
+                    if (event.persisted) marketRefreshLoop?.start();
+                });
 
                 let availabilityTimer = null;
                 function scheduleAvailability() {
@@ -1762,13 +1638,16 @@
 
                 }
                 scheduleAvailability();
-                document.addEventListener('visibilitychange', () => { if (!document.hidden) reloadMarketActivity(); });
+                document.addEventListener('visibilitychange', () => marketRefreshLoop?.request());
                 document.getElementById('speedBar').addEventListener('click', event => {
                     const button = event.target.closest('[data-speed]');
                     if (!button) return;
-                    SIM.tickInterval = Number(button.dataset.speed);
-                    SIM.isProMode = SIM.tickInterval === 140;
-                    document.querySelectorAll('#speedBar [data-speed]').forEach(item => item.classList.toggle('active', item === button));
+                    marketRefreshInterval = Number(button.dataset.speed);
+                    marketRefreshLoop?.setSpeed(marketRefreshInterval);
+                    document.querySelectorAll('#speedBar [data-speed]').forEach(item => {
+                        item.classList.toggle('active', item === button);
+                        item.setAttribute('aria-pressed', String(item === button));
+                    });
                 });
 
                 eventsBody.addEventListener('click', function(e) {
