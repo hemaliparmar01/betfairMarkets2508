@@ -77,6 +77,7 @@ Route::get('my-profile/avatar', [AuthController::class, 'avatar'])->middleware('
 Route::get('/', [FootballController::class, 'football'])->name('football.home');
 Route::post('favorites/toggle', [FavoriteController::class, 'toggle'])->middleware('auth:customers')->name('favorites.toggle');
 Route::prefix('football')->name('football.')->group(function () {
+    Route::get('/matches/{matchId}/predictions', [FootballController::class, 'predictions'])->whereNumber('matchId')->name('matches.predictions');
     Route::get('/matches/{matchId}', [FootballController::class, 'matchDetail'])->name('matches.show');
     Route::get('/matches/{matchId}/statistics', [FootballController::class, 'statistics'])->whereNumber('matchId')->name('matches.statistics');
     Route::get('/market-activity', [FootballController::class, 'marketActivity'])->name('market-activity');

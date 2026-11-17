@@ -1,4 +1,6 @@
 import { fixtureVersions, updateFixtureRows } from '../auth/dom.js';
+import { createPredictionPoller, renderPredictionPoll } from '../communityPredictions.js';
+const communityPredictions = createPredictionPoller();
 const getSelectedFilters = () => {
     const activePill = document.querySelector('.filter-pill.active');
     const marketDropdown = document.querySelector('.market-dropdown');
@@ -361,6 +363,7 @@ const closeLiveStatsPanel = () => {
 };
 
 const closePredictionPanel = () => {
+    communityPredictions.close();
     document.querySelectorAll('[data-prediction-panel]').forEach((item) => item.classList.add('hidden'));
     document.querySelectorAll('[data-action="prediction"]').forEach((item) => item.setAttribute('aria-expanded', 'false'));
     if (openLiveStatsMatchId === null && openQuickStatsMatchId === null && openStatisticsMatchId === null) {
@@ -403,6 +406,7 @@ const restorePredictionPanel = () => {
     }
 
     panel.classList.remove('hidden');
+    communityPredictions.open(panel);
     button.setAttribute('aria-expanded', 'true');
     document.body.classList.add('!overflow-hidden');
     document.documentElement.classList.add('!overflow-hidden');
@@ -530,6 +534,7 @@ document.addEventListener('click', (event) => {
             document.body.classList.add('!overflow-hidden');
             document.documentElement.classList.add('!overflow-hidden');
             openPredictionMatchId = matchId;
+            communityPredictions.open(panel);
         }
         return;
     }
@@ -719,24 +724,8 @@ const callFixtureData = async (value, options = {}) => {
             const panel = document.querySelector(`[data-prediction-panel="${CSS.escape(String(result.match_id))}"]`);
             const poll = panel?.querySelector(`[data-prediction-poll="${CSS.escape(result.poll)}"]`);
             if (!poll) return;
-            const total = Object.values(result.counts).reduce((sum, count) => sum + Number(count), 0);
-            const highest = Math.max(0, ...Object.values(result.counts).map(Number));
-            poll.querySelector('[data-prediction-choices]')?.classList.add('hidden');
-            poll.querySelector('[data-prediction-results]')?.classList.remove('hidden');
-            poll.querySelectorAll('[data-prediction-option]').forEach(button => { button.disabled = true; });
-            poll.querySelectorAll('[data-prediction-result]').forEach(row => {
-                const count = Number(result.counts[row.dataset.predictionResult] ?? 0);
-                const percent = total > 0 ? Math.round(count / total * 100) : 0;
-                row.querySelector('[data-prediction-count]').textContent = String(count);
-                row.querySelector('[data-prediction-percent]').textContent = `${percent}%`;
-                const bar = row.querySelector('[data-prediction-bar]');
-                bar.style.width = `${Math.max(10, percent)}%`;
-                const selected = row.dataset.predictionResult === result.value;
-                const winner = !selected && count > 0 && count === highest;
-                const colors = ['from-[var(--surface-brand-80-2)]', 'to-[var(--surface-brand-70)]', 'from-[var(--surface-success-50)]', 'to-[var(--surface-success-35-2)]', 'from-[var(--surface-success-25)]', 'to-[var(--surface-success-15-2)]'];
-                colors.forEach((color, index) => bar.classList.toggle(color, index < 2 ? selected : index < 4 ? winner : !selected && !winner));
-            });
-            poll.querySelector('[data-prediction-total]').textContent = String(total);
+            delete poll.dataset.votePending;
+            renderPredictionPoll(poll, result, poll.dataset.voteLocked === 'true');
             panel.dataset.predictionSavedAt = String(Date.now());
             return;
         }
@@ -787,7 +776,13 @@ const callFixtureData = async (value, options = {}) => {
         if (error.name === 'AbortError') return;
         if (prediction) {
             const panel = document.querySelector(`[data-prediction-panel="${CSS.escape(String(value.prediction.match_id))}"]`);
-            panel?.querySelector(`[data-prediction-poll="${CSS.escape(value.prediction.poll)}"]`)?.querySelectorAll('[data-prediction-option]').forEach(button => { button.disabled = false; });
+            const poll = panel?.querySelector(`[data-prediction-poll="${CSS.escape(value.prediction.poll)}"]`);
+            if (poll) {
+                delete poll.dataset.votePending;
+                poll.querySelectorAll('[data-prediction-option]').forEach(button => {
+                    button.disabled = Boolean(poll.dataset.voteValue) || poll.dataset.voteLocked === 'true';
+                });
+            }
         }
         console.error((globalThis.bfTranslations?.["Request failed:"] ?? "Request failed:"), error);
         if (options.realtime !== true) {
@@ -964,7 +959,9 @@ document.addEventListener('click', async (event) => {
         return;
     }
 
-    option.closest('[data-prediction-poll]')?.querySelectorAll('[data-prediction-option]').forEach((item) => {
+    const poll = option.closest('[data-prediction-poll]');
+    if (poll) poll.dataset.votePending = 'true';
+    poll?.querySelectorAll('[data-prediction-option]').forEach((item) => {
         item.disabled = true;
     });
     openPredictionMatchId = option.dataset.matchId;
@@ -986,4 +983,9 @@ document.addEventListener('keydown', (event) => {
         openFootballTimeline = null;
         restoreFootballTimeline();
     }
+});
+
+setInterval(() => communityPredictions.refresh(), 5000);
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) communityPredictions.refresh();
 });

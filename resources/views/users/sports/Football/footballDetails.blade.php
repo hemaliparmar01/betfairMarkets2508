@@ -521,7 +521,7 @@
                     ];
                 @endphp
                 <div id="prediction-{{ $event['sportsApiPro_match_id'] }}"
-                    data-prediction-panel="{{ $event['sportsApiPro_match_id'] }}" role="dialog" aria-modal="true"
+                    data-prediction-panel="{{ $event['sportsApiPro_match_id'] }}" data-prediction-url="{{ route('football.matches.predictions', ['matchId' => $event['sportsApiPro_match_id']]) }}" role="dialog" aria-modal="true"
                     aria-label="Predictions for {{ $event['team1'] }} vs {{ $event['team2'] }}"
                     class="fixed inset-0 z-[80] hidden overflow-hidden bg-slate-950/60 p-3 backdrop-blur-sm sm:p-6">
                     <div
@@ -555,55 +555,36 @@
                                         $userVote = $event['prediction_votes'][$pollKey] ?? null;
                                         $counts = $event['predictions'][$pollKey] ?? [];
                                         $totalVotes = array_sum($counts);
-                                        $highestCount = $counts === [] ? 0 : max($counts);
                                     @endphp
-                                    <section data-prediction-poll="{{ $pollKey }}">
+                                    <section data-prediction-poll="{{ $pollKey }}" data-vote-value="{{ $userVote ?? '' }}" data-vote-locked="{{ (int) $event['timestamp'] <= time() ? 'true' : 'false' }}">
                                         <div class="mb-3 text-[13px] font-semibold text-[var(--text-slate-600)] dark:text-[var(--text-slate-300)]">
                                             {{ $poll['label'] }}</div>
 
-                                            <div data-prediction-choices @class(['flex gap-3 max-[480px]:gap-2', 'hidden' => $userVote !== null])>
-                                                @foreach ($poll['options'] as $optionValue => $option)
-                                                    <button type="button" data-prediction-option data-requires-login="{{ $customerIsAuthenticated ? 'false' : 'true' }}" data-login-url="{{ route('login') }}"
-                                                        data-match-id="{{ $event['sportsApiPro_match_id'] }}"
-                                                        data-poll="{{ $pollKey }}"
-                                                        data-value="{{ $optionValue }}"
-                                                        class="flex-1 select-none rounded-xl border-2 border-[var(--border-slate-200)] bg-[var(--surface-slate-50)] px-3 py-4 text-center transition hover:-translate-y-0.5 hover:border-[var(--border-success-25)] hover:bg-[var(--surface-neutral-0-20)] dark:border-[var(--border-slate-700)] dark:bg-[rgb(var(--bg))] dark:hover:border-[var(--status-success-border)] dark:hover:bg-[var(--status-success-surface)] max-[480px]:px-2 max-[480px]:py-3">
-                                                        <span
-                                                            class="block text-[15px] font-semibold text-[var(--text-brand-80)] dark:text-white max-[480px]:text-[13px]">{{ __($option['label']) }}</span>
-                                                        <span
-                                                            class="mt-1 block text-[11px] uppercase tracking-wide text-[var(--text-slate-500)] dark:text-[var(--text-slate-400)]">{{ $option['sublabel'] }}</span>
-                                                    </button>
-                                                @endforeach
-                                            </div>
-                                            <div data-prediction-results @class(['space-y-2.5', 'hidden' => $userVote === null])>
+                                            <div data-prediction-results class="flex gap-3 max-[480px]:gap-2">
                                                 @foreach ($poll['options'] as $optionValue => $option)
                                                     @php
                                                         $count = (int) ($counts[$optionValue] ?? 0);
-                                                        $percent =
-                                                            $totalVotes > 0
-                                                                ? (int) round(($count / $totalVotes) * 100)
-                                                                : 0;
+                                                        $percent = $totalVotes > 0 ? (int) round($count / $totalVotes * 100) : 0;
                                                         $isUserVote = $userVote !== null && (string) $userVote === (string) $optionValue;
-                                                        $isWinner = $count > 0 && $count === $highestCount;
                                                     @endphp
-                                                    <div data-prediction-result="{{ $optionValue }}" class="flex items-center gap-3">
-                                                        <span
-                                                            class="min-w-[80px] text-[13px] font-semibold text-[var(--text-brand-80)] dark:text-white max-[480px]:min-w-[60px] max-[480px]:text-[11px]">{{ __($option['label']) }}</span>
-                                                        <div
-                                                            class="h-[26px] flex-1 overflow-hidden rounded-full bg-[var(--surface-slate-200)] dark:bg-[var(--surface-slate-700)]">
-                                                            <div data-prediction-bar class="flex h-full min-w-10 items-center justify-end rounded-full px-2.5 text-right transition-[width] duration-500 {{ $isUserVote ? 'bg-gradient-to-r from-[var(--surface-brand-80-2)] to-[var(--surface-brand-70)]' : ($isWinner ? 'bg-gradient-to-r from-[var(--surface-success-50)] to-[var(--surface-success-35-2)]' : 'bg-gradient-to-r from-[var(--surface-success-25)] to-[var(--surface-success-15-2)]') }}"
-                                                                style="width: {{ max(10, $percent) }}%">
-                                                                <span data-prediction-percent
-                                                                    class="text-xs font-bold text-white">{{ $percent }}%</span>
-                                                            </div>
-                                                        </div>
-                                                        <span data-prediction-count
-                                                            class="min-w-[45px] text-right text-xs text-[var(--text-slate-500)] dark:text-[var(--text-slate-400)]">{{ $count }}</span>
-                                                    </div>
+                                                    <button type="button" data-prediction-option data-prediction-result="{{ $optionValue }}"
+                                                        data-requires-login="{{ $customerIsAuthenticated ? 'false' : 'true' }}" data-login-url="{{ route('login') }}"
+                                                        data-match-id="{{ $event['sportsApiPro_match_id'] }}" data-poll="{{ $pollKey }}" data-value="{{ $optionValue }}"
+                                                        aria-pressed="{{ $isUserVote ? 'true' : 'false' }}"
+                                                        @disabled($userVote !== null || (int) $event['timestamp'] <= time())
+                                                        class="flex-1 min-w-0 select-none rounded-xl border-2 border-[var(--border-slate-200)] aria-pressed:border-[var(--border-success-25)] bg-[var(--surface-slate-50)] px-3 py-4 text-center transition enabled:hover:border-[var(--border-success-25)] disabled:cursor-default dark:border-[var(--border-slate-700)] dark:bg-[rgb(var(--bg))] max-[480px]:px-2 max-[480px]:py-3">
+                                                        <span class="block text-[15px] font-semibold text-[var(--text-brand-80)] dark:text-white">{{ __($option['label']) }}</span>
+                                                        <span class="mt-1 block truncate text-[11px] uppercase tracking-wide text-[var(--text-slate-500)] dark:text-[var(--text-slate-400)]">{{ __($option['sublabel']) }}</span>
+                                                        <span data-prediction-percent class="mt-3 block text-sm font-bold text-[var(--text-brand-80)] dark:text-white">{{ $percent }}%</span>
+                                                        <span class="mt-2 block h-1.5 overflow-hidden rounded-full bg-[var(--surface-slate-200)] dark:bg-[var(--surface-slate-700)]">
+                                                            <span data-prediction-bar class="block h-full rounded-full transition-[width] duration-300 {{ $isUserVote ? 'bg-[var(--surface-brand-70)]' : 'bg-[var(--surface-success-50)]' }}" style="width: {{ $percent }}%"></span>
+                                                        </span>
+                                                        <span class="mt-2 block text-xs text-[var(--text-slate-500)] dark:text-[var(--text-slate-400)]"><span data-prediction-count>{{ $count }}</span> {{ __('votes') }}</span>
+                                                    </button>
                                                 @endforeach
-                                                <div
-                                                    class="mt-4 border-t border-[var(--border-slate-200)] pt-4 text-center text-xs text-[var(--text-slate-500)] dark:border-[var(--border-slate-700)] dark:text-[var(--text-slate-400)]">
-                                                    {{ __('Total votes:') }} <span data-prediction-total>{{ $totalVotes }}</span></div>
+                                            </div>
+                                            <div class="mt-4 border-t border-[var(--border-slate-200)] pt-4 text-center text-xs text-[var(--text-slate-500)] dark:border-[var(--border-slate-700)] dark:text-[var(--text-slate-400)]">
+                                                {{ __('Total votes:') }} <span data-prediction-total>{{ $totalVotes }}</span>
                                             </div>
                                     </section>
                                 @endforeach

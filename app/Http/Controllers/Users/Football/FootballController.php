@@ -708,6 +708,35 @@ class FootballController extends Controller
         ]);
     }
 
+    public function predictions(string $matchId): JsonResponse
+    {
+        $match = array_find(getInRedis('Football:matches', readOnly: true, matchIds: [$matchId]) ?? [], static fn (array $match): bool => (string) ($match['sportsApiPro_match_id'] ?? '') === $matchId
+            && ! MatchBackup::isHidden($match, 'football'));
+        abort_if($match === null, 404);
+        $customerId = request()->user('customers')?->getAuthIdentifier();
+        $counts = PredictionVote::query()->where('sport', 'football')->where('match_id', $matchId)
+            ->whereIn('poll', ['1x2', 'uo'])->select(['poll', 'value'])->selectRaw('COUNT(*) as total')
+            ->groupBy('poll', 'value')->get()->groupBy('poll');
+        $votes = $customerId === null ? [] : PredictionVote::query()->where('sport', 'football')->where('match_id', $matchId)
+            ->where('customer_id', $customerId)->pluck('value', 'poll')->all();
+        $polls = [];
+        foreach (['1x2' => ['1', 'X', '2'], 'uo' => ['UNDER', 'OVER']] as $poll => $options) {
+            $totals = array_fill_keys($options, 0);
+            foreach ($counts->get($poll, collect()) as $row) {
+                if (array_key_exists($row->value, $totals)) {
+                    $totals[$row->value] = (int) $row->total;
+                }
+            }
+            $polls[$poll] = ['value' => $votes[$poll] ?? null, 'counts' => $totals];
+        }
+
+        return response()->json([
+            'match_id' => $matchId,
+            'locked' => ($match['result_status'] ?? '') !== 'Prematch' || (int) ($match['timestamp'] ?? 0) <= time(),
+            'polls' => $polls,
+        ])->header('Cache-Control', 'private, no-store');
+    }
+
     public function filterFootball(): JsonResponse
     {
         $prediction = request()->input('prediction');
@@ -727,7 +756,8 @@ class FootballController extends Controller
             $storedValue = $ownerQuery->value('value');
             if ($storedValue === null) {
                 $match = array_find(getInRedis('Football:matches', readOnly: true, matchIds: [$matchId]) ?? [], static fn (array $match): bool => (string) ($match['sportsApiPro_match_id'] ?? '') === $matchId
-                    && ! MatchBackup::isHidden($match, 'football') && ($match['result_status'] ?? '') === 'Prematch');
+                    && ! MatchBackup::isHidden($match, 'football') && ($match['result_status'] ?? '') === 'Prematch'
+                    && (int) ($match['timestamp'] ?? 0) > time());
                 abort_unless($match !== null, 422, __('Predictions are only available before the match starts.'));
                 unset($match);
                 $now = now();
