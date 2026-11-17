@@ -19,6 +19,15 @@ trait TennisTrait
 
     protected ?int $marketActivityNextPage = null;
 
+    protected static function tennisFixtureId(array $match): ?string
+    {
+        if (filled($match['sportsApiPro_match_id'] ?? null)) {
+            return (string) $match['sportsApiPro_match_id'];
+        }
+
+        return filled($match['betfair_match_id'] ?? null) ? 'betfair:'.$match['betfair_match_id'] : null;
+    }
+
     public function getTennisMatches(?array &$matchesById = null): array
     {
         if (in_array(request()->input('type'), ['ht00', '00_70'], true)) {
@@ -41,7 +50,7 @@ trait TennisTrait
         $timezone = getCurrentUserTimezone();
         $today = Carbon::now($timezone)->toDateString();
         $matches = array_filter($visibleMatches, static function (array $match) use ($today, $timezone, $type, $favoriteKeys): bool {
-            if (($match['data_sync_complete'] ?? false) !== true || ! isset($match['sportsApiPro_match_id'], $match['timestamp'])) {
+            if (! isset($match['timestamp']) || ! filled($match['sportsApiPro_match_id'] ?? null)) {
                 return false;
             }
             $status = $match['result_status'] ?? 'Prematch';
@@ -96,7 +105,7 @@ trait TennisTrait
             $matchesById = array_intersect_key($pageMatches, array_fill_keys(array_column($matches, 'unique_key'), true));
         }
         unset($visibleMatches);
-        $matchIds = array_map(static fn (array $match): string => (string) $match['sportsApiPro_match_id'], $matches);
+        $matchIds = array_map(static fn (array $match): string => self::tennisFixtureId($match), $matches);
         $votes = $matchIds === [] ? collect() : PredictionVote::query()->where('sport', 'tennis')->whereIn('match_id', $matchIds)->where('poll', '1x2')->select('match_id', 'value')->selectRaw('COUNT(*) as total')->groupBy('match_id', 'value')->get()->groupBy('match_id');
         $customerVotes = $customerId === null || $matchIds === [] ? [] : PredictionVote::query()->where('sport', 'tennis')->where('customer_id', $customerId)->whereIn('match_id', $matchIds)->where('poll', '1x2')->pluck('value', 'match_id')->all();
         $groups = [];
@@ -127,7 +136,7 @@ trait TennisTrait
                 $runner['odds_direction'] = $initial > 0 && $current > 0 ? ($current < $initial ? 'down' : ($current > $initial ? 'up' : 'same')) : 'same';
             }
             unset($runner);
-            $matchId = (string) $match['sportsApiPro_match_id'];
+            $matchId = self::tennisFixtureId($match);
             $predictionCounts = ['1' => 0, '2' => 0, 'X' => 0];
             foreach ($votes->get($matchId, collect()) as $vote) {
                 $predictionCounts[$vote->value] = (int) $vote->total;
@@ -143,6 +152,7 @@ trait TennisTrait
             }
             $groups[$groupKey] ??= ['tournament_name' => $match['tournament'] ?? 'Tennis', 'tournament_logo' => $match['tournament_logo'] ?? null, 'tournament_country' => $match['tournament_country'] ?? null, 'status' => $match['result_status'], 'matches' => []];
             $groups[$groupKey]['matches'][] = array_replace($match, [
+                'fixture_id' => $matchId,
                 'status' => $match['result_status'],
                 'is_favorite' => isset($favoriteKeys[$match['unique_key']]),
                 'score' => $this->getScore($match),
@@ -211,11 +221,14 @@ trait TennisTrait
 
     public function getTennisMatchDetail(string $matchId): ?array
     {
-        // $match = array_find(getVisibleSportsMatches('Tennis:matches') ?? [], static fn (array $match): bool => (string) ($match['sportsApiPro_match_id'] ?? '') === $matchId && ($match['data_sync_complete'] ?? false) === true);
-        $match = array_find(getInRedis('Tennis:matches', matchIds: [$matchId]) ?? [], static fn (array $candidate): bool => (string) ($candidate['sportsApiPro_match_id'] ?? '') === $matchId && ! MatchBackup::isHidden($candidate, 'tennis'));
+        $betfairId = str_starts_with($matchId, 'betfair:') ? substr($matchId, 8) : null;
+        if (! ctype_digit($betfairId ?? $matchId)) {
+            return null;
+        }
+        $match = array_find(getInRedis('Tennis:matches', matchIds: $betfairId === null ? [$matchId] : null) ?? [], static fn (array $candidate): bool => self::tennisFixtureId($candidate) === $matchId && ! MatchBackup::isHidden($candidate, 'tennis'));
         if ($match === null) {
-            $stored = TennisMatch::query()->with('markets')->where('sports_api_pro_match_id', $matchId)
-                // ->where('data_sync_complete', true)
+            $stored = TennisMatch::query()->with('markets')
+                ->where($betfairId === null ? 'sports_api_pro_match_id' : 'betfair_match_id', $betfairId ?? $matchId)
                 ->first();
             if ($stored === null) {
                 return null;
@@ -298,7 +311,7 @@ trait TennisTrait
                         continue;
                     }
                     $first = $runners[array_key_first($runners)] ?? [];
-                    $rows[] = ['timestamp' => $match['timestamp'] ?? null, 'id' => $key, 'match_id' => $match['sportsApiPro_match_id'], 'team1' => $match['team1'], 'team2' => $match['team2'], 'tournament' => $group['tournament_name'], 'status' => $match['status'], 'minutes' => $match['minutes'], 'score' => $match['score'], 'marketName' => $first['name'] ?? $first['marketType'] ?? 'Market', 'marketType' => $first['marketType'] ?? '', 'runners' => array_values($runners), 'favorite' => $favorite, 'indicators' => $raw['market_indicators'][$key] ?? []];
+                    $rows[] = ['timestamp' => $match['timestamp'] ?? null, 'id' => $key, 'match_id' => self::tennisFixtureId($match), 'team1' => $match['team1'], 'team2' => $match['team2'], 'tournament' => $group['tournament_name'], 'status' => $match['status'], 'minutes' => $match['minutes'], 'score' => $match['score'], 'marketName' => $first['name'] ?? $first['marketType'] ?? 'Market', 'marketType' => $first['marketType'] ?? '', 'runners' => array_values($runners), 'favorite' => $favorite, 'indicators' => $raw['market_indicators'][$key] ?? []];
                 }
             }
         }

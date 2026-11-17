@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Console\Commands\ListenBetfairOdds;
 use App\Console\Commands\ListenPinnodds;
 use App\Http\Controllers\Users\Football\FootballSyncController;
+use App\Http\Controllers\Users\Tennis\TennisController;
 use App\Http\Controllers\Users\Tennis\TennisSyncController;
 use App\Jobs\ProcessAlert;
 use App\Models\Customer;
@@ -20,6 +21,7 @@ use Database\Factories\CustomerFactory;
 use Illuminate\Broadcasting\AnonymousEvent;
 use Illuminate\Broadcasting\BroadcastManager;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Request;
 use Illuminate\Queue\CallQueuedClosure;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Artisan;
@@ -65,6 +67,29 @@ class AlertSystemTest extends TestCase
         $broadcast = \Mockery::mock(BroadcastManager::class, [$this->app])->makePartial();
         $broadcast->shouldReceive('connection')->with('reverb')->andReturn($reverb);
         Broadcast::swap($broadcast);
+    }
+
+    public function test_tennis_live_fixtures_display_sports_api_records_without_completed_betfair_sync(): void
+    {
+        config(['services.tennis_match_cache' => false]);
+        $base = ['timestamp' => time() - 600, 'result_status' => 'Live', 'minutes_status' => '1st Set',
+            'tournament' => 'ATP Finals', 'team1' => 'Fils', 'team2' => 'Jodar', 'markets' => []];
+        $matches = [
+            'sports-only' => $base + ['unique_key' => 'sports-only', 'sportsApiPro_match_id' => '123', 'data_sync_complete' => false],
+            'complete' => $base + ['unique_key' => 'complete', 'sportsApiPro_match_id' => '124', 'betfair_match_id' => '456', 'data_sync_complete' => true],
+            'betfair-only' => $base + ['unique_key' => 'betfair-only', 'betfair_match_id' => '457', 'data_sync_complete' => true],
+            'empty-sports-id' => $base + ['unique_key' => 'empty-sports-id', 'sportsApiPro_match_id' => '', 'betfair_match_id' => '458'],
+            'hidden' => $base + ['unique_key' => 'hidden', 'sportsApiPro_match_id' => '125', 'internal_backup' => ['since' => time()]],
+        ];
+        Redis::shouldReceive('get')->andReturnUsing(static fn (string $key): ?string => $key === 'Tennis:matches' ? json_encode($matches) : null);
+        $request = Request::create('/tennis', 'GET', ['type' => 'live']);
+        $this->app->instance('request', $request);
+        $controller = (new \ReflectionClass(TennisController::class))->newInstanceWithoutConstructor();
+
+        $groups = $controller->getTennisMatches();
+
+        $displayed = collect($groups)->flatMap(fn (array $group): array => $group['matches'])->pluck('fixture_id')->sort()->values()->all();
+        $this->assertSame(['123', '124'], $displayed);
     }
 
     private function customer(array $attributes = []): Customer
@@ -1343,6 +1368,28 @@ class AlertSystemTest extends TestCase
             ->assertJsonPath('data.0.bf_back', null)->assertJsonPath('data.0.bf_at_drop', 3.1);
         $this->assertDatabaseHas('pinnacle_drop_archives', ['alert_key' => $drop['alert_key'], 'betfair_higher' => true]);
         Http::assertNothingSent();
+    }
+
+    public function test_sports_api_turin_group_survives_flattened_cache_and_links_zverev_shelton(): void
+    {
+        $tournament = ['name' => 'Tour Finals Turin, Italy, Group A', 'category' => ['name' => 'ATP'],
+            'uniqueTournament' => ['name' => 'ATP Finals', 'category' => ['name' => 'ATP']]];
+        $competition = ['Year-End Championships', 'ATP Finals'];
+        $this->assertSame($competition, TennisSyncController::tennisCompetition(['tournament' => $tournament]));
+        $this->assertSame($competition, TennisSyncController::tennisCompetition([
+            'tournament' => $tournament['name'], 'tournament_tour' => 'ATP', 'tennis_competition' => $competition,
+        ]));
+        $this->assertNull(TennisSyncController::tennisCompetition(['tournament' => $tournament['name'], 'tournament_tour' => 'WTA']));
+        $sync = (new \ReflectionClass(TennisSyncController::class))->newInstanceWithoutConstructor();
+        $match = ['team1' => 'A Zverev', 'team2' => 'Be Shelton', 'timestamp' => 1794943800, 'result_status' => 'Live'];
+
+        $key = (new ReflectionMethod($sync, 'checkIfRecordExistsOnAnotherApi'))->invoke(
+            $sync, 'alexander_zverev|ben_shelton|1794944400', 'Alexander Zverev', 'Ben Shelton', 1794944400,
+            ['betfair-zverev-shelton' => $match],
+            ['home' => ['Alexander Zverev', 'A. Zverev'], 'away' => ['Ben Shelton', 'B. Shelton']],
+        );
+
+        $this->assertSame('betfair-zverev-shelton', $key);
     }
 
     public function test_pinnacle_tennis_finals_labels_accept_stages_and_keep_atp_and_wta_separate(): void

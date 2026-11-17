@@ -173,6 +173,7 @@ return [
             'Year-End Championships' => [
                 'ATP Finals' => [
                     'ATP Finals', 'ATP Finals Turin', 'ATP Finals London',
+                    'Tour Finals Turin', 'Tour Finals Torino',
                     'ATP Finals - Turin', 'ATP Finals - Turin (World)',
                     'Finals - Turin', 'Finals - Turin (World)',
                     'Finals - Torino', 'Finals - Torino (World)',

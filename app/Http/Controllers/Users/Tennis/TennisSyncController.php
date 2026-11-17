@@ -167,7 +167,7 @@ class TennisSyncController extends Controller
 
     public function syncSportsApiProLiveData(): array
     {
-        $url = 'https://api.sportsapipro.com/v2/tennis/api/live/all';
+        $url = 'https://api.sportsapipro.com/v2/tennis/live/all';
         $key = 'x-api-key: '.$this->getsportsAPIProKeys;
         $liveData = ApiCall($url, $key, ['connect_timeout' => 3, 'timeout' => 15]) ?? [];
         $liveData = is_array($liveData['data'] ?? null) ? $liveData['data'] : ($liveData ?? []);

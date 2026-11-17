@@ -79,8 +79,8 @@ class TennisController extends Controller
                     foreach ($matches as $key => $match) {
                         if (
                             MatchBackup::isHidden($match, 'tennis')
-                            || ($match['data_sync_complete'] ?? false) !== true
-                            || ($match['sportsApiPro_match_id'] ?? null) != $matchId
+                            || (($match['data_sync_complete'] ?? false) !== true && empty($match['betfair_match_id']))
+                            || self::tennisFixtureId($match) !== (string) $matchId
                             || ($match['result_status'] ?? null) !== 'Prematch'
                         ) {
                             continue;
