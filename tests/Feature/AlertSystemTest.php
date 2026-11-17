@@ -243,6 +243,102 @@ class AlertSystemTest extends TestCase
         Bus::assertDispatched(ProcessAlert::class, fn ($job) => $job->task === 'fanout');
     }
 
+    #[TestWith([true])]
+    #[TestWith([false])]
+    public function test_source_prematch_signal_sends_immediately_with_betfair_odds_and_deduplicates_after_kickoff(bool $hasSportsFixture): void
+    {
+        $fixture = $this->fixture(['team1' => 'Ukraine', 'team2' => 'Georgia', 'tournament' => 'UEFA Nations League',
+            'result_status' => 'Prematch', 'minutes_status' => 'Prematch', 'timestamp' => time() + 3600]);
+        $fixture->update(['betfair_match_id' => '900', 'sports_api_pro_match_id' => $hasSportsFixture ? '12345' : null]);
+        FootballMarket::query()->create(['selection_key' => hash('sha256', 'first-half-over'), 'football_match_unique_key' => $fixture->unique_key,
+            'market_type' => 'FIRST_HALF_GOALS_05', 'runner' => 'Over 0.5 Goals', 'payload' => ['runner' => 'Over 0.5 Goals',
+                'backOdds' => 1.49, 'currentBackOdds' => 9.99, 'backSize' => 100, 'liquidity_updated_at' => microtime(true), 'market_status' => 'OPEN']]);
+        $customer = $this->customer(['popup_enabled' => false]);
+        $text = "Football. UEFA Nations League\n17 Nov 2026 (21:45)\nUkraine VS Georgia\nTotal. Over (0.5). 1st half 1.49\nStatus: Accepted";
+        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 42]])]);
+
+        $id = app(AlertService::class)->source($this->source($text));
+        $this->assertNotNull($id);
+        app(AlertService::class)->deliver($this->delivery($id, $customer));
+
+        Http::assertSent(fn ($request): bool => str_contains($request['text'], 'Status: Prematch') && str_contains($request['text'], 'Betfair Back Odds: 1.49') && ! str_contains($request['text'], '9.99'));
+        $payload = json_decode(DB::table('alerts')->find($id)->payload, true);
+        $this->assertNull($payload['minute']);
+        $this->assertSame('PREMATCH', $payload['templates']['en']['status_label']);
+        $this->assertSame('მატჩამდე', $payload['templates']['ka']['status_label']);
+        $fixture->update(['result_status' => 'Live', 'start_timestamp' => time() - 600,
+            'sports_api_pro_match_id' => '12345',
+            'payload' => array_replace($fixture->payload, ['result_status' => 'Live', 'minutes_status' => '1st half', 'timestamp' => time() - 600])]);
+        $again = app(AlertService::class)->source(array_replace($this->source(str_replace('1.49', '1.55', $text)), ['message_id' => 99]));
+        $this->assertSame($id, $again);
+        $this->assertDatabaseCount('alerts', 1);
+        app(AlertService::class)->deliver($this->delivery($id, $customer));
+        Http::assertSentCount(1);
+        $followUp = app(AlertService::class)->source(array_replace($this->source($text."\nGOAL!\nScore: 0 - 1\nTime: 10'"), ['message_id' => 100]));
+        $this->assertNotNull($followUp);
+        $this->assertDatabaseHas('alerts', ['id' => $followUp, 'parent_alert_id' => $id]);
+    }
+
+    public function test_source_deduplicates_exact_market_period_and_selection_but_allows_other_markets_on_same_match(): void
+    {
+        $fixture = $this->fixture();
+        $ids = [];
+        foreach (['1st Half Over 0.5', 'Full Time Over 0.5', 'Over 1.5', 'BTTS Yes', 'BTTS No', '2nd Half Over 1.5', 'Market: Asian Handicap\nSelection: Home -0.5'] as $index => $market) {
+            $market = str_replace('\\n', "\n", $market);
+            $message = array_replace($this->source("Match: Torino vs Monza 1912\nLeague: Coppa Italia\n".$market), ['message_id' => $index + 1]);
+            $id = app(AlertService::class)->source($message);
+            $this->assertNotNull($id, $market);
+            $this->assertNotContains($id, $ids);
+            $ids[] = $id;
+            $this->assertSame($id, app(AlertService::class)->source(array_replace($message, ['message_id' => 100 + $index])));
+        }
+        $this->assertDatabaseCount('alerts', 7);
+        $payload = json_decode(DB::table('alerts')->find($ids[3])->payload, true);
+        $this->assertStringContainsString('Market: BTTS Yes', app(AlertService::class)->text($payload));
+        $this->assertStringNotContainsString('LAY THE DRAW', app(AlertService::class)->text($payload));
+        $this->assertNotSame(AlertService::STRATEGY['ka'], $payload['templates']['ka']['strategy_label']);
+    }
+
+    public function test_source_status_results_follow_their_exact_market_parent_even_without_a_goal(): void
+    {
+        $this->fixture();
+        $no = app(AlertService::class)->source($this->source("Match: Torino vs Monza 1912\nLeague: Coppa Italia\nBTTS No"));
+        $over = app(AlertService::class)->source($this->source("Match: Torino vs Monza 1912\nLeague: Coppa Italia\nOver 1.5"));
+        $customer = $this->customer(['popup_enabled' => false]);
+        $parentDelivery = $this->delivery($no, $customer);
+        DB::table('alert_deliveries')->where('id', $parentDelivery)->update(['status' => 'sent']);
+        $message = $this->source("Match: Torino vs Monza 1912\nLeague: Coppa Italia\nBTTS No\nStatus: Won\nScore: 0 - 0\nTime: 90'");
+
+        $won = app(AlertService::class)->source($message);
+        $this->assertNotNull($won);
+        $this->assertDatabaseHas('alerts', ['id' => $won, 'parent_alert_id' => $no]);
+        $this->assertNotSame($over, DB::table('alerts')->find($won)->parent_alert_id);
+        $this->assertSame($won, app(AlertService::class)->source(array_replace($message, ['message_id' => 99])));
+        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 42]])]);
+        app(AlertService::class)->deliver($this->delivery($won, $customer));
+        Http::assertSent(fn ($request): bool => str_contains($request['text'], 'Market: BTTS No') && str_contains($request['text'], 'Status: WON'));
+        $lost = app(AlertService::class)->source(array_replace($message, ['text' => str_replace('Status: Won', 'Status: Lost', $message['text'])]));
+        $this->assertNotSame($won, $lost);
+        $payload = json_decode(DB::table('alerts')->find($lost)->payload, true);
+        $this->assertStringContainsString('Status: LOST', app(AlertService::class)->text($payload));
+        $this->assertStringNotContainsString('SIGNAL WON', app(AlertService::class)->text($payload));
+    }
+
+    public function test_source_result_replies_to_a_duplicate_post_resolve_the_original_market_without_repeating_teams(): void
+    {
+        $this->fixture();
+        $initial = $this->source("Match: Torino vs Monza 1912\nLeague: Coppa Italia\nBTTS No");
+        $parent = app(AlertService::class)->source($initial);
+        $this->assertSame($parent, app(AlertService::class)->source(array_replace($initial, ['message_id' => 99])));
+        app(AlertService::class)->source(array_replace($initial, ['message_id' => 98, 'text' => str_replace('BTTS No', 'Over 1.5', $initial['text'])]));
+
+        $result = app(AlertService::class)->source(array_replace($this->source('Status: Won'), ['message_id' => 100, 'reply_message_id' => 99]));
+
+        $this->assertNotNull($result);
+        $this->assertDatabaseHas('alerts', ['id' => $result, 'parent_alert_id' => $parent]);
+        $this->assertDatabaseCount('alerts', 3);
+    }
+
     public function test_ltd_parses_international_image_cards_without_country_and_does_not_read_kickoff_as_a_score(): void
     {
         $this->fixture(['team1' => 'Ukraine', 'team2' => 'Georgia', 'tournament' => 'UEFA Nations League']);
@@ -275,13 +371,13 @@ class AlertSystemTest extends TestCase
         Http::assertSent(fn ($request): bool => $request['chat_id'] === $customer->telegram_chat_id
             && str_contains($request['text'], '1st Half Draw Odds: 2.25')
             && ! str_contains($request['text'], '1xbet'));
-        $this->assertNull(app(AlertService::class)->source($this->source(str_replace('Over (0.5)', 'Over (1.5)', $text))));
+        $this->assertNotNull(app(AlertService::class)->source($this->source(str_replace('Over (0.5)', 'Over (1.5)', $text))));
     }
 
-    public function test_source_rejects_ads_and_other_markets_and_accepts_missing_or_stale_odds(): void
+    public function test_source_rejects_ads_and_unidentified_markets_and_accepts_missing_or_stale_odds(): void
     {
         $match = $this->fixture();
-        foreach (['Over 1.5', 'Over 2.5', 'Full Time Over 0.5', 'Asian Handicap', '1st Half Over 0.5 bonus deposit', '1st Half Over 0.5 register'] as $market) {
+        foreach (['Asian Handicap', '1st Half Over 0.5 bonus deposit', '1st Half Over 0.5 register'] as $market) {
             $this->assertNull(app(AlertService::class)->source($this->source("Match: Torino vs Monza 1912\nLeague: Coppa Italia\n".$market)));
         }
         $this->assertNull(app(AlertService::class)->source($this->source('1st Half Over 0.5')));
@@ -1437,9 +1533,11 @@ class AlertSystemTest extends TestCase
         $runner = ['marketId' => 'main', 'marketType' => 'MATCH_ODDS', 'runnerId' => '1', 'runner' => 'Torino',
             'backOdds' => 2.28, 'backSize' => 85.16, 'layOdds' => 2.3, 'laySize' => 321.2,
             'market_status' => 'OPEN', 'liquidity_session' => $session, 'liquidity_feed' => 'prematch'];
+        $firstHalf = array_replace($runner, ['marketId' => 'fh-goals', 'marketType' => 'FIRST_HALF_GOALS_05',
+            'runnerId' => '2', 'runner' => 'Over 0.5 Goals', 'backOdds' => 1.49]);
 
         $updated = (new ReflectionMethod(ListenBetfairOdds::class, 'updateFootballCache'))->invoke(
-            app(ListenBetfairOdds::class), ['900' => ['markets' => [$runner]]], false,
+            app(ListenBetfairOdds::class), ['900' => ['markets' => [$runner, $firstHalf]]], false,
         );
 
         $this->assertTrue($updated);
@@ -1448,6 +1546,9 @@ class AlertSystemTest extends TestCase
         $this->assertSame(85.16, $stored['backSize']);
         $this->assertSame($session, $stored['liquidity_session']);
         $this->assertSame('prematch', $stored['liquidity_feed']);
+        $halfQuote = array_values($cache[$fixture->unique_key]['markets']['fh-goals_FIRST_HALF_GOALS_05'])[0];
+        $this->assertSame(1.49, $halfQuote['backOdds']);
+        $this->assertSame($session, $halfQuote['liquidity_session']);
         $this->assertFalse($cache[$fixture->unique_key]['data_sync_complete']);
         $indicator = prepareMatchOddsMonitoring($cache[$fixture->unique_key], true)['market_indicators']['main_MATCH_ODDS'];
         $this->assertFalse($indicator['stale']);

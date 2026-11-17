@@ -9,19 +9,19 @@ import tempfile
 import types
 import unittest
 import urllib.request
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 class TelegramListenerTest(unittest.TestCase):
-    def execute_listener(self, script, *, check=False, authorized=True, login=False, phone='', ocr_version=None):
+    def execute_listener(self, script, *, check=False, authorized=True, login=False, phone='', ocr_version=None, reply_failure=False):
         handlers = []
         requests = []
         calls = []
         now = datetime.datetime.now(datetime.timezone.utc)
-        reply = types.SimpleNamespace(raw_text='context ' * 2000)
+        reply = types.SimpleNamespace(id=11, raw_text='context ' * 2000)
 
         class Event:
             id = 12
@@ -35,6 +35,9 @@ class TelegramListenerTest(unittest.TestCase):
                 return b'test-image'
 
             async def get_reply_message(self):
+                if reply_failure and 'reply_failed' not in calls:
+                    calls.append('reply_failed')
+                    raise RuntimeError('Temporary reply failure')
                 return reply
 
         class Client:
@@ -53,7 +56,7 @@ class TelegramListenerTest(unittest.TestCase):
 
             async def get_entity(self, source):
                 calls.append(('channel', source))
-                return 'channel-entity'
+                return types.SimpleNamespace(id=777, title='MATCH PREDICTIONS')
 
             def on(self, builder):
                 def register(handler):
@@ -125,6 +128,7 @@ class TelegramListenerTest(unittest.TestCase):
                 with patch.dict(os.environ, environment), patch.dict(sys.modules, {'telethon': telethon}), \
                      patch.object(sys, 'argv', [str(script), *(['--check'] if check else []), *(['--login'] if login else [])]), \
                      patch('urllib.request.urlopen', side_effect=urlopen), \
+                     patch('asyncio.sleep', new_callable=AsyncMock), \
                      patch('shutil.which', return_value='/usr/bin/tesseract' if ocr_version is not None else None), \
                      patch('asyncio.create_subprocess_exec', side_effect=subprocess_exec):
                     runpy.run_path(str(script), run_name='__main__')
@@ -158,6 +162,13 @@ class TelegramListenerTest(unittest.TestCase):
         self.assertEqual({request['message_id'] for request in requests}, {12})
         self.assertEqual(len(requests[0]['reply_text']), 8192)
         self.assertNotEqual(requests[0]['sent_at'], requests[1]['sent_at'])
+        self.assertEqual(requests[0]['reply_message_id'], 11)
+
+    def test_a_temporary_reply_error_retries_without_stopping_subsequent_posts(self):
+        calls, handlers, requests = self.execute_listener(ROOT / 'server/telegram-listener.py', reply_failure=True)
+        self.assertIn('reply_failed', calls)
+        self.assertEqual(len(requests), 2)
+        self.assertIn('listen', calls)
 
     def test_passive_worker_does_not_attempt_interactive_login(self):
         with self.assertRaisesRegex(SystemExit, 'Owner login required'):
@@ -187,6 +198,11 @@ class TelegramListenerTest(unittest.TestCase):
         )
         self.assertEqual(calls, ['connect', 'disconnect'])
         self.assertEqual(requests, [])
+
+    def test_an_existing_source_session_lock_prevents_duplicate_listeners(self):
+        with patch('fcntl.flock', side_effect=BlockingIOError):
+            with self.assertRaisesRegex(SystemExit, 'Another source process is using this session'):
+                self.execute_listener(ROOT / 'server/telegram-listener.py')
 
 
 if __name__ == '__main__':

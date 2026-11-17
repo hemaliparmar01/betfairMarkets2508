@@ -1,5 +1,6 @@
 """Passive Telegram input only; all validation and delivery remain in Laravel."""
 import asyncio
+import fcntl
 import json
 import logging
 import os
@@ -20,6 +21,12 @@ logging.basicConfig(level=logging.CRITICAL)
 session = Path(os.environ['TELEGRAM_SESSION_FILE']).expanduser()
 session.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
 session.parent.chmod(0o700)
+session_lock = Path(str(session) + '.listener.lock').open('a')
+try:
+    fcntl.flock(session_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    session_lock.close()
+    raise SystemExit('Another source process is using this session. Stop it before starting a new listener.')
 client = TelegramClient(str(session), int(os.environ['TELEGRAM_API_ID']),
                         os.environ['TELEGRAM_API_HASH'], sequential_updates=True,
                         auto_reconnect=True)
@@ -51,6 +58,7 @@ async def main():
         print('Source session authorized and channel accessible. No alerts were delivered.', flush=True)
         await client.disconnect()
         return
+    print(f'Source channel resolved: {getattr(entity, "title", source)} (id={getattr(entity, "id", "unknown")}).', flush=True)
     ocr = shutil.which('tesseract')
     psm_option = '--psm'
     if not ocr:
@@ -77,7 +85,17 @@ async def main():
     @client.on(events.MessageEdited(chats=entity, incoming=True))
     async def receive(event):
         print(f'Source post {event.id} received (photo={bool(event.photo)}).', flush=True)
-        reply = await event.get_reply_message() if event.is_reply else None
+        for attempt in range(3):
+            try:
+                await forward(event)
+                return
+            except Exception as error:
+                print(f'Source post {event.id} processing failed ({type(error).__name__}, attempt {attempt + 1}/3).', file=sys.stderr, flush=True)
+                if attempt < 2:
+                    await asyncio.sleep(2)
+
+    async def forward(event):
+        reply = await asyncio.wait_for(event.get_reply_message(), timeout=15) if event.is_reply else None
         text = event.raw_text or ''
         if ocr and event.photo and ' vs ' not in text.lower():
             try:
@@ -108,6 +126,7 @@ async def main():
         payload = json.dumps({'source': source, 'message_id': event.id,
                               'sent_at': int((event.edit_date or event.date).timestamp()),
                               'text': text[:8192],
+                              'reply_message_id': getattr(reply, 'id', None) if reply else None,
                               'reply_text': (reply.raw_text or '')[:8192] if reply else None}).encode()
 
         def submit():
@@ -123,11 +142,12 @@ async def main():
                     print(f'Source post {event.id} acknowledged by Laravel.', flush=True)
                     return
             except urllib.error.HTTPError as error:
-                if error.code in (401, 403, 422):
+                if error.code in (400, 401, 403, 404, 422):
                     print(f'Source post {event.id} rejected by Laravel (HTTP {error.code}).', file=sys.stderr)
                     return
-            except (OSError, TimeoutError):
-                pass
+                print(f'Source post {event.id} submission retry (HTTP {error.code}).', file=sys.stderr, flush=True)
+            except (OSError, TimeoutError) as error:
+                print(f'Source post {event.id} submission retry ({type(error).__name__}).', file=sys.stderr, flush=True)
             await asyncio.sleep(5)
 
     await client.catch_up()
@@ -141,3 +161,5 @@ except (KeyboardInterrupt, SystemExit):
     raise
 except Exception as error:
     raise SystemExit(f'Source connection failed ({type(error).__name__}). Verify network access, credentials, session and source membership.')
+finally:
+    session_lock.close()

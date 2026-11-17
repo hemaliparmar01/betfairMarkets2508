@@ -65,6 +65,35 @@ test('failed popup polls retain the cursor and retry; hidden pages do not fetch'
     assert.equal(app.requests.length, count);
 });
 
+for (const locale of ['en', 'ka']) {
+    test(`prematch source popups show status and Betfair Back odds without a null minute (${locale})`, async () => {
+        const localTemplates = Object.fromEntries(Object.entries(templates).map(([language, values]) => [language,
+            { ...values, status_label: language === 'ka' ? 'მატჩამდე' : 'PREMATCH', odds_label: 'Betfair Back Odds' }]));
+        const prematch = { ...alert, minute: null, match_status: 'Prematch', betfair_back: 1.49, templates: localTemplates };
+        const app = harness(locale, { alerts: [prematch], cursor: 1, popup_enabled: true });
+        await app.context.initialPoll;
+        const popup = app.children[0];
+        assert.equal(popup.querySelector('[data-time]').textContent, localTemplates[locale].status_label);
+        assert.match(popup.querySelector('[data-odds]').textContent, /1\.49/);
+        assert.doesNotMatch(popup.querySelector('[data-time]').textContent, /null/);
+        assert.doesNotMatch(popup.querySelector('[data-odds]').textContent, /2\.10/);
+    });
+}
+
+test('different source markets on the same match display separately and a lost result is not marked won', async () => {
+    const first = { ...alert, match_id: 'same-match' };
+    const second = { ...alert, alert_id: '2', match_id: 'same-match' };
+    const app = harness('en', { alerts: [first, second], cursor: 2, popup_enabled: true });
+    await app.context.initialPoll;
+    assert.equal(app.children.length, 2);
+    app.events['.alert.received'](second);
+    assert.equal(app.children.length, 2);
+    app.events['.alert.received']({ ...alert, alert_id: '3', alert_type: 'goal', result_status: 'lost',
+        templates: { ...templates, en: { ...templates.en, status_label: 'Lost' } } });
+    assert.match(app.children[2].querySelector('[data-strategy]').textContent, /Lost/);
+    assert.doesNotMatch(app.children[2].querySelector('[data-strategy]').textContent, /✅/);
+});
+
 
 for (const dataset of [{popupsUrl: undefined}, {since: undefined}, {since: 'undefined'}]) {
     test(`old or invalid popup markup never sends an undefined request (${JSON.stringify(dataset)})`, async () => {

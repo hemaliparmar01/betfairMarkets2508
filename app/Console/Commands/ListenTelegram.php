@@ -50,6 +50,12 @@ class ListenTelegram extends Command
                 $process->setTty(true);
             }
 
+            if (defined('SIGTERM') && defined('SIGINT')) {
+                $this->trap([SIGTERM, SIGINT], static function (int $signal) use ($process): void {
+                    $process->stop(5, $signal);
+                });
+            }
+
             return $process->run(fn (string $type, string $output) => $this->output->write($output));
         }
         if (blank(config('services.telegram.bot_token'))) {

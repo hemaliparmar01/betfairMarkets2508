@@ -41,6 +41,9 @@ class NotificationController extends Controller
                 ...array_intersect_key($payload, array_flip(['alert_type', 'match_id', 'match', 'league', 'score', 'minute', 'templates'])),
                 'alert_id' => (string) $alert->id,
                 'draw_lay' => $payload['context']['draw_lay'] ?? null,
+                'betfair_back' => $payload['context']['betfair_back'] ?? null,
+                'match_status' => $payload['context']['match_status'] ?? null,
+                'result_status' => $payload['context']['result_status'] ?? null,
                 'url' => route('football.market-activity', ['match' => $alert->match_id], false),
             ];
         });
@@ -149,6 +152,7 @@ class NotificationController extends Controller
             'source' => ['required', Rule::in([config('services.telegram.source_channel')])],
             'message_id' => ['required', 'integer', 'min:1'], 'sent_at' => ['required', 'integer'],
             'text' => ['required', 'string', 'max:8192'], 'reply_text' => ['nullable', 'string', 'max:8192'],
+            'reply_message_id' => ['nullable', 'integer', 'min:1'],
         ]);
         $receivedAt = time();
         if (abs($receivedAt - $data['sent_at']) <= 300) {

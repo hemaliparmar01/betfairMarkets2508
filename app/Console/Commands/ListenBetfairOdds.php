@@ -665,6 +665,7 @@ class ListenBetfairOdds extends Command
             'OVER_UNDER_45', 'OVER_UNDER_55', 'OVER_UNDER_65', 'OVER_UNDER_75', 'OVER_UNDER_85',
             'BOTH_TEAMS_TO_SCORE', 'CORRECT_SCORE', 'HALF_TIME', 'HALF_TIME_FULL_TIME',
             'DRAW_NO_BET', 'HALF_TIME_SCORE',
+            'FIRST_HALF_BOTH_TEAMS_TO_SCORE', 'SECOND_HALF_BOTH_TEAMS_TO_SCORE', 'SECOND_HALF_MATCH_ODDS',
         ];
         $updated = false;
         $now = time();
@@ -708,7 +709,8 @@ class ListenBetfairOdds extends Command
             $marketLiquidity = [];
 
             foreach ($event['markets'] as $runner) {
-                if (! in_array($runner['marketType'] ?? null, $supportedMarkets, true)) {
+                if (! in_array($runner['marketType'] ?? null, $supportedMarkets, true)
+                    && ! preg_match('/^(?:FIRST_HALF_GOALS|SECOND_HALF_GOALS|OVER_UNDER)_\d{2,3}$/', $runner['marketType'] ?? '')) {
                     continue;
                 }
 
@@ -720,7 +722,8 @@ class ListenBetfairOdds extends Command
 
             $updatedMarkets = [];
             foreach ($event['markets'] as $runner) {
-                if (! in_array($runner['marketType'] ?? null, $supportedMarkets, true)) {
+                if (! in_array($runner['marketType'] ?? null, $supportedMarkets, true)
+                    && ! preg_match('/^(?:FIRST_HALF_GOALS|SECOND_HALF_GOALS|OVER_UNDER)_\d{2,3}$/', $runner['marketType'] ?? '')) {
                     continue;
                 }
 
