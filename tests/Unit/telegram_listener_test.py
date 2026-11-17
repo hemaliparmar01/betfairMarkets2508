@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class TelegramListenerTest(unittest.TestCase):
-    def execute_listener(self, script, *, check=False, authorized=True):
+    def execute_listener(self, script, *, check=False, authorized=True, login=False, phone=''):
         handlers = []
         requests = []
         calls = []
@@ -43,6 +43,10 @@ class TelegramListenerTest(unittest.TestCase):
 
             async def is_user_authorized(self):
                 return self.authorized
+
+            async def start(self, **kwargs):
+                calls.append(('login', kwargs))
+                self.authorized = True
 
             async def get_entity(self, source):
                 calls.append(('channel', source))
@@ -91,13 +95,14 @@ class TelegramListenerTest(unittest.TestCase):
             environment = {
                 'TELEGRAM_SESSION_FILE': str(Path(directory) / 'source.session'),
                 'TELEGRAM_API_ID': '1', 'TELEGRAM_API_HASH': 'test-only',
+                'TELEGRAM_PHONE': phone,
                 'TELEGRAM_SOURCE_CHANNEL': 'test-source', 'TELEGRAM_SOURCE_SECRET': 'test-only',
                 'BF_SOURCE_URL': 'https://example.test/notifications/telegram/source',
             }
             previous_umask = os.umask(0o077)
             try:
                 with patch.dict(os.environ, environment), patch.dict(sys.modules, {'telethon': telethon}), \
-                     patch.object(sys, 'argv', [str(script), *(['--check'] if check else [])]), \
+                     patch.object(sys, 'argv', [str(script), *(['--check'] if check else []), *(['--login'] if login else [])]), \
                      patch('urllib.request.urlopen', side_effect=urlopen), patch('shutil.which', return_value=None):
                     runpy.run_path(str(script), run_name='__main__')
             finally:
@@ -125,6 +130,31 @@ class TelegramListenerTest(unittest.TestCase):
     def test_passive_worker_does_not_attempt_interactive_login(self):
         with self.assertRaisesRegex(SystemExit, 'Owner login required'):
             self.execute_listener(ROOT / 'server/telegram-listener.py', authorized=False)
+
+    def test_explicit_login_passes_configured_phone_and_does_not_deliver_alerts(self):
+        for location in ['server', 'local']:
+            with self.subTest(location=location):
+                calls, handlers, requests = self.execute_listener(
+                    ROOT / location / 'telegram-listener.py', authorized=False,
+                    login=True, phone='+15555550123',
+                )
+                self.assertEqual(calls, ['connect', ('login', {'phone': '+15555550123'}), 'disconnect'])
+                self.assertEqual(handlers, [])
+                self.assertEqual(requests, [])
+
+    def test_explicit_login_without_phone_keeps_interactive_phone_prompt(self):
+        calls, handlers, requests = self.execute_listener(
+            ROOT / 'server/telegram-listener.py', authorized=False, login=True,
+        )
+        self.assertEqual(calls, ['connect', ('login', {}), 'disconnect'])
+        self.assertEqual(requests, [])
+
+    def test_saved_authorization_does_not_attempt_login_again(self):
+        calls, handlers, requests = self.execute_listener(
+            ROOT / 'server/telegram-listener.py', login=True, phone='+15555550123',
+        )
+        self.assertEqual(calls, ['connect', 'disconnect'])
+        self.assertEqual(requests, [])
 
 
 if __name__ == '__main__':

@@ -347,6 +347,7 @@ return [
         'source_channel' => env('TELEGRAM_SOURCE_CHANNEL', 'wageroddss'),
         'api_id' => env('TELEGRAM_API_ID'),
         'api_hash' => env('TELEGRAM_API_HASH'),
+        'phone' => env('TELEGRAM_PHONE'),
         'session_file' => env('TELEGRAM_SESSION_FILE', storage_path('app/private/telegram/source.session')),
         'python' => env('TELEGRAM_PYTHON', 'python3'),
     ],

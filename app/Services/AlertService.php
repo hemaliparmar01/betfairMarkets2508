@@ -897,8 +897,8 @@ class AlertService
             $kickoff = isset($payload['kickoff']) ? Carbon::parse($payload['kickoff'])->timezone(getCurrentUserTimezone())->format('d M H:i') : '—';
             $shock = $type === 'market_shock';
             $line = is_numeric($m['point'] ?? null) ? ' '.$m['point'] : '';
-            $text = ($shock ? '⚡️ BF MARKETS | MARKET SHOCK DETECTED' : '🟡 BF MARKETS | PREMATCH DROP ALERT')
-                ."\n\n🎯 Filter: ".($shock ? 'Market Shock Detector' : 'Betfair > Pinnacle Drop')."\n{$base}\n⏰ Kickoff: {$kickoff}\n\n📊 Market: ".str_replace('_', ' ', $m['market']).$line.' ('.$m['selection'].")\n📈 Odds Movement: {$from} 📉 {$to}".($drop === null ? '' : " (-{$drop}% Drop)");
+            $text = ($shock ? "⚡️ BF MARKETS | MARKET SHOCK DETECTED\n\n🎯 Filter: Market Shock Detector" : "🟡 BF MARKETS | PREMATCH DROP ALERT 📉\n🟡 Filter: Betfair > Pinnacle Drop")
+                ."\n{$base}\n⏰ Kickoff: {$kickoff}\n\n📊 Market: ".str_replace('_', ' ', $m['market']).$line.' ('.$m['selection'].")\n📈 Odds Movement: {$from} 📉 {$to}".($drop === null ? '' : " (-{$drop}% Drop)");
 
             if (! $shock && $betfairBack !== null) {
                 $text .= "\n🟨 Betfair Back Odds: ".number_format($betfairBack, 2);
@@ -906,9 +906,9 @@ class AlertService
 
             return $text.($shock ? "\n💥 Volume Surge: ".($m['volume'] ?? 'No data available') : "\n🔥 Price Drop: ".($drop === null ? '—' : "-{$drop}%"));
         }
-        $label = ['ht00' => 'HT 0-0 (Half Time 0-0)', '00_70' => "0-0 @ 70'", 'fav_losing' => 'Favorite Losing In-Play'][$type];
-        $indicator = ['ht00' => '🔵', '00_70' => '🔴', 'fav_losing' => '🟠'][$type];
-        $text = "{$indicator} BF MARKETS | ALERT DETECTED\n\n🎯 Filter: {$label}\n{$base}\n".($type === 'ht00' ? '⏱ Status: Half Time' : "⏱ Time: {$time}' min")." | Score: {$score}";
+        $label = ['ht00' => 'HT 0-0 (Half Time 0-0)', '00_70' => "0-0 @ 70' (Late Goal Radar)", 'fav_losing' => 'Fav Losing (Favorite Losing)'][$type];
+        $indicator = ['ht00' => '🔵', '00_70' => '🔴', 'fav_losing' => '🟧'][$type];
+        $text = "{$indicator} BF MARKETS | ALERT DETECTED 🎯\n{$indicator} Filter: {$label}\n{$base}\n".($type === 'ht00' ? '⏱ Status: Half Time' : "⏱ Time: {$time}' min")." | Score: {$score}";
         $odds = [];
         foreach ($payload['markets']['MATCH_ODDS'] ?? [] as $runner) {
             if ($type === 'ht00' && (! empty($runner['suspended']) || in_array($runner['market_status'] ?? 'OPEN', ['SUSPENDED', 'CLOSED'], true))) {

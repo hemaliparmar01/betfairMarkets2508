@@ -31,7 +31,11 @@ async def main():
     if not await asyncio.wait_for(client.is_user_authorized(), timeout=15):
         if '--login' not in sys.argv:
             raise SystemExit('Owner login required: php artisan telegram:listen --source --login')
-        await client.start()
+        phone = os.environ.get('TELEGRAM_PHONE', '').strip()
+        if phone:
+            await client.start(phone=phone)
+        else:
+            await client.start()
     if session.exists():
         session.chmod(0o600)
     if '--login' in sys.argv:
@@ -103,7 +107,7 @@ async def main():
             await asyncio.sleep(5)
 
     await client.catch_up()
-    print('Passive source listener connected. No messages, reactions or forwards are sent.')
+    print('Passive source listener connected. No messages, reactions or forwards are sent.', flush=True)
     await client.run_until_disconnected()
 
 

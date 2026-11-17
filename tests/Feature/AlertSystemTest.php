@@ -320,13 +320,27 @@ class AlertSystemTest extends TestCase
     #[TestWith(['ltd', '🟢'])]
     #[TestWith(['ht00', '🔵'])]
     #[TestWith(['00_70', '🔴'])]
-    #[TestWith(['fav_losing', '🟠'])]
+    #[TestWith(['fav_losing', '🟧'])]
     #[TestWith(['prematch_drops', '🟡'])]
     public function test_telegram_topic_headers_have_the_requested_color(string $type, string $indicator): void
     {
         $payload = ['alert_type' => $type, 'match' => 'Home vs Away', 'league' => 'League', 'minute' => 30, 'score' => '0 - 0',
             'context' => ['movement' => ['from' => 2.2, 'to' => 2, 'market' => 'moneyline', 'selection' => 'Home']]];
         $this->assertStringStartsWith($indicator.' BF MARKETS |', app(AlertService::class)->text($payload));
+    }
+
+    #[TestWith(['ht00', "🔵 BF MARKETS | ALERT DETECTED 🎯\n🔵 Filter: HT 0-0 (Half Time 0-0)"])]
+    #[TestWith(['00_70', "🔴 BF MARKETS | ALERT DETECTED 🎯\n🔴 Filter: 0-0 @ 70' (Late Goal Radar)"])]
+    #[TestWith(['fav_losing', "🟧 BF MARKETS | ALERT DETECTED 🎯\n🟧 Filter: Fav Losing (Favorite Losing)"])]
+    #[TestWith(['prematch_drops', "🟡 BF MARKETS | PREMATCH DROP ALERT 📉\n🟡 Filter: Betfair > Pinnacle Drop"])]
+    public function test_telegram_header_and_filter_lines_match_the_topic_colors(string $type, string $header): void
+    {
+        $payload = ['alert_type' => $type, 'match' => 'Home vs Away', 'league' => 'League', 'minute' => 30, 'score' => '0 - 0',
+            'context' => ['movement' => ['from' => 2.2, 'to' => 2, 'market' => 'moneyline', 'selection' => 'Home']]];
+
+        $text = app(AlertService::class)->text($payload);
+
+        $this->assertStringStartsWith($header."\n⚽ Match: Home vs Away", $text);
     }
 
     public function test_goal_requires_valid_parent_and_only_reaches_parent_recipients(): void
