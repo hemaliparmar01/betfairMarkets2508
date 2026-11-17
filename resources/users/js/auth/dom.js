@@ -1,3 +1,5 @@
+import { flashMarketValue } from '../marketValueFlash.js';
+
 export const parseJson = (value, fallback = null) => {
     if (!value) return fallback;
 
@@ -66,6 +68,8 @@ export const updateFixtureRows = (container, incoming) => {
         if (current.isEqualNode(next)) return current;
         if (current.nodeType !== next.nodeType || current.nodeName !== next.nodeName) return next;
         if (current.nodeType !== 1) { current.nodeValue = next.nodeValue; return current; }
+        const marketValue = current.matches('.odds-cell, .size-cell, .runner-back, .runner-lay');
+        const previousValue = marketValue ? current.textContent : null;
         const modalOpen = current.getAttribute('aria-modal') === 'true' && !current.classList.contains('hidden');
         const modalFlex = modalOpen && current.classList.contains('flex');
         const expanded = current.nodeName === 'DETAILS' && current.open;
@@ -88,6 +92,7 @@ export const updateFixtureRows = (container, incoming) => {
         });
         desired.forEach((child, index) => { if (current.childNodes[index] !== child) current.insertBefore(child, current.childNodes[index] ?? null); });
         [...current.childNodes].slice(desired.length).forEach(child => child.remove());
+        if (marketValue) flashMarketValue(current, previousValue, current.textContent);
         return current;
     };
     const groups = parent => {

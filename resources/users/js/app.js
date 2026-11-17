@@ -1,6 +1,8 @@
 import { updateFixtureRows } from './auth/dom.js';
 import { watchSubscriptionStatus } from './subscriptionStatus.js';
 import { bindCheckoutConsent } from './checkoutConsent.js';
+import { flashMarketValue } from './marketValueFlash.js';
+window.flashMarketValue = flashMarketValue;
 document.querySelectorAll('[data-checkout-consent]').forEach(bindCheckoutConsent);
 watchSubscriptionStatus(document.querySelector('[data-subscription-status]'));
 window.updateFixtureRows = updateFixtureRows;

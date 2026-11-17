@@ -1502,16 +1502,16 @@
                         Array.from(incoming.cells).forEach((cell, index) => {
                             const existing = row.cells[index];
                             if (!existing) return;
+                            const previousValue = existing.textContent;
+                            const nextValue = cell.textContent;
                             const changed = existing.textContent.trim().replace(/\s+/g, ' ') !== cell.textContent.trim().replace(/\s+/g, ' ');
                             const target = existing.querySelector('.odds-cell, .size-cell') || existing;
                             if (existing.innerHTML !== cell.innerHTML && (changed || !target.classList.contains('flash-yellow') && !target.classList.contains('flash-yellow-alt'))) {
                                 existing.replaceChildren(...cell.childNodes);
                             }
-                            if (flashChanges && sameSelection && changed && index >= 5 && index <= 12) {
+                            if (flashChanges && sameSelection && changed && index >= 5 && index <= 8) {
                                 const value = existing.querySelector('.odds-cell, .size-cell') || existing;
-                                const alternate = value.classList.contains('flash-yellow');
-                                value.classList.remove('flash-yellow', 'flash-yellow-alt');
-                                value.classList.add(alternate ? 'flash-yellow-alt' : 'flash-yellow');
+                                globalThis.flashMarketValue?.(value, previousValue, nextValue);
                             }
                         });
                         const selected = row.classList.contains('selected');
@@ -1577,7 +1577,7 @@
 
                 let refreshPending = false;
                 let resetPending = false;
-                async function reloadMarketActivity(reset = false, flashChanges = false) {
+                async function reloadMarketActivity(reset = false, flashChanges = true) {
                     if (marketLoading) {
                         refreshPending = true;
                         resetPending ||= reset;
@@ -1792,7 +1792,7 @@
                         return String(e.id) === String(id);
                     });
                     if (!ev || ev.locked) return;
-                    const updating = @json($marketActivitySport === 'football') && String(currentEventId) === String(id) && detailPanel.classList.contains('open');
+                    const updating = String(currentEventId) === String(id) && detailPanel.classList.contains('open');
                     currentEventId = id;
 
                     document.querySelectorAll('.events-table tbody tr').forEach(function(r) {
@@ -1888,10 +1888,13 @@
                         const fields = detailContent.querySelectorAll('.detail-title, .detail-meta, .market-book-status, .runner-name, .runner-back, .runner-lay, .ind-label, .ind-value, .liquidity-favorite, .liq-back, .liq-lay, .liquidity-bar span');
                         template.content.querySelectorAll('.detail-title, .detail-meta, .market-book-status, .runner-name, .runner-back, .runner-lay, .ind-label, .ind-value, .liquidity-favorite, .liq-back, .liq-lay, .liquidity-bar span').forEach((next, index) => {
                             const field = fields[index];
+                            if (!field) return;
+                            const previousValue = field.textContent;
                             if (field.innerHTML !== next.innerHTML && (!field.matches('.runner-name') || field.textContent !== next.textContent)) field.innerHTML = next.innerHTML;
                             if (field.className !== next.className) field.className = next.className;
                             if (field.style.cssText !== next.style.cssText) field.style.cssText = next.style.cssText;
                             if (next.hasAttribute('title')) field.setAttribute('title', next.getAttribute('title'));
+                            if (field.matches('.runner-back, .runner-lay')) globalThis.flashMarketValue?.(field, previousValue, next.textContent);
                         });
                         detailContent.querySelector('.liquidity-bar').setAttribute('aria-label', template.content.querySelector('.liquidity-bar').getAttribute('aria-label'));
                         return;
