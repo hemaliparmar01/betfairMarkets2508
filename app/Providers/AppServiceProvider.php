@@ -251,6 +251,7 @@ class AppServiceProvider extends ServiceProvider
                 'Lay ↓',
                 'Liquidity',
                 'Liquidity Distribution',
+                'Favorite',
                 'Liquidity-supported opening',
                 'Live',
                 'Live Match Statistics',

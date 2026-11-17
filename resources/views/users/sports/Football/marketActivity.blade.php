@@ -79,7 +79,7 @@
                     <h1 class="flex items-center gap-2 text-2xl font-extrabold text-[rgb(var(--text-main))] dark:text-[var(--text-on-primary)] max-[480px]:text-xl">
                         <i class="fas fa-arrow-trend-down text-[var(--text-danger-15)]"></i> {{ __('Pinnacle Odds Drops & Market Movement') }}
                     </h1>
-                    <button type="button" aria-haspopup="dialog" aria-controls="pinnacleDropsInfo" aria-label="{{ __('Why Do Traders & Bettors Track Pinnacle Odds Drops?') }}" class="inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full border border-[var(--border-control)] text-[rgb(var(--text-muted))] focus-visible:outline-2" onclick="document.getElementById('pinnacleDropsInfo').showModal()"><i class="fas fa-info-circle" aria-hidden="true"></i></button>
+                    <button type="button" aria-haspopup="dialog" aria-controls="pinnacleDropsInfo" aria-label="{{ __('Why Do Traders Track Pinnacle Odds Drops?') }}" class="inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full border border-[var(--border-control)] text-[rgb(var(--text-muted))] focus-visible:outline-2" onclick="document.getElementById('pinnacleDropsInfo').showModal()"><i class="fas fa-info-circle" aria-hidden="true"></i></button>
                 </div>
                 <p class="mt-1 text-sm text-[rgb(var(--text-muted))] dark:text-[rgb(var(--text-soft))]">{{ __('Realtime Pinnacle odds drops compared with Betfair prices') }}</p>
             </div>
@@ -91,25 +91,35 @@
 
         <dialog id="pinnacleDropsInfo" aria-labelledby="pinnacleDropsInfoTitle" class="m-auto max-h-[85dvh] w-[calc(100%-2rem)] max-w-lg overflow-y-auto rounded-xl border border-[var(--border-control)] bg-[rgb(var(--surface))] p-5 text-[rgb(var(--text-main))] shadow-xl backdrop:bg-black/50 dark:border-[rgb(var(--border))] dark:text-[var(--text-on-primary)]">
             <div class="mb-4 flex items-start justify-between gap-3">
-                <h2 id="pinnacleDropsInfoTitle" class="text-lg font-bold">{{ __('Why Do Traders & Bettors Track Pinnacle Odds Drops?') }}</h2>
+                <h2 id="pinnacleDropsInfoTitle" class="text-lg font-bold">{{ __('Why Do Traders Track Pinnacle Odds Drops?') }}</h2>
                 <form method="dialog">
                     <button type="submit" aria-label="{{ __('Close') }}" class="cursor-pointer rounded px-2 text-xl focus-visible:outline-2">×</button>
                 </form>
             </div>
             <div class="space-y-3 text-sm leading-relaxed">
-                <p>{{ __('Pinnacle is globally recognized as the sharpest benchmark in sports betting. Unlike recreational books that limit or ban winning players, Pinnacle welcomes informed action and manages risk by moving its lines on thin margins. When a Pinnacle price drops, it means real money and sharp information have entered the market—making it the most reliable public indicator of true probability.') }}</p>
+                <p>{{ __('Pinnacle is globally recognized as the sharpest benchmark in sports betting. Unlike recreational books that limit winning players, Pinnacle welcomes informed action. When a Pinnacle price drops, it means real money and sharp information have entered the market—making it the most reliable public indicator of true probability.') }}</p>
+                <section class="space-y-2">
+                    <h3 class="font-bold">{{ __('Exchange Price vs. Sharp Bookmaker Quote') }}</h3>
+                    <p>{{ __('Pinnacle: Publishes a bookmaker quote with margin baked in, reflecting sharp betting flow up to its market limit.') }}</p>
+                    <p>{{ __('Betfair Exchange: Displays funded orders from other traders. Each price has available liquidity (Size) queued behind it and represents a gross price before exchange commission.') }}</p>
+                </section>
                 <section class="space-y-2">
                     <h3 class="font-bold">{{ __('How to Read the Key Metrics') }}</h3>
-                    <p><strong class="font-semibold">{{ __('NVP (No-Vig Fair Price):') }}</strong> {{ __('The true, margin-free market price. Comparing other books or Betfair prices against Pinnacle\'s NVP reveals genuine positive expected value (+EV).') }}</p>
-                    <p><strong class="font-semibold">{{ __('Market Limit (Max Stake):') }}</strong> {{ __('Shows the maximum bet allowed on that specific line. A drop backed by a high limit carries far more weight and liquidity than a drop on a low-limit market.') }}</p>
+                    <p><strong class="font-semibold">{{ __('NVP (No-Vig Fair Price)') }}</strong> {{ __('The true, margin-free Pinnacle probability converted into fair odds. Always compare Betfair\'s net price against Pinnacle\'s NVP rather than raw bookmaker odds.') }}</p>
+                    <p><strong class="font-semibold">{{ __('Market Limit (Max Stake)') }}</strong> {{ __('Shows the maximum bet allowed on Pinnacle for that line. A drop backed by a high limit carries far more weight than a drop on a low-limit market.') }}</p>
+                    <p><strong class="font-semibold">{{ __('Betfair Liquidity (Size) & Commission') }}</strong> {{ __('A price with trivial money behind it (e.g., £30) is market noise, not true value. Always check available Size and factor in your Betfair commission (typically 2%–5%), as net realized odds are lower than the gross displayed price.') }}</p>
+                </section>
+                <section class="space-y-2">
+                    <h3 class="font-bold">{{ __('Thin vs. Liquid Markets') }}</h3>
+                    <p>{{ __('On major leagues (Premier League, ATP, NBA), Betfair and Pinnacle converge closely. On lower-tier or thin markets where exchange liquidity is low, Pinnacle\'s line is significantly more reliable.') }}</p>
                 </section>
                 <section class="space-y-2">
                     <h3 class="font-bold">{{ __('Key Use Cases & Strategies') }}</h3>
-                    <p><strong class="font-semibold">{{ __('Capturing Value & Arbitrage Windows:') }}</strong> {{ __('When Pinnacle drops its price, soft bookmakers and exchanges often react with a delay—creating a temporary window to secure +EV bets above the fair price or lock in arbitrage.') }}</p>
-                    <p><strong class="font-semibold">{{ __('Steam Chasing & CLV (Closing Line Value):') }}</strong> {{ __('Rapid drops (e.g., ≥1%–5%+) signal "Smart Money" flow. Following these moves early helps you consistently beat the closing line (CLV), which is the strongest long-term predictor of profitability.') }}</p>
-                    <p><strong class="font-semibold">{{ __('Betfair Trading:') }}</strong> {{ __('Pinnacle movements frequently trigger price shifts on the Betfair Exchange, giving traders an edge to enter or exit Back/Lay positions ahead of the market.') }}</p>
+                    <p><strong class="font-semibold">{{ __('Capturing Value & Arbitrage Windows') }}</strong> {{ __('When Pinnacle drops its price, exchanges and soft books often react with a delay—creating a temporary window to secure +EV bets above the fair NVP or lock in arbitrage.') }}</p>
+                    <p><strong class="font-semibold">{{ __('Steam Chasing & CLV (Closing Line Value)') }}</strong> {{ __('Rapid drops (e.g., ≥1%–5%+) signal "Smart Money" flow. Following these moves early helps you consistently beat the closing line (CLV), the strongest long-term predictor of profitability.') }}</p>
+                    <p><strong class="font-semibold">{{ __('Betfair Trading') }}</strong> {{ __('Pinnacle movements frequently trigger price shifts on the Betfair Exchange, giving traders an edge to enter or exit Back/Lay positions ahead of the market.') }}</p>
                 </section>
-                <p class="rounded-lg border border-[var(--border-control)] p-3">{{ __('⚠️ Disclaimer: An odds drop does not guarantee a winning outcome. It reflects market sentiment, liquidity flow, and probability shifts. Upsets and unexpected results happen regularly in sports.') }}</p>
+                <p class="rounded-lg border border-[var(--border-control)] p-3">{{ __('Disclaimer: An odds drop does not guarantee a winning outcome. It reflects market sentiment, liquidity flow, and probability shifts. Upsets and unexpected results happen regularly in sports.') }}</p>
             </div>
         </dialog>
 
@@ -781,7 +791,7 @@
                 'market' => $raceActivity ? 'win_market' : $row['marketType'], 'marketLabel' => $raceActivity ? 'Win Market' : $row['marketName'],
                 'runners' => $runners ?: [['name' => '—', 'back' => 0, 'lay' => 0, 'backSize' => 0, 'laySize' => 0]], 'favIdx' => $favoriteIndex,
                 'totalBackSize' => array_sum(array_column($runners, 'backSize')), 'totalLaySize' => array_sum(array_column($runners, 'laySize')),
-                'backPercent' => $indicator['back_percent'] ?? null, 'layPercent' => $indicator['lay_percent'] ?? null,
+                'backPercent' => $indicator['favorite_back_percent'] ?? null, 'layPercent' => $indicator['favorite_lay_percent'] ?? null,
                 'deltaWindows' => $indicator['delta_windows'] ?? [], 'lastMarketUpdate' => $indicator['updated_at'] ?? null, 'freshUntil' => $indicator['fresh_until'] ?? null, 'stale' => $indicator['stale'] ?? true,
                 'balance' => $indicator['balance'] ?? 'unknown', 'momentum' => $indicator['momentum'] ?? 'unknown',
                 'delta' => isset($indicator['delta']) && ! $locked ? (($indicator['delta'] > 0 ? '+' : '').number_format((float) $indicator['delta'], 1).' pp') : '—', 'volatility' => $indicator['volatility'] ?? 'unknown',
@@ -1829,7 +1839,8 @@
                             </div>
                             <div class="detail-section [margin-bottom:20px] [&:last-child]:[margin-bottom:0]">
                                 <div class="detail-section-title [font-size:11px] font-extrabold uppercase [letter-spacing:0.6px] [color:rgb(var(--primary))] [margin-bottom:10px] flex items-center [gap:6px] dark:[color:rgb(var(--primary))]"><i class="fas fa-water"></i> ${(globalThis.bfTranslations?.["Liquidity Distribution"] ?? "Liquidity Distribution")}</div>
-                                <div class="liquidity-bar relative flex h-[26px] overflow-hidden rounded-lg text-[11px] font-bold mt-1.5" role="img" aria-label="Back ${(backPct === null ? '—' : backPct.toFixed(0) + '%')}, Lay ${(layPct === null ? '—' : layPct.toFixed(0) + '%')}">
+                                <p class="liquidity-favorite mb-2 text-xs">${escapeHtml(@json(__('Favorite')))}: ${escapeHtml(ev.runners[ev.favIdx]?.name ?? '—')}</p>
+                                <div class="liquidity-bar relative flex h-[26px] overflow-hidden rounded-lg text-[11px] font-bold mt-1.5" role="img" aria-label="${escapeHtml(ev.runners[ev.favIdx]?.name ?? '—')}: Back ${(backPct === null ? '—' : backPct.toFixed(0) + '%')}, Lay ${(layPct === null ? '—' : layPct.toFixed(0) + '%')}">
                                     <div class="liq-back min-w-0 shrink-0 [background:linear-gradient(135deg,_var(--surface-primary),_var(--surface-brand-30))] [transition:width_0.6s_ease]" style="width:${backPct ?? 0}%;" aria-hidden="true"></div>
                                     <div class="liq-lay min-w-0 shrink-0 [background:linear-gradient(135deg,_var(--surface-lay-2),_var(--surface-accent-10))] [transition:width_0.6s_ease]" style="width:${layPct ?? 0}%;" aria-hidden="true"></div>
                                     <div class="pointer-events-none absolute inset-0 flex items-center justify-between gap-2 px-2.5 text-white whitespace-nowrap leading-none tabular-nums" aria-hidden="true"><span>${(globalThis.bfTranslations?.["Back"] ?? "Back")} ${(backPct === null ? '—' : backPct.toFixed(0) + '%')}</span><span>${(globalThis.bfTranslations?.["Lay"] ?? "Lay")} ${(layPct === null ? '—' : layPct.toFixed(0) + '%')}</span></div>
@@ -1874,8 +1885,8 @@
                             if (globalThis.updateFixtureRows) globalThis.updateFixtureRows(detailContent.querySelector('.runners-list'), template.content.querySelector('.runners-list'));
                             else detailContent.querySelector('.runners-list').replaceChildren(...template.content.querySelector('.runners-list').childNodes);
                         }
-                        const fields = detailContent.querySelectorAll('.detail-title, .detail-meta, .market-book-status, .runner-name, .runner-back, .runner-lay, .ind-label, .ind-value, .liq-back, .liq-lay, .liquidity-bar span');
-                        template.content.querySelectorAll('.detail-title, .detail-meta, .market-book-status, .runner-name, .runner-back, .runner-lay, .ind-label, .ind-value, .liq-back, .liq-lay, .liquidity-bar span').forEach((next, index) => {
+                        const fields = detailContent.querySelectorAll('.detail-title, .detail-meta, .market-book-status, .runner-name, .runner-back, .runner-lay, .ind-label, .ind-value, .liquidity-favorite, .liq-back, .liq-lay, .liquidity-bar span');
+                        template.content.querySelectorAll('.detail-title, .detail-meta, .market-book-status, .runner-name, .runner-back, .runner-lay, .ind-label, .ind-value, .liquidity-favorite, .liq-back, .liq-lay, .liquidity-bar span').forEach((next, index) => {
                             const field = fields[index];
                             if (field.innerHTML !== next.innerHTML && (!field.matches('.runner-name') || field.textContent !== next.textContent)) field.innerHTML = next.innerHTML;
                             if (field.className !== next.className) field.className = next.className;

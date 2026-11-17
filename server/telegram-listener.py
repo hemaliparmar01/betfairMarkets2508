@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import sys
 import urllib.error
@@ -51,8 +52,26 @@ async def main():
         await client.disconnect()
         return
     ocr = shutil.which('tesseract')
+    psm_option = '--psm'
     if not ocr:
         print('Tesseract is unavailable. Telegram image alerts require it.', file=sys.stderr)
+    else:
+        probe = await asyncio.create_subprocess_exec(
+            ocr, '--version', stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+        )
+        try:
+            version_text, _ = await asyncio.wait_for(probe.communicate(), timeout=5)
+        except asyncio.TimeoutError:
+            if probe.returncode is None:
+                probe.kill()
+            await probe.wait()
+            raise SystemExit('Tesseract compatibility check timed out.')
+        version = re.search(rb'\btesseract\s+(\d+)\.', version_text.lower())
+        if version is None:
+            raise SystemExit(f'Tesseract version could not be identified (exit {probe.returncode}).')
+        if int(version.group(1)) < 4:
+            psm_option = '-psm'
+        print(f'Telegram image OCR ready ({psm_option}).', flush=True)
 
     @client.on(events.NewMessage(chats=entity, incoming=True))
     @client.on(events.MessageEdited(chats=entity, incoming=True))
@@ -64,7 +83,7 @@ async def main():
                 photo = await asyncio.wait_for(event.download_media(file=bytes), timeout=10)
                 if photo:
                     process = await asyncio.create_subprocess_exec(
-                        ocr, 'stdin', 'stdout', '--psm', '6',
+                        ocr, 'stdin', 'stdout', psm_option, '6',
                         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.DEVNULL,
                     )
@@ -77,6 +96,8 @@ async def main():
                         raise
                     if process.returncode == 0:
                         text = extracted.decode('utf-8', errors='replace') + '\n' + text
+                    else:
+                        print(f'Source post {event.id} image OCR failed (exit {process.returncode}).', file=sys.stderr)
             except (OSError, asyncio.TimeoutError):
                 print('Could not read Telegram alert image.', file=sys.stderr)
         if not text.strip():

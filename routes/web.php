@@ -166,6 +166,7 @@ Route::post('/set-timezone', function (Request $request) {
 Route::get('contact-us', [ContactController::class, 'contact'])->name('contact-us');
 Route::post('contact-us', [ContactController::class, 'store'])->name('contact-us.store');
 Route::middleware('auth:customers')->group(function (): void {
+    Route::get('subscriptions/status', [SubscriptionController::class, 'status'])->name('subscriptions.status');
     Route::get('notifications', [NotificationController::class, 'notifications'])->name('notifications');
     Route::get('notifications/status', [NotificationController::class, 'status'])->name('notifications.status');
     Route::get('notifications/popups', [NotificationController::class, 'popups'])->name('notifications.popups');

@@ -61,6 +61,90 @@ class SubscriptionTest extends TestCase
         $this->get('/my-profile?section=subscription')->assertOk();
     }
 
+    public function test_recurring_checkout_buttons_start_disabled_and_require_consent_for_every_gateway(): void
+    {
+        $this->bogConfiguration();
+        Http::fake(['api.country.is/*' => Http::response(['country' => 'US'])]);
+
+        $response = $this->actingAs($this->customer, 'customers')->get('/subscriptions-details?plan='.$this->plan->id);
+        $document = new \DOMDocument;
+        @$document->loadHTML($response->getContent());
+        $xpath = new \DOMXPath($document);
+        $forms = $xpath->query('//form[@data-checkout-consent]');
+
+        $this->assertCount(3, $forms);
+        foreach ($forms as $form) {
+            $this->assertCount(1, $xpath->query('.//input[@name="auto_renew" and @required and not(@checked)]', $form));
+            $this->assertCount(1, $xpath->query('.//button[@type="submit" and @disabled]', $form));
+        }
+    }
+
+    #[TestWith(['paypal', null])]
+    #[TestWith(['paypal', 0])]
+    #[TestWith(['bog', null])]
+    #[TestWith(['bog', 0])]
+    #[TestWith(['tbc_flitt', null])]
+    #[TestWith(['tbc_flitt', 0])]
+    public function test_recurring_checkout_rejects_missing_or_false_consent_without_creating_payment(string $gateway, ?int $consent): void
+    {
+        $this->bogConfiguration();
+        Http::fake();
+        $input = ['gateway' => $gateway, 'checkout_key' => (string) Str::uuid()];
+        if ($consent !== null) {
+            $input['auto_renew'] = $consent;
+        }
+
+        $this->actingAs($this->customer, 'customers')->post('/subscriptions/'.$this->plan->id.'/checkout', $input)
+            ->assertSessionHasErrors('gateway');
+
+        $this->assertDatabaseCount('customers_subscriptions', 0);
+        Http::assertNothingSent();
+    }
+
+    public function test_subscription_status_refresh_requires_customer_authentication(): void
+    {
+        $this->getJson('/subscriptions/status')->assertUnauthorized();
+    }
+
+    #[TestWith(['paypal'])]
+    #[TestWith(['bog'])]
+    #[TestWith(['tbc_flitt'])]
+    public function test_profile_status_refresh_displays_confirmed_payment_without_activating_pending_checkouts(string $gateway): void
+    {
+        $record = $this->subscription($gateway);
+        $this->actingAs($this->customer, 'customers');
+        $this->get('/my-profile?section=subscription')->assertOk()->assertSee('data-subscription-status', false);
+        $before = $this->getJson('/subscriptions/status')->assertOk();
+        $this->assertStringContainsString('Pending', $before->json('html'));
+        $this->assertSame('pending', $record->fresh()->status);
+        $this->assertDatabaseCount('subscription_payments', 0);
+
+        app(SubscriptionService::class)->paid($record, 'verified-event', 'verified-payment', '10.00', 'EUR', now());
+        $after = $this->getJson('/subscriptions/status')->assertOk();
+
+        $this->assertStringContainsString('Active', $after->json('html'));
+        $this->assertStringContainsString($record->fresh()->next_billing_at->format('d M Y H:i'), $after->json('html'));
+        $this->assertNotSame($before->json('version'), $after->json('version'));
+        $this->assertSame($after->json('version'), $this->getJson('/subscriptions/status')->json('version'));
+        Http::assertNothingSent();
+    }
+
+    public function test_subscription_status_refresh_only_shows_the_authenticated_customers_records_and_is_not_cached(): void
+    {
+        $this->subscription();
+        $other = CustomerFactory::new()->create();
+        $privatePlan = SubscriptionsFactory::new()->create(['label' => 'PRIVATE OTHER CUSTOMER PLAN']);
+        CustomerSubscriptions::query()->create(['customer_id' => $other->id, 'subscription_id' => $privatePlan->id,
+            'gateway' => 'paypal', 'status' => 'pending', 'amount' => 10, 'currency' => 'EUR', 'auto_renew' => true]);
+
+        $response = $this->actingAs($this->customer, 'customers')->getJson('/subscriptions/status?customer_id='.$other->id)->assertOk();
+
+        $this->assertStringContainsString('Premium', $response->json('html'));
+        $this->assertStringNotContainsString('PRIVATE OTHER CUSTOMER PLAN', $response->json('html'));
+        $this->assertStringContainsString('private', $response->headers->get('Cache-Control'));
+        $this->assertStringContainsString('no-store', $response->headers->get('Cache-Control'));
+    }
+
     public function test_customer_dates_are_the_only_access_columns(): void
     {
         $this->assertTrue(Schema::hasColumn('customers', 'subscription_starts_at'));

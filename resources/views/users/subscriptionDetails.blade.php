@@ -315,6 +315,34 @@
             box-shadow: none;
         }
 
+        .checkout-continue-button {
+            width: 100%;
+            min-width: 0;
+            min-height: 3.25rem;
+            border-color: transparent;
+            background: linear-gradient(110deg, #1d709c, #119fb0);
+            color: #fff;
+            cursor: pointer;
+            line-height: 1.5;
+            text-align: center;
+        }
+
+        .checkout-continue-button:enabled:hover {
+            background: linear-gradient(110deg, #185e84, #0c8796);
+        }
+
+        .checkout-continue-button:focus-visible {
+            outline: 3px solid rgb(var(--primary));
+            outline-offset: 3px;
+        }
+
+        .checkout-continue-button:disabled {
+            opacity: 1;
+            background: rgb(var(--surface-soft));
+            color: rgb(var(--text-muted));
+            border-color: rgb(var(--border));
+        }
+
         .checkout-method-note {
             margin-top: 0.9rem;
             font-size: 0.85rem;
@@ -732,18 +760,18 @@
                                 @else
                                     @forelse ($gateways as $gateway => $options)
                                         @if ($gateway !== 'paypal' || filled($selectedPlan->paypal_plan_id))
-                                            <form class="checkout-method-card space-y-4" method="POST" action="{{ route('subscriptions.checkout', $selectedPlan) }}">
+                                            <form class="checkout-method-card space-y-4" data-checkout-consent method="POST" action="{{ route('subscriptions.checkout', $selectedPlan) }}">
                                                 @csrf
                                                 <input type="hidden" name="gateway" value="{{ $gateway }}">
                                                 <input type="hidden" name="checkout_key" value="{{ (string) \Illuminate\Support\Str::uuid() }}">
                                                 <h3 class="text-xl font-bold theme-text-main">{{ $options['label'] }}</h3>
                                                 <p class="theme-text-main">{{ $gateway === 'bog' || ($gateway === 'tbc_flitt' && config('services.flitt.currency') === 'GEL') ? $selectedPlan->price_for_local.' GEL' : $selectedPlan->price_for_international.' EUR' }} · {{ $selectedPlan->duration_days }} {{ __('days') }}</p>
                                                 @if ($options['recurring'])
-                                                    <label class="flex items-start gap-3 theme-text-soft"><input type="checkbox" name="auto_renew" value="1" {{ $gateway === 'paypal' ? 'required' : '' }}>{{ __('Enable AutoPay. I authorize recurring payments at this price and period until I cancel from my profile or the provider billing schedule ends.') }}</label>
+                                                    <label class="checkout-consent-label"><input class="checkout-consent-checkbox" type="checkbox" name="auto_renew" value="1" required><span>{{ __('Enable AutoPay. I authorize recurring payments at this price and period until I cancel from my profile or the provider billing schedule ends.') }}</span></label>
                                                 @else
                                                     <p class="text-sm theme-text-muted">{{ __('One-time payment. AutoPay is unavailable for this gateway.') }}</p>
                                                 @endif
-                                                <button type="submit" class="betguru-btn-primary">{{ __('Continue with') }} {{ $options['label'] }}</button>
+                                                <button type="submit" class="checkout-method-button checkout-continue-button" @disabled($options['recurring'])>{{ __('Continue with') }} {{ $options['label'] }}</button>
                                             </form>
                                         @endif
                                     @empty

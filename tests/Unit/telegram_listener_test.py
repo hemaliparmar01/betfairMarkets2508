@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class TelegramListenerTest(unittest.TestCase):
-    def execute_listener(self, script, *, check=False, authorized=True, login=False, phone=''):
+    def execute_listener(self, script, *, check=False, authorized=True, login=False, phone='', ocr_version=None):
         handlers = []
         requests = []
         calls = []
@@ -29,7 +29,10 @@ class TelegramListenerTest(unittest.TestCase):
             edit_date = None
             is_reply = True
             raw_text = 'Total. Over (0.5). 1st half'
-            photo = None
+            photo = True if ocr_version is not None else None
+
+            async def download_media(self, **kwargs):
+                return b'test-image'
 
             async def get_reply_message(self):
                 return reply
@@ -86,6 +89,24 @@ class TelegramListenerTest(unittest.TestCase):
             requests.append(json.loads(request.data))
             return Response()
 
+        async def subprocess_exec(*args, **kwargs):
+            if args[1] not in ('--version', 'stdin'):
+                self.fail('Only --version may be used to probe Tesseract; legacy --help exits non-zero')
+            class Process:
+                returncode = 1 if args[1] == '--version' and ocr_version.startswith(b'tesseract 3.') else 0
+
+                async def communicate(self, data=None):
+                    if args[1] == '--version':
+                        return ocr_version, None
+                    expected_option = '-psm' if ocr_version.startswith(b'tesseract 3.') else '--psm'
+                    self_test.assertEqual(args, ('/usr/bin/tesseract', 'stdin', 'stdout', expected_option, '6'))
+                    self_test.assertEqual(data, b'test-image')
+                    return b'Jordan 0:0 Australia\nFootball. Friendlies. National Teams', None
+
+            return Process()
+
+        self_test = self
+
         events = types.SimpleNamespace(
             NewMessage=lambda **kwargs: ('new', kwargs),
             MessageEdited=lambda **kwargs: ('edited', kwargs),
@@ -103,7 +124,9 @@ class TelegramListenerTest(unittest.TestCase):
             try:
                 with patch.dict(os.environ, environment), patch.dict(sys.modules, {'telethon': telethon}), \
                      patch.object(sys, 'argv', [str(script), *(['--check'] if check else []), *(['--login'] if login else [])]), \
-                     patch('urllib.request.urlopen', side_effect=urlopen), patch('shutil.which', return_value=None):
+                     patch('urllib.request.urlopen', side_effect=urlopen), \
+                     patch('shutil.which', return_value='/usr/bin/tesseract' if ocr_version is not None else None), \
+                     patch('asyncio.create_subprocess_exec', side_effect=subprocess_exec):
                     runpy.run_path(str(script), run_name='__main__')
             finally:
                 os.umask(previous_umask)
@@ -116,6 +139,15 @@ class TelegramListenerTest(unittest.TestCase):
                 self.assertEqual(calls, ['connect', ('channel', 'test-source'), 'disconnect'])
                 self.assertEqual(handlers, [])
                 self.assertEqual(requests, [])
+
+    def test_image_posts_are_read_with_compatible_options_for_legacy_and_modern_tesseract(self):
+        for location in ['server', 'local']:
+            for version_text in [b'tesseract 3.04.00\n leptonica-1.72', b'tesseract 4.1.1', b'tesseract 5.5.0']:
+                with self.subTest(location=location, version_text=version_text):
+                    _, _, requests = self.execute_listener(ROOT / location / 'telegram-listener.py', ocr_version=version_text)
+                    self.assertEqual(len(requests), 2)
+                    self.assertIn('Jordan 0:0 Australia', requests[0]['text'])
+                    self.assertIn('Total. Over (0.5). 1st half', requests[0]['text'])
 
     def test_new_and_edited_posts_and_offline_updates_reach_laravel(self):
         calls, handlers, requests = self.execute_listener(ROOT / 'server/telegram-listener.py')

@@ -1,4 +1,8 @@
 import { updateFixtureRows } from './auth/dom.js';
+import { watchSubscriptionStatus } from './subscriptionStatus.js';
+import { bindCheckoutConsent } from './checkoutConsent.js';
+document.querySelectorAll('[data-checkout-consent]').forEach(bindCheckoutConsent);
+watchSubscriptionStatus(document.querySelector('[data-subscription-status]'));
 window.updateFixtureRows = updateFixtureRows;
 import { watchRacingFeed } from './racingFeed.js';
 import Echo from 'laravel-echo';

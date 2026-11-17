@@ -34,6 +34,49 @@ class FixturesAuditTest extends TestCase
         config(['services.football_fixture_index' => false]);
     }
 
+    public function test_favorite_liquidity_distribution_uses_opposite_offer_sizes_across_sports(): void
+    {
+        $now = microtime(true);
+        foreach (['football', 'tennis', 'basketball', 'icehockey', 'baseball', 'cricket', 'americanfootball', 'horseracing', 'greyhounds'] as $sport) {
+            $runners = [
+                ['runnerId' => 1, 'runner' => 'Denmark', 'backOdds' => 2.70, 'backSize' => 101.01, 'laySize' => 197.30],
+                ['runnerId' => 2, 'runner' => 'Norway', 'backOdds' => 2.52, 'backSize' => 66.19, 'laySize' => 155.68],
+                ['runnerId' => 3, 'runner' => 'The Draw', 'backOdds' => 4.20, 'backSize' => 3000, 'laySize' => 1600],
+            ];
+            $runners = array_map(static fn (array $runner): array => $runner + ['liquidity_updated_at' => $now], $runners);
+            $match = prepareMatchOddsMonitoring(['sport' => $sport, 'markets' => ['market' => $runners]], true);
+            $indicator = $match['market_indicators']['market'];
+
+            $this->assertSame(2, $indicator['favorite_id']);
+            $this->assertSame('Norway', $indicator['favorite_name']);
+            $this->assertSame(70.2, round($indicator['favorite_back_percent'], 1));
+            $this->assertSame(29.8, round($indicator['favorite_lay_percent'], 1));
+            $this->assertSame(38.1, round($indicator['back_percent'], 1));
+
+            $runners[0]['backOdds'] = 2.0;
+            $changed = prepareMatchOddsMonitoring(['sport' => $sport, 'markets' => ['market' => $runners]], true)['market_indicators']['market'];
+            $this->assertSame(1, $changed['favorite_id']);
+            $this->assertSame(66.1, round($changed['favorite_back_percent'], 1));
+        }
+    }
+
+    public function test_favorite_liquidity_distribution_does_not_fall_back_to_other_runners_when_sizes_are_unavailable(): void
+    {
+        foreach ([['backSize' => 0, 'laySize' => 0], ['backSize' => null, 'laySize' => 100], ['backSize' => -1, 'laySize' => 100], ['backSize' => 100, 'laySize' => 'bad']] as $sizes) {
+            $runners = [
+                ['runnerId' => 1, 'backOdds' => 2.0] + $sizes,
+                ['runnerId' => 2, 'backOdds' => 3.0, 'backSize' => 1000, 'laySize' => 1000],
+            ];
+            $indicator = prepareMatchOddsMonitoring(['markets' => ['market' => $runners]], true)['market_indicators']['market'];
+
+            $this->assertNull($indicator['favorite_back_percent']);
+            $this->assertNull($indicator['favorite_lay_percent']);
+        }
+        $indicator = prepareMatchOddsMonitoring(['markets' => ['market' => []]], true)['market_indicators']['market'];
+        $this->assertNull($indicator['favorite_back_percent']);
+        $this->assertNull($indicator['favorite_id']);
+    }
+
     public function test_market_pressure_uses_resting_order_interest_and_rolling_percentage_points(): void
     {
         $now = floor(microtime(true)) - 1;

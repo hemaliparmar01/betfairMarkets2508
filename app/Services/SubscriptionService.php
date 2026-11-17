@@ -49,6 +49,9 @@ class SubscriptionService
         if ($gateway === 'paypal' && (! $autoRenew || blank($plan->paypal_plan_id))) {
             throw ValidationException::withMessages(['gateway' => 'PayPal requires an available recurring billing plan and AutoPay consent.']);
         }
+        if ($available[$gateway]['recurring'] && ! $autoRenew) {
+            throw ValidationException::withMessages(['gateway' => 'AutoPay consent is required to continue.']);
+        }
 
         return Cache::lock('subscription-customer:'.$customer->id, 120)->block(5, function () use ($customer, $plan, $gateway, $autoRenew, $key): CustomerSubscriptions {
             $record = DB::transaction(function () use ($customer, $plan, $gateway, $autoRenew, $key): CustomerSubscriptions {

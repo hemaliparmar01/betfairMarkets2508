@@ -6,11 +6,24 @@ use App\Http\Controllers\Controller;
 use App\Models\Subscriptions;
 use App\Services\SubscriptionService;
 use Illuminate\Contracts\View\View;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 
 class SubscriptionController extends Controller
 {
+    public function status(Request $request): JsonResponse
+    {
+        $customer = $request->user('customers')->fresh();
+        $html = view('users.subscriptionStatus', [
+            'customer' => $customer,
+            'customerSubscriptions' => $customer->subscriptions()->with('subscriptionPlan')->latest('id')->get(),
+        ])->render();
+
+        return response()->json(['html' => $html, 'version' => hash('sha256', $html)])
+            ->header('Cache-Control', 'private, no-store');
+    }
+
     public function subscriptions(): View
     {
         return view('users.subscription', ['plans' => Subscriptions::query()->where('is_active', true)->orderBy('sort_order')->get()]);

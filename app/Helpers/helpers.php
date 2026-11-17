@@ -354,6 +354,13 @@ if (! function_exists('prepareMatchOddsMonitoring')) {
             }
             $total = $back + $lay;
             $backPercent = $valid && $total > 0 ? $back / $total * 100 : null;
+            $favoriteBackSize = $favorite['backSize'] ?? null;
+            $favoriteLaySize = $favorite['laySize'] ?? null;
+            $favoriteValid = is_numeric($favoriteBackSize) && is_finite((float) $favoriteBackSize) && (float) $favoriteBackSize >= 0
+                && is_numeric($favoriteLaySize) && is_finite((float) $favoriteLaySize) && (float) $favoriteLaySize >= 0
+                && ($favorite['liquidity_valid'] ?? true);
+            $favoriteTotal = $favoriteValid ? (float) $favoriteBackSize + (float) $favoriteLaySize : 0;
+            $favoriteBackPercent = $favoriteTotal > 0 ? (float) $favoriteLaySize / $favoriteTotal * 100 : null;
             $deltas = [];
             foreach ($historical as $window => $totals) {
                 $previousTotal = $totals['back'] + $totals['lay'];
@@ -371,6 +378,8 @@ if (! function_exists('prepareMatchOddsMonitoring')) {
             $match['market_indicators'][$key] = array_replace($match['market_indicators'][$key] ?? [], [
                 'back_total' => $back, 'lay_total' => $lay, 'liquidity' => $total,
                 'back_percent' => $backPercent, 'lay_percent' => $backPercent === null ? null : 100 - $backPercent,
+                'favorite_id' => $favorite['runnerId'] ?? null, 'favorite_name' => $favorite['runner'] ?? null,
+                'favorite_back_percent' => $favoriteBackPercent, 'favorite_lay_percent' => $favoriteBackPercent === null ? null : 100 - $favoriteBackPercent,
                 'balance' => ! $active || $backPercent === null ? 'unknown' : ($racing ? ($backPercent > 58 ? 'back' : ($backPercent < 42 ? 'lay' : 'balanced')) : ($back > $lay * 1.05 ? 'back' : ($lay > $back * 1.05 ? 'lay' : 'balanced'))),
                 'momentum' => ! $active || $momentum === null ? 'unknown' : ($momentum > 10 ? 'strong_back' : ($momentum > 3 ? 'back' : ($momentum < -10 ? 'strong_lay' : ($momentum < -3 ? 'lay' : 'neutral')))),
                 'delta' => $active ? $deltas[300] : null, 'delta_windows' => $active ? $deltas : [60 => null, 300 => null, 900 => null],
