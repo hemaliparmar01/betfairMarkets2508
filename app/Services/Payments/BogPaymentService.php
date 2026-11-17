@@ -39,38 +39,25 @@ class BogPaymentService
 
     public function accessToken(): string
     {
-        return Cache::remember(
-            'bog:payment:access-token:'.hash('sha256', $this->baseUrl.'|'.$this->clientId),
-            now()->addMinutes(50),
-            function (): string {
-                $response = Http::asForm()->connectTimeout(5)->timeout(20)
-                    ->withBasicAuth(
-                        $this->clientId,
-                        $this->clientSecret
-                    )
-                    ->post(
-                        $this->authUrl,
-                        [
-                            'grant_type' => 'client_credentials',
-                        ]
-                    )
-                    ->throw()
-                    ->json();
+        $cacheKey = 'bog:payment:access-token:'.hash('sha256', $this->baseUrl.'|'.$this->clientId);
+        $cached = Cache::get($cacheKey);
+        if (is_string($cached) && $cached !== '') {
+            return $cached;
+        }
+        $response = Http::asForm()->connectTimeout(5)->timeout(20)
+            ->withBasicAuth($this->clientId, $this->clientSecret)
+            ->post($this->authUrl, ['grant_type' => 'client_credentials'])
+            ->throw()->json();
+        $token = (string) ($response['access_token'] ?? '');
+        if ($token === '') {
+            throw new RuntimeException('BOG access token was not returned.');
+        }
+        $cacheSeconds = max(0, (int) ($response['expires_in'] ?? 0) - 30);
+        if ($cacheSeconds > 0) {
+            Cache::put($cacheKey, $token, now()->addSeconds($cacheSeconds));
+        }
 
-                $token = (string) (
-                    $response['access_token']
-                    ?? ''
-                );
-
-                if ($token === '') {
-                    throw new RuntimeException(
-                        'BOG access token was not returned.'
-                    );
-                }
-
-                return $token;
-            }
-        );
+        return $token;
     }
 
     public function createOrder(
@@ -170,46 +157,48 @@ class BogPaymentService
     ): Response {
         $url = $this->baseUrl.$path;
 
-        $request = Http::connectTimeout(5)->timeout(20)->withToken(
-            $this->accessToken()
-        )
-            ->acceptJson()
-            ->asJson()
-            ->withHeaders([
-                'Idempotency-Key' => (string) ($payload['external_order_id'] ?? Str::uuid()),
+        $idempotencyKey = (string) ($payload['external_order_id'] ?? Str::uuid());
+        for ($attempt = 0; $attempt < 2; $attempt++) {
+            $request = Http::connectTimeout(5)->timeout(20)->withToken(
+                $this->accessToken()
+            )
+                ->acceptJson()
+                ->asJson()
+                ->withHeaders([
+                    'Idempotency-Key' => $idempotencyKey,
 
-                'Accept-Language' => 'en',
-            ]);
+                    'Accept-Language' => 'en',
+                ]);
 
-        $response = match (strtolower($method)) {
-            'get' => $request->get(
-                $url
-            ),
+            $response = match (strtolower($method)) {
+                'get' => $request->get(
+                    $url
+                ),
 
-            'post' => $request->post(
-                $url,
-                $payload
-            ),
+                'post' => $request->post(
+                    $url,
+                    $payload
+                ),
 
-            'put' => $request->put(
-                $url,
-                $payload
-            ),
+                'put' => $request->put(
+                    $url,
+                    $payload
+                ),
 
-            'delete' => $request->delete(
-                $url,
-                $payload
-            ),
+                'delete' => $request->delete(
+                    $url,
+                    $payload
+                ),
 
-            default => throw new RuntimeException(
-                'Unsupported BOG HTTP method.'
-            ),
-        };
+                default => throw new RuntimeException(
+                    'Unsupported BOG HTTP method.'
+                ),
+            };
 
-        if ($response->status() === 401) {
-            Cache::forget(
-                'bog:payment:access-token:'.hash('sha256', $this->baseUrl.'|'.$this->clientId)
-            );
+            if ($response->status() !== 401) {
+                return $response->throw();
+            }
+            Cache::forget('bog:payment:access-token:'.hash('sha256', $this->baseUrl.'|'.$this->clientId));
         }
 
         return $response->throw();

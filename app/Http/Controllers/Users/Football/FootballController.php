@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Users\Football;
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Users\Tennis\TennisSyncController;
 use App\Models\PredictionVote;
 use App\Services\AlertService;
 use App\Services\MatchBackup;
@@ -236,6 +237,10 @@ class FootballController extends Controller
                     })->get()->groupBy('sport')->map->pluck('betfair_event_id', 'pinnacle_event_id')->all();
             }
             $matchingController = $pinnacleArchive ? null : app(FootballSyncController::class);
+            $tennisMatchingController = ! $pinnacleArchive && isset($eventIds['tennis']) ? app(TennisSyncController::class) : null;
+            $namesMatch = static fn (string $left, string $right, string $sport): bool => $sport === 'tennis'
+                ? $tennisMatchingController->playerNamesMatch($left, $right)
+                : $matchingController->teamSimilarity($left, $right) >= 80;
             $pinnacleEvents = [];
             foreach ($pinnaclePayload['signals'] ?? $pinnacleAlerts as $event) {
                 if (! is_array($event) || ! isset($event['id']) || ! is_string($event['home'] ?? null) || ! is_string($event['away'] ?? null)
@@ -344,9 +349,9 @@ class FootballController extends Controller
                             $awayReference = $teamAliases[$sport][$aliasKey($competitionScope, (string) $alert['away'])] ?? (string) $alert['away'];
                             $exact = array_values(array_filter($localCandidates, static fn (array $fixture): bool => $sameClubName((string) $fixture['team1'], $homeReference, $sport === 'soccer')
                                 && $sameClubName((string) $fixture['team2'], $awayReference, $sport === 'soccer')));
-                            $candidates = $exact !== [] ? $exact : array_values(array_filter($localCandidates, static fn (array $fixture): bool => $matchingController->teamSimilarity((string) $fixture['team1'], $homeReference) >= 80
-                                && $matchingController->teamSimilarity((string) $fixture['team2'], $awayReference) >= 80));
-                            $learnAliases = count($exact) === 1;
+                            $candidates = $exact !== [] ? $exact : array_values(array_filter($localCandidates, static fn (array $fixture): bool => $namesMatch((string) $fixture['team1'], $homeReference, $sport)
+                                && $namesMatch((string) $fixture['team2'], $awayReference, $sport)));
+                            $learnAliases = count($exact) === 1 || ($sport === 'tennis' && count($candidates) === 1);
                             if ($candidates === [] && $sportsmeldKey !== '' && empty($alert['internal_hidden']) && $startTimestamp > 0
                                 && $remainingLookups > 0 && $localCandidates !== [] && count($localCandidates) <= 25
                                 && Cache::add('sportsmeld:'.$resolutionKey, true, 60)) {
@@ -511,12 +516,12 @@ class FootballController extends Controller
                 $marketUnavailable = $runners !== [];
                 $runners = array_values(array_filter($runners, static fn (array $runner): bool => ! in_array($runner['market_status'] ?? 'OPEN', ['SUSPENDED', 'CLOSED'], true)));
                 $marketUnavailable = $marketUnavailable && $runners === [];
-                $matchesOutcome = static function (array $runner, string $selection) use ($matchedHome, $matchedAway, $normalizeName, $matchingController): bool {
+                $matchesOutcome = static function (array $runner, string $selection) use ($matchedHome, $matchedAway, $normalizeName, $namesMatch, $sport): bool {
                     $name = $normalizeName((string) ($runner['runner'] ?? ''));
 
                     return match (strtolower($selection)) {
-                        'home', '1' => $matchingController->teamSimilarity((string) ($runner['runner'] ?? ''), $matchedHome) >= 80,
-                        'away', '2' => $matchingController->teamSimilarity((string) ($runner['runner'] ?? ''), $matchedAway) >= 80,
+                        'home', '1' => $namesMatch((string) ($runner['runner'] ?? ''), $matchedHome, $sport),
+                        'away', '2' => $namesMatch((string) ($runner['runner'] ?? ''), $matchedAway, $sport),
                         'draw', 'x' => in_array($name, ['draw', 'the draw'], true),
                         'over' => $name === 'over' || str_starts_with($name, 'over '),
                         'under' => $name === 'under' || str_starts_with($name, 'under '),

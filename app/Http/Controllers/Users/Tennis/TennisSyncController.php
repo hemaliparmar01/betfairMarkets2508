@@ -48,6 +48,7 @@ class TennisSyncController extends Controller
         $label = trim(explode(',', $label, 2)[0]);
         $label = preg_replace('/^(ATP|WTA)\s*[-–—]\s*(?:Singles|Doubles):\s*/iu', '$1 ', $label);
         $label = preg_replace('/(?:\s+[-–—]\s+(?:play[\s-]*offs?|qualif(?:iers?|ying|ications?)|round\s+(?:\d+|robin)|r\d+|quarter[\s-]*finals?|semi[\s-]*finals?|finals?|(?:[a-z]+\s+)?groups?(?:\s+[a-z0-9]+)?|singles|doubles))+$/iu', '', $label);
+        $label = preg_replace('/\s+(?:19|20)\d{2}(?:\/\d{2,4})?$/', '', $label);
         if (isset($competitions[mb_strtolower($label)])) {
             return $competitions[mb_strtolower($label)];
         }
@@ -936,9 +937,16 @@ class TennisSyncController extends Controller
     {
         foreach ($matches as $match) {
             $id = (string) ($match['sportsApiPro_match_id'] ?? '');
+            $matchKeys = null;
             if (! ctype_digit($id) || (int) $id <= 0) {
-                continue;
+                $betfairId = (string) ($match['betfair_match_id'] ?? '');
+                if (! ctype_digit($betfairId) || (int) $betfairId <= 0 || empty($match['unique_key'])) {
+                    continue;
+                }
+                $id = 'betfair:'.$betfairId;
+                $matchKeys = [(string) $match['unique_key']];
             }
+            $matchIds = $matchKeys === null ? [$id] : null;
             $key = 'Tennis:match-persistence:'.$id;
             $pending = Cache::store('redis')->lock($key, 3600);
             if (! $pending->get()) {
@@ -946,7 +954,7 @@ class TennisSyncController extends Controller
             }
             $owner = $pending->owner();
             try {
-                dispatch(static function (CallQueuedClosure $job) use ($id, $key, $owner): void {
+                dispatch(static function (CallQueuedClosure $job) use ($key, $owner, $matchIds, $matchKeys): void {
                     $lock = Cache::store('redis')->restoreLock($key, $owner);
                     if (! $lock->isOwnedByCurrentProcess()) {
                         return;
@@ -954,9 +962,9 @@ class TennisSyncController extends Controller
                     $retrying = false;
                     $matches = [];
                     try {
-                        $matches = getInRedis('Tennis:matches', readOnly: true, matchIds: [$id]) ?? [];
+                        $matches = getInRedis('Tennis:matches', readOnly: true, matchIds: $matchIds, matchKeys: $matchKeys) ?? [];
                         app(self::class)->persistMatches($matches);
-                        $latest = getInRedis('Tennis:matches', readOnly: true, matchIds: [$id]) ?? [];
+                        $latest = getInRedis('Tennis:matches', readOnly: true, matchIds: $matchIds, matchKeys: $matchKeys) ?? [];
                         if ($latest !== $matches) {
                             $retrying = true;
                             $job->release(1);
@@ -972,7 +980,7 @@ class TennisSyncController extends Controller
                         }
                     }
                     if (! $retrying) {
-                        $latest = getInRedis('Tennis:matches', readOnly: true, matchIds: [$id]) ?? [];
+                        $latest = getInRedis('Tennis:matches', readOnly: true, matchIds: $matchIds, matchKeys: $matchKeys) ?? [];
                         if ($latest !== $matches) {
                             app(self::class)->queueMatchPersistence($latest);
                         }
@@ -1328,6 +1336,50 @@ class TennisSyncController extends Controller
         }
 
         return null;
+    }
+
+    public function playerNamesMatch(string $first, string $second): bool
+    {
+        $players = function (string $name): array {
+            $name = preg_replace('/\s+\((?:games|sets)\)$/i', '', trim($name));
+
+            return array_map(function (string $player): array {
+                $parts = explode(',', $player, 2);
+                $player = count($parts) === 2 ? $parts[1].' '.$parts[0] : $player;
+                $tokens = array_values(array_filter(explode('_', $this->normalizeTeamName($player))));
+                if (count($tokens) > 1 && strlen(end($tokens)) === 1 && strlen($tokens[0]) > 1) {
+                    array_unshift($tokens, array_pop($tokens));
+                }
+
+                return $tokens;
+            }, explode('/', $name));
+        };
+        $left = $players($first);
+        $right = $players($second);
+        if (count($left) !== count($right) || count($left) > 2) {
+            return false;
+        }
+        $samePlayer = static function (array $left, array $right): bool {
+            if ($left === [] || $right === [] || strlen(end($left)) < 2 || end($left) !== end($right)) {
+                return false;
+            }
+            if (count($left) !== count($right)) {
+                $short = count($left) < count($right) ? $left : $right;
+                $long = count($left) < count($right) ? $right : $left;
+
+                return strlen(implode('', $short)) >= 4 && array_slice($long, -count($short)) === $short;
+            }
+            foreach ($left as $index => $token) {
+                if ($token !== $right[$index] && ! ((strlen($token) === 1 || strlen($right[$index]) === 1) && $token[0] === $right[$index][0])) {
+                    return false;
+                }
+            }
+
+            return true;
+        };
+
+        return ($samePlayer($left[0], $right[0]) && (count($left) === 1 || $samePlayer($left[1], $right[1])))
+            || (count($left) === 2 && $samePlayer($left[0], $right[1]) && $samePlayer($left[1], $right[0]));
     }
 
     private function teamSimilarity(string $teamA, string $teamB): float

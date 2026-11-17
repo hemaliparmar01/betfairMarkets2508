@@ -8,11 +8,14 @@ use App\Models\SubscriptionPayment;
 use App\Models\Subscriptions;
 use App\Repositories\CustomerRepository;
 use App\Services\CustomerAuthService;
+use App\Services\Payments\BogPaymentService;
 use App\Services\Payments\FittService;
 use App\Services\SubscriptionService;
 use Database\Factories\CustomerFactory;
 use Database\Factories\SubscriptionsFactory;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Client\RequestException;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Schedule;
@@ -440,6 +443,64 @@ class SubscriptionTest extends TestCase
         $this->postJson('/subscriptions/payments/webhooks/bog', $payload, ['Callback-Signature' => base64_encode($signature)])->assertOk();
         $this->assertTrue($this->customer->fresh()->hasActiveSubscription());
         $this->assertDatabaseCount('subscription_payments', 1);
+    }
+
+    public function test_bog_token_cache_respects_provider_expiry(): void
+    {
+        $this->bogConfiguration();
+        $this->freezeTime();
+        Http::fake(['bog.example/oauth' => Http::sequence()
+            ->push(['access_token' => 'first-token', 'expires_in' => 90])
+            ->push(['access_token' => 'second-token', 'expires_in' => 90])]);
+        $provider = app(BogPaymentService::class);
+
+        $this->assertSame('first-token', $provider->accessToken());
+        $this->travel(59)->seconds();
+        $this->assertSame('first-token', $provider->accessToken());
+        $this->travel(2)->seconds();
+        $this->assertSame('second-token', $provider->accessToken());
+        Http::assertSentCount(2);
+    }
+
+    public function test_bog_unauthorized_renewal_refreshes_token_once_with_the_same_payment_identity(): void
+    {
+        $this->bogConfiguration();
+        Cache::put('bog:payment:access-token:'.hash('sha256', 'https://bog.example|test-client'), 'expired-token', 3000);
+        Http::fake([
+            'bog.example/oauth' => Http::response(['access_token' => 'fresh-token', 'expires_in' => 900]),
+            'bog.example/payments/v1/ecommerce/orders/parent/subscribe' => Http::sequence()
+                ->push(['message' => 'Unauthorized'], 401)->push(['id' => 'renewal-order']),
+        ]);
+
+        $response = app(BogPaymentService::class)->chargeAutomaticPayment('parent', 'https://merchant.example/callback', 'same-renewal');
+
+        $this->assertSame('renewal-order', $response['id']);
+        $requests = collect(Http::recorded())->filter(fn ($pair): bool => str_ends_with($pair[0]->url(), '/subscribe'))->values();
+        $this->assertCount(2, $requests);
+        $this->assertTrue($requests[0][0]->hasHeader('Authorization', 'Bearer expired-token'));
+        $this->assertTrue($requests[1][0]->hasHeader('Authorization', 'Bearer fresh-token'));
+        foreach ($requests as [$request]) {
+            $this->assertTrue($request->hasHeader('Idempotency-Key', 'same-renewal'));
+            $this->assertSame('same-renewal', $request['external_order_id']);
+        }
+    }
+
+    public function test_bog_permanent_unauthorized_response_stops_after_one_token_refresh(): void
+    {
+        $this->bogConfiguration();
+        Http::fake([
+            'bog.example/oauth' => Http::sequence()
+                ->push(['access_token' => 'first', 'expires_in' => 900])
+                ->push(['access_token' => 'second', 'expires_in' => 900]),
+            'bog.example/payments/v1/ecommerce/orders/parent/subscribe' => Http::response(['message' => 'Unauthorized'], 401),
+        ]);
+        try {
+            app(BogPaymentService::class)->chargeAutomaticPayment('parent', 'https://merchant.example/callback', 'same-renewal');
+            $this->fail('An unauthorized provider response must not be treated as a payment.');
+        } catch (RequestException $exception) {
+            $this->assertSame(401, $exception->response->status());
+        }
+        Http::assertSentCount(4);
     }
 
     public function test_bog_renewal_submission_uses_a_persistent_idempotency_key(): void

@@ -10,9 +10,12 @@ use App\Jobs\ProcessAlert;
 use App\Models\Customer;
 use App\Models\FootballMarket;
 use App\Models\FootballMatch;
+use App\Models\TennisMarket;
+use App\Models\TennisMatch;
 use App\Repositories\CustomerRepository;
 use App\Services\AlertService;
 use App\Services\CustomerAuthService;
+use App\Services\TennisMatchCache;
 use Database\Factories\CustomerFactory;
 use Illuminate\Broadcasting\AnonymousEvent;
 use Illuminate\Broadcasting\BroadcastManager;
@@ -1050,6 +1053,57 @@ class AlertSystemTest extends TestCase
         Http::assertNothingSent();
     }
 
+    #[TestWith(['Arthur Fils', 'Fils', true])]
+    #[TestWith(['Arthur Fils', 'A. Fils', true])]
+    #[TestWith(['Rafael Jodar', 'Jodar R.', true])]
+    #[TestWith(['Rafael Jodar', 'Jodar, Rafael', true])]
+    #[TestWith(['Arthur Fils (Games)', 'A Fils', true])]
+    #[TestWith(['Rafael Jódar (Sets)', 'Rafael Jodar', true])]
+    #[TestWith(['Arthur Fils', 'B. Fils', false])]
+    #[TestWith(['Arthur Fils', 'Alex Fils', false])]
+    #[TestWith(['Rafael Jodar', 'Rafael Nadal', false])]
+    #[TestWith(['Arthur Fils', '', false])]
+    #[TestWith(['Arthur Fils', 'A Fils / R Jodar', false])]
+    #[TestWith(['Arthur Fils / Rafael Jodar', 'R Jodar / A Fils', true])]
+    public function test_pinnacle_tennis_player_matching_supports_short_names_without_conflicting_initials(string $first, string $second, bool $matches): void
+    {
+        $this->assertSame($matches, app(TennisSyncController::class)->playerNamesMatch($first, $second));
+    }
+
+    #[TestWith(['Fils', 'Jodar'])]
+    #[TestWith(['A. Fils', 'R. Jodar'])]
+    #[TestWith(['Arthur Fils', 'Rafael Jodar'])]
+    public function test_pinnacle_tennis_matches_local_players_and_runners_and_saves_the_event_mapping(string $home, string $away): void
+    {
+        config(['services.sportsmeld.key' => 'must-not-call']);
+        $this->actingAs($this->customer(), 'customers');
+        $start = time() + 60;
+        $fixture = TennisMatch::query()->create([
+            'unique_key' => 'fils|jodar|'.$start, 'betfair_match_id' => 'tennis-event',
+            'team1' => $home, 'team2' => $away, 'tournament' => 'ATP World Tour Finals',
+            'result_status' => 'Prematch', 'start_timestamp' => $start, 'data_sync_complete' => false,
+            'payload' => ['team1' => $home, 'team2' => $away],
+        ]);
+        TennisMarket::query()->create([
+            'selection_key' => hash('sha256', 'jodar'), 'tennis_match_unique_key' => $fixture->unique_key,
+            'market_id' => 'match-odds', 'market_type' => 'MATCH_ODDS', 'runner' => 'Rafael Jodar',
+            'payload' => ['marketType' => 'MATCH_ODDS', 'runner' => 'Rafael Jodar', 'currentBackOdds' => 1.98],
+        ]);
+        $drop = ['id' => 101, 'alert_key' => hash('sha256', 'fils-jodar'), 'sport' => 'tennis',
+            'home' => 'Arthur Fils', 'away' => 'Rafael Jodar', 'league' => 'ATP Finals',
+            'sect' => 'Moneyline', 'outcome' => 'Away', 'period' => 0,
+            'from_price' => 1.94, 'to_price' => 1.90, 'alerted' => time(), 'starts' => $start];
+        Redis::shouldReceive('get')->andReturnUsing(static fn (string $key): ?string => $key === 'Pinnacle:drops' ? json_encode(['alerts' => [$drop]]) : null);
+
+        $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonPath('data.0.bf_back', 1.98)->assertJsonPath('data.0.bf_away', $away);
+        $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonPath('data.0.bf_back', 1.98);
+
+        $this->assertDatabaseHas('pinnacle_betfair_events', ['sport' => 'tennis', 'pinnacle_event_id' => '101', 'betfair_event_id' => 'tennis-event']);
+        $this->assertDatabaseHas('pinnacle_betfair_team_aliases', ['sport' => 'tennis', 'source_name' => 'Rafael Jodar', 'betfair_name' => $away]);
+        $this->assertFalse($fixture->fresh()->data_sync_complete);
+        Http::assertNothingSent();
+    }
+
     #[TestWith([true])]
     #[TestWith([false])]
     public function test_pinnacle_reserve_team_alias_matches_celta_vigo_ii_to_b_locally_and_persists(bool $complete): void
@@ -1182,11 +1236,42 @@ class AlertSystemTest extends TestCase
 
     public function test_pinnacle_tennis_finals_labels_accept_stages_and_keep_atp_and_wta_separate(): void
     {
-        foreach (['ATP Finals - Turin (Italy) - Semi-finals', 'ATP - Singles: Finals - Torino (World) - Play Offs, hard', 'ATP Finals - Turin (World) - Round Robin', 'ATP Finals - Turin - Group A'] as $label) {
+        foreach (['ATP Finals Turin 2026', 'ATP Finals Turin 2026 - Round Robin', 'ATP Finals - Turin (Italy) - Semi-finals', 'ATP - Singles: Finals - Torino (World) - Play Offs, hard', 'ATP Finals - Turin (World) - Round Robin', 'ATP Finals - Turin - Group A'] as $label) {
             $this->assertSame(['Year-End Championships', 'ATP Finals'], TennisSyncController::pinnacleCompetition($label));
         }
         $this->assertSame(['Year-End Championships', 'WTA Finals'], TennisSyncController::pinnacleCompetition('WTA - Singles: Finals - Indian Wells (World) - Play Offs, hard'));
         $this->assertNull(TennisSyncController::pinnacleCompetition('WTA Finals - Turin - Play Offs'));
+        $this->assertSame(['Year-End Championships', 'ATP Finals'], TennisSyncController::tennisCompetition(['tournament' => 'ATP Finals Turin 2026', 'sport' => 'tennis']));
+        $this->assertNull(TennisSyncController::tennisCompetition(['tournament' => 'ATP Finals Turin 2026', 'tournament_tour' => 'WTA']));
+    }
+
+    public function test_betfair_only_tennis_fixture_is_queued_and_persisted_from_individual_cache_without_a_sports_api_id(): void
+    {
+        Bus::fake();
+        config(['cache.stores.redis.driver' => 'array']);
+        $start = time() + 60;
+        $key = 'fils|jodar|'.$start;
+        $runner = ['marketId' => 'tennis-main', 'marketType' => 'MATCH_ODDS', 'runnerId' => '2', 'runner' => 'Jodar', 'currentBackOdds' => 1.98];
+        $match = ['unique_key' => $key, 'betfair_match_id' => '36313130', 'team1' => 'Fils', 'team2' => 'Jodar',
+            'tournament' => 'ATP Finals Turin 2026', 'timestamp' => $start, 'result_status' => 'Prematch',
+            'data_sync_complete' => false, 'markets' => ['tennis-main' => [$runner]]];
+        $cache = \Mockery::mock(TennisMatchCache::class);
+        $cache->shouldReceive('active')->andReturnTrue();
+        $cache->shouldReceive('read')->with(null, [$key], null)->times(3)->andReturn([$key => $match]);
+        $this->app->instance(TennisMatchCache::class, $cache);
+        Redis::shouldReceive('zrangebyscore')->with('Tennis:matches:cleaned', \Mockery::any(), '+inf')->andReturn([]);
+        $method = new ReflectionMethod(TennisSyncController::class, 'persistUpdatedMatches');
+
+        $method->invoke(app(TennisSyncController::class), [$key => $match]);
+        $method->invoke(app(TennisSyncController::class), [$key => $match]);
+        Bus::assertDispatched(CallQueuedClosure::class, 1);
+        $job = Bus::dispatched(CallQueuedClosure::class)->sole();
+        $this->assertSame('realtime-tennis', $job->queue);
+        ($job->closure->getClosure())($job);
+
+        $this->assertDatabaseHas('tennis_matches', ['unique_key' => $key, 'betfair_match_id' => '36313130', 'sports_api_pro_match_id' => null, 'data_sync_complete' => false]);
+        $this->assertDatabaseHas('tennis_markets', ['tennis_match_unique_key' => $key, 'runner' => 'Jodar', 'current_back_odds' => 1.98]);
+        Http::assertNothingSent();
     }
 
     #[TestWith(['soccer', 'football'])]
