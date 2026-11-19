@@ -752,7 +752,7 @@ if (! function_exists('ApiCallPool')) {
 }
 
 if (! function_exists('reportSportsListenerMemory')) {
-    function reportSportsListenerMemory(string $listener): void
+    function reportSportsListenerMemory(string $listener, ?Closure $context = null): void
     {
         static $lastSampleAt = 0.0;
         $now = microtime(true);
@@ -772,6 +772,7 @@ if (! function_exists('reportSportsListenerMemory')) {
             'peak_bytes' => memory_get_peak_usage(true),
             'released_bytes' => $releasedBytes,
             'collected_cycles' => $cycles,
+            'context' => $context === null ? [] : $context(),
         ]);
     }
 }

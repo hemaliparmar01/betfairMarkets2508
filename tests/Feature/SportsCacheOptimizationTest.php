@@ -318,14 +318,50 @@ class SportsCacheOptimizationTest extends TestCase
         }
     }
 
+    public function test_racing_snapshot_reads_the_full_catalog_once_and_targets_each_small_batch(): void
+    {
+        foreach (['HorseRacing', 'Greyhounds'] as $sport) {
+            $base = array_values($this->rows($sport))[0];
+            $runner = array_values(array_values($base['markets'])[0])[0];
+            $rows = [];
+            $events = [];
+            for ($number = 0; $number < 55; $number++) {
+                $id = (string) (10000 + $number);
+                $key = strtolower($sport).'|'.$id;
+                $quote = array_replace($runner, ['marketId' => $id]);
+                $rows[$key] = array_replace($base, ['unique_key' => $key, 'betfair_match_id' => $id, 'markets' => [$id.'_WIN' => ['11|0' => $quote]]]);
+                $events[$id] = ['sport' => $sport === 'HorseRacing' ? 'horse_racing' : 'greyhounds',
+                    'openTimestamp' => gmdate('c', $base['timestamp']), 'markets' => [$quote]];
+            }
+            $this->install($sport, $rows);
+            $reads = $this->watchReads();
+            $sync = app('App\\Http\\Controllers\\Users\\'.$sport.'\\'.$sport.'SyncController');
+
+            $sync->mergeBetfairWebSocketData($events, false, true);
+
+            $this->assertSame(1, $reads->catalog_reads);
+            $this->assertSame([], $reads->whole);
+            $this->assertLessThanOrEqual(25, max($reads->batch_sizes));
+            $reads->catalog_reads = 0;
+            $sync->mergeBetfairWebSocketData(array_slice($events, 0, 2, true), false);
+            $this->assertSame(0, $reads->catalog_reads);
+            $sample = getInRedis($sport.':matches', readOnly: true, matchKeys: [strtolower($sport).'|10000', strtolower($sport).'|10054']);
+            $this->assertCount(2, $sample);
+            $this->assertSame(array_column($runner['backOddsHistory'], 'odds'), array_map('floatval', array_column($sample[strtolower($sport).'|10054']['markets']['10054_WIN']['11|0']['backOddsHistory'], 'odds')));
+        }
+    }
+
     private function watchReads(): object
     {
-        $reads = (object) ['whole' => [], 'batch_sizes' => []];
+        $reads = (object) ['whole' => [], 'batch_sizes' => [], 'catalog_reads' => 0];
         $connection = Redis::connection();
         $connection->setEventDispatcher(new Dispatcher);
         $connection->listen(static function (CommandExecuted $event) use ($reads): void {
             if (strtolower($event->command) === 'get' && str_ends_with((string) ($event->parameters[0] ?? ''), ':matches')) {
                 $reads->whole[] = $event->parameters[0];
+            }
+            if (strtolower($event->command) === 'hgetall' && str_ends_with((string) ($event->parameters[0] ?? ''), ':matches:catalog')) {
+                $reads->catalog_reads++;
             }
             if (strtolower($event->command) === 'mget') {
                 $reads->batch_sizes[] = count($event->parameters[0]);

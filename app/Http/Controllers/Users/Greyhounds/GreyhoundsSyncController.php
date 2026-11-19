@@ -29,7 +29,9 @@ class GreyhoundsSyncController extends Controller
 
             return [];
         }
-        if ($this->mergeBetfairWebSocketData($data['liveMap'], false, true)) {
+        $events = $data['liveMap'];
+        unset($response, $data);
+        if ($this->mergeBetfairWebSocketData($events, false, true)) {
             try {
                 Event::dispatch(new GreyhoundsSportsScoreUpdated);
             } catch (Throwable $e) {
@@ -45,7 +47,7 @@ class GreyhoundsSyncController extends Controller
 
         $recordCache = sportsMatchRecordCache('Greyhounds:matches');
         if ($recordCache !== null && ($isSnapshot || count($events) > 25)) {
-            $index = $recordCache->index();
+            $index = $isSnapshot ? $recordCache->index(ordered: false) : ['matches' => []];
             if ($isSnapshot && $index['matches'] === []) {
                 foreach (GreyhoundsMatch::query()->with('markets')->where(fn ($query) => $query->where('result_status', '!=', 'Finished')->orWhereIn('betfair_match_id', array_keys($events)))->lazyById(10) as $stored) {
                     $race = $stored->payload;
@@ -56,7 +58,7 @@ class GreyhoundsSyncController extends Controller
                     }
                     $recordCache->store([$stored->unique_key => $race], 60, false, []);
                 }
-                $index = $recordCache->index();
+                $index = $recordCache->index(ordered: false);
             }
             if ($isSnapshot) {
                 foreach ($index['matches'] as $race) {
@@ -65,6 +67,7 @@ class GreyhoundsSyncController extends Controller
                     }
                 }
             }
+            unset($index);
             $changed = false;
             foreach (array_chunk($events, 25, preserve_keys: true) as $batch) {
                 $result = $this->mergeBetfairWebSocketData($batch, $isLive, false, $deferIfBusy);
@@ -77,9 +80,14 @@ class GreyhoundsSyncController extends Controller
             return $changed;
         }
 
-        return withRedisLock('Greyhounds:matches', function () use ($events, $isSnapshot): bool {
-            $index = getInRedis('Greyhounds:matches', fixtureIndex: true);
-            $keys = $index === null ? null : array_values(array_intersect_key(array_column($index['matches'], '_fixture_cache_key', 'betfair_match_id'), $events));
+        return withRedisLock('Greyhounds:matches', function () use ($events, $isSnapshot, $recordCache): bool {
+            if ($recordCache !== null && ! $isSnapshot) {
+                $keys = array_map(static fn (string|int $id): string => 'greyhounds|'.$id, array_keys($events));
+                $index = ['matches' => $recordCache->metadataForKeys($keys)];
+            } else {
+                $index = getInRedis('Greyhounds:matches', fixtureIndex: true);
+                $keys = $index === null ? null : array_values(array_intersect_key(array_column($index['matches'], '_fixture_cache_key', 'betfair_match_id'), $events));
+            }
             $matches = getInRedis('Greyhounds:matches', readOnly: true, matchKeys: $keys, snapshot: $index) ?? [];
             $cachedSnapshot = $matches;
             $known = array_column($matches, 'betfair_match_id');
