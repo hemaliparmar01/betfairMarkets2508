@@ -635,7 +635,7 @@
     "Fixtures": "Fixtures",
     "Fixtures · BF Markets": "Fixtures · BF Markets",
     "Football": "Football",
-    "Football (Soccer)": "Football (Soccer)",
+    "Football (Soccer)": "Football",
     "Football Markets": "Football Markets",
     "For Horse Racing events, the system automatically identifies the": "For Horse Racing events, the system automatically identifies the",
     "For any questions or requests, please contact us at:": "For any questions or requests, please contact us at:",
@@ -2188,7 +2188,7 @@
     "⚡ Push Latency": "⚡ Push Latency",
     "⚡ Real-time Infrastructure": "⚡ Real-time Infrastructure",
     "⚽ Football": "⚽ Football",
-    "⚽ Soccer": "⚽ Soccer",
+    "⚽ Soccer": "⚽ Football",
     "⚾ Baseball": "⚾ Baseball",
     "✅ Cross-market correlation monitoring": "✅ Cross-market correlation monitoring",
     "✅ Dynamic charts": "✅ Dynamic charts",
@@ -2369,5 +2369,12 @@
     "Rapid drops (e.g., ≥1%–5%+) signal \"Smart Money\" flow. Following these moves early helps you consistently beat the closing line (CLV), the strongest long-term predictor of profitability.": "Rapid drops (e.g., ≥1%–5%+) signal \"Smart Money\" flow. Following these moves early helps you consistently beat the closing line (CLV), the strongest long-term predictor of profitability.",
     "Betfair Trading": "Betfair Trading",
     "Disclaimer: An odds drop does not guarantee a winning outcome. It reflects market sentiment, liquidity flow, and probability shifts. Upsets and unexpected results happen regularly in sports.": "Disclaimer: An odds drop does not guarantee a winning outcome. It reflects market sentiment, liquidity flow, and probability shifts. Upsets and unexpected results happen regularly in sports.",
-    "Refresh latency": "Refresh latency"
+    "Refresh latency": "Refresh latency",
+    "Daily statistics reset at 6:00 AM Georgia time (GET / UTC+4).": "Daily statistics reset at 6:00 AM Georgia time (GET / UTC+4).",
+    "Incoming alerts are logged in the daily statistics counters, remain visible in the archive for 30 minutes, and are then automatically purged as outdated data.": "Incoming alerts are logged in the daily statistics counters, remain visible in the archive for 30 minutes, and are then automatically purged as outdated data.",
+    "Soccer": "Football",
+    "Incoming prematch alerts are counted in daily statistics and remain available for up to 30 minutes, or until the match starts, whichever comes first.": "Incoming prematch alerts are counted in daily statistics and remain available for up to 30 minutes, or until the match starts, whichever comes first.",
+    "Daily totals cover supported sports. Previously recorded totals are preserved.": "Daily totals cover supported sports. Previously recorded totals are preserved.",
+    "Connected": "Connected",
+    "Prematch Sports Market Activity": "Prematch Sports Market Activity"
 }

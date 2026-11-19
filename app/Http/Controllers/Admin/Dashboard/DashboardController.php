@@ -19,7 +19,7 @@ class DashboardController extends Controller
     {
         return view('admin.dashboard.index', [
             'stats' => $customers->getStats() + [
-                'activeSubscriptions' => Customer::query()->where('subscription_ends_at', '>', now())->count(),
+                'activeSubscriptions' => Customer::query()->where('subscription_ends_at', '>=', Customer::subscriptionDateCutoff())->count(),
                 'activeTrials' => Customer::query()->where('trial_ends_at', '>', now())->count(),
                 'subscriptionPlans' => Subscriptions::query()->count(),
                 'activePlans' => Subscriptions::query()->where('is_active', true)->count(),

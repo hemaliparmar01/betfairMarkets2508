@@ -1,7 +1,11 @@
 <?php
 
 return [
+    'subscriptions' => [
+        'expiry_timezone' => env('SUBSCRIPTION_EXPIRY_TIMEZONE', 'Asia/Tbilisi'),
+    ],
     'tennis_match_cache' => (bool) env('TENNIS_MATCH_CACHE', true),
+    'basketball_match_cache' => (bool) env('BASKETBALL_MATCH_CACHE', true),
     'football_match_cache' => (bool) env('FOOTBALL_MATCH_CACHE', true),
     'football_fixture_index' => (bool) env('FOOTBALL_FIXTURE_INDEX', true),
     'paypal' => [

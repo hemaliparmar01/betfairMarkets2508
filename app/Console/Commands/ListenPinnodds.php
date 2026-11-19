@@ -25,7 +25,7 @@ class ListenPinnodds extends Command
 {
     protected $signature = 'pinnodds:listen {--check : Inspect cached sports and listener version without opening a feed connection}';
 
-    protected $description = 'Listen to Pinnodds live and prematch drops and share them through Redis';
+    protected $description = 'Listen to supported Pinnodds prematch drops and share them through Redis';
 
     /** @var array<string, array<string, array{string, string}>> */
     private array $leagueMappings = [];
@@ -80,7 +80,7 @@ class ListenPinnodds extends Command
         }
 
         $pending = [];
-        $feeds = array_fill_keys(['live', 'prematch'], ['status' => 'connecting', 'last_frame_at' => 0]);
+        $feeds = array_fill_keys(['prematch'], ['status' => 'connecting', 'last_frame_at' => 0]);
         $bodies = [];
         $dirty = true;
         $lastFlushAt = 0;
@@ -149,7 +149,7 @@ class ListenPinnodds extends Command
         $flush();
 
         $listeners = [];
-        foreach (['live' => '/odds-drop', 'prematch' => '/odds-drop-prematch'] as $mode => $path) {
+        foreach (['prematch' => '/odds-drop-prematch'] as $mode => $path) {
             $listeners[] = async(function () use ($client, $key, $mode, $path, &$pending, &$feeds, &$bodies, &$dirty): void {
                 $backoff = 1;
                 while (true) {
@@ -254,9 +254,12 @@ class ListenPinnodds extends Command
     private function normalizeDrops(array $frame, string $mode): array
     {
         $alerts = [];
-        $sports = [1 => 'soccer', 2 => 'tennis', 3 => 'basketball', 4 => 'ice-hockey', 5 => 'american-football', 6 => 'baseball', 11 => 'esports', 13 => 'cricket'];
+        if ($mode !== 'prematch') {
+            return [];
+        }
         foreach (array_is_list($frame) ? $frame : [$frame] as $drop) {
-            if (! is_array($drop) || empty($drop['home']) || empty($drop['away']) || ! isset($drop['id'])) {
+            if (! is_array($drop) || empty($drop['home']) || empty($drop['away']) || ! isset($drop['id'])
+                || ! AlertService::allowsPinnacleMarket($drop)) {
                 continue;
             }
             $from = (float) ($drop['from_price'] ?? 0);
@@ -272,7 +275,7 @@ class ListenPinnodds extends Command
             $alerts[$alertKey] = array_replace($drop, [
                 'alert_key' => $alertKey,
                 'feed' => $mode,
-                'sport' => $sports[(int) ($drop['sport_id'] ?? 0)] ?? strtolower((string) ($drop['sport'] ?? 'other')),
+                'sport' => AlertService::pinnacleSport($drop),
                 'is_live' => filter_var($drop['is_live'] ?? ($mode === 'live'), FILTER_VALIDATE_BOOLEAN),
                 'from_price' => $from,
                 'to_price' => $to,
@@ -369,6 +372,7 @@ class ListenPinnodds extends Command
     /** @param array<string, array<string, mixed>> $pending */
     private function storeDrops(array $pending, array $feeds): void
     {
+        $pending = array_filter($pending, [AlertService::class, 'allowsPinnacleMarket']);
         $parents = [];
         $monitorDrops = [];
         withRedisLock('Pinnacle:drops', function () use ($pending, $feeds, &$parents, &$monitorDrops): void {
@@ -385,14 +389,14 @@ class ListenPinnodds extends Command
             }
             unset($drop);
             $alerts = array_replace($alerts, $monitorDrops);
-            $signals = array_filter($alerts, static fn (array $alert): bool => (int) ($alert['alerted'] ?? 0) >= $receivedAt - 10800);
+            $signals = array_filter($alerts, static fn (array $alert): bool => (float) ($alert['monitor_received_at'] ?? $alert['alerted'] ?? 0) >= $receivedAt - 1800);
             uasort($signals, static fn (array $left, array $right): int => (int) $right['alerted'] <=> (int) $left['alerted']);
             $signals = array_values(array_slice($signals, 0, 5000, true));
             $dashboardCutoff = $receivedAt - 420;
             $dashboardAlerts = array_values(array_filter($alerts, static fn (array $alert): bool => ($alert['monitor_received_at'] ?? $alert['alerted']) > $dashboardCutoff));
             usort($dashboardAlerts, static fn (array $left, array $right): int => ($right['monitor_received_at'] ?? $right['alerted']) <=> ($left['monitor_received_at'] ?? $left['alerted']));
             Redis::set('Pinnacle:drops', json_encode(['alerts' => $dashboardAlerts, 'signals' => $signals, 'feeds' => $feeds, 'updated_at' => time(), 'listener' => $this->runtime ?: null], JSON_THROW_ON_ERROR));
-            Redis::expire('Pinnacle:drops', 10800);
+            Redis::expire('Pinnacle:drops', 1800);
             $parentIds = [];
             foreach ($pending as $drop) {
                 if (! empty($drop['parent_id'])) {

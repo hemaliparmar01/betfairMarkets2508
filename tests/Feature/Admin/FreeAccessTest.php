@@ -94,6 +94,8 @@ class FreeAccessTest extends TestCase
             $this->assertTrue(checkAuthAndSubscription()['has_active_subscription']);
             $this->assertSame($days, $customer->admin_free_days);
             $this->travel($days)->days();
+            $this->assertTrue($customer->hasActiveSubscription());
+            $this->travelTo($customer->subscription_ends_at->copy()->timezone('Asia/Tbilisi')->addDay()->startOfDay()->utc());
             $this->assertFalse($customer->hasActiveSubscription());
             $this->assertFalse(checkAuthAndSubscription()['has_active_subscription']);
             $this->travelBack();

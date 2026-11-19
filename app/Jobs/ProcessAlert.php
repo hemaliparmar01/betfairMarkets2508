@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Http\Controllers\Users\Football\FootballController;
 use App\Services\AlertService;
+use App\Services\PinnacleArchive;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -46,9 +47,11 @@ class ProcessAlert implements ShouldBeUnique, ShouldQueue
             $now = now();
             $dayStart = $now->copy()->setTimezone('Asia/Tbilisi')->subHours(6)->startOfDay()->addHours(6)->timestamp;
             foreach ($this->data['alerts'] ?? [] as $drop) {
-                if (! is_array($drop) || empty($drop['alert_key']) || empty($drop['home']) || empty($drop['away'])) {
+                if (! is_array($drop) || empty($drop['alert_key']) || empty($drop['home']) || empty($drop['away'])
+                    || ! AlertService::allowsPinnacleMarket($drop)) {
                     continue;
                 }
+                $drop['sport'] = AlertService::pinnacleSport($drop);
                 $from = (float) ($drop['from_price'] ?? 0);
                 $to = (float) ($drop['to_price'] ?? 0);
                 $at = (int) ($drop['alerted'] ?? 0);
@@ -59,6 +62,9 @@ class ProcessAlert implements ShouldBeUnique, ShouldQueue
                 $parent = $this->data['parents'][$drop['sport'] ?? 'other'][$drop['parent_id'] ?? ''] ?? null;
                 if ($parent !== null) {
                     $drop['archive_parent'] = $parent;
+                }
+                if (! AlertService::allowsPinnacleMarket($drop)) {
+                    continue;
                 }
                 $starts = $parent['starts'] ?? $parent['start'] ?? $drop['starts'] ?? $drop['start'] ?? null;
                 $starts = is_numeric($starts) ? (int) $starts : (is_string($starts) ? (int) strtotime($starts) : 0);
@@ -85,7 +91,7 @@ class ProcessAlert implements ShouldBeUnique, ShouldQueue
                     'start_timestamp' => $starts > 0 ? $starts : null, 'payload' => $drop];
             }
             if ($rows !== []) {
-                $existing = DB::table('pinnacle_drop_archives')->whereIn('alert_key', array_keys($rows))->pluck('alert_key')->all();
+                $existing = DB::table('pinnacle_drop_receipts')->whereIn('alert_key', array_keys($rows))->pluck('alert_key')->all();
                 $rows = array_diff_key($rows, array_fill_keys($existing, true));
                 $comparisons = $rows === [] ? [] : array_column(app(FootballController::class)->marketActivity(['alerts' => array_column($rows, 'payload')]), null, 'alert_key');
                 foreach ($rows as $key => &$row) {
@@ -94,12 +100,14 @@ class ProcessAlert implements ShouldBeUnique, ShouldQueue
                     $row['payload']['bf_at_drop'] = $quote;
                     $row['payload']['bf_quote_at'] = $comparisons[$key]['bf_quote_at'] ?? null;
                     $row['payload']['bf_quote_reason'] = $comparisons[$key]['bf_quote_reason'] ?? ($quote === null ? 'resolution_unavailable' : null);
+                    $row['expires_at'] = (int) ($row['payload']['monitor_received_at'] ?? $now->timestamp) + PinnacleArchive::RETENTION_SECONDS;
+                    if (($row['start_timestamp'] ?? 0) > 0) {
+                        $row['expires_at'] = min($row['expires_at'], $row['start_timestamp']);
+                    }
                     $row['payload'] = json_encode($row['payload'], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
                 }
                 unset($row);
-                foreach (array_chunk($rows, 500) as $batch) {
-                    DB::table('pinnacle_drop_archives')->insertOrIgnore($batch);
-                }
+                app(PinnacleArchive::class)->store($rows);
             }
             unset($rows, $batch, $comparisons, $existing);
         }
@@ -110,7 +118,8 @@ class ProcessAlert implements ShouldBeUnique, ShouldQueue
             $alerts->scan();
         } elseif ($this->task === 'pinnacle') {
             foreach ($this->data['alerts'] ?? [] as $drop) {
-                if (is_array($drop) && (empty($this->data['mapped_notifications_only']) || isset($drop['pinnacle_competition']))) {
+                if (is_array($drop) && AlertService::allowsPinnacleMarket($drop)
+                    && (empty($this->data['mapped_notifications_only']) || isset($drop['pinnacle_competition']))) {
                     $drop['archive_parent'] ??= $this->data['parents'][$drop['sport'] ?? 'other'][$drop['parent_id'] ?? ''] ?? null;
                     $alerts->process('prematch_drops', [], ['pinnacle' => $drop]);
                 }

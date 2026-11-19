@@ -178,7 +178,13 @@ class MatchBackup
         $cacheKey = self::SPORTS[$sport][0].':matches';
 
         return withRedisLock($cacheKey, function () use ($matchId, $reliable, $cacheKey, $cancel): bool {
-            $matches = getInRedis($cacheKey) ?? [];
+            $index = in_array($cacheKey, ['Football:matches', 'Basketball:matches'], true) ? getInRedis($cacheKey, fixtureIndex: true) : null;
+            $matches = $index === null
+                ? (getInRedis($cacheKey) ?? [])
+                : getInRedis($cacheKey, readOnly: true, matchIds: [$matchId], snapshot: $index);
+            if ($matches === null) {
+                throw new \RuntimeException('Football fixture index changed during provider recheck.');
+            }
             $existingMatches = $matches;
             foreach ($matches as &$match) {
                 if ((string) ($match['sportsApiPro_match_id'] ?? '') !== $matchId) {
@@ -199,7 +205,7 @@ class MatchBackup
                     $match['internal_backup']['checks'] = (int) ($match['internal_backup']['checks'] ?? 0) + 1;
                 }
                 unset($match);
-                storeInRedis($cacheKey, $matches, 30, false, $existingMatches);
+                storeInRedis($cacheKey, $matches, 30, false, $existingMatches, replace: $index !== null, fixtureSnapshot: $index);
 
                 return true;
             }
@@ -266,12 +272,13 @@ class MatchBackup
         $deferIfBusy = $deferIfBusy || $sport === 'football';
         $changed = withRedisLock($cacheKey, function () use ($sport, $prefix, $model, $cacheKey, $deferIfBusy): int {
             $process = function () use ($sport, $model, $cacheKey): int {
-                $matches = getInRedis($cacheKey) ?? [];
+                $basketball = $sport === 'basketball' && app(BasketballMatchCache::class)->active() ? app(BasketballMatchCache::class) : null;
+                $matches = $basketball === null ? (getInRedis($cacheKey) ?? []) : $basketball->index()['matches'];
                 $now = time();
                 $tombstoneKey = $cacheKey.':cleaned';
                 Redis::zremrangebyscore($tombstoneKey, '-inf', $now);
                 $deletedKeys = array_fill_keys(Redis::zrangebyscore($tombstoneKey, $now, '+inf'), true);
-                $model::query()->where(static fn ($query) => $query->where('payload->internal_backup->since', '>', 0)->orWhere('payload->provider_lifecycle->resumed_at', '>', 0)->orWhereIn('result_status', self::LEGACY_EXPIRY_STATUSES))->whereNotIn('unique_key', array_keys($matches))->with('markets')->chunkById(100, function ($storedMatches) use (&$matches, $deletedKeys, $sport): void {
+                $model::query()->where(static fn ($query) => $query->where('payload->internal_backup->since', '>', 0)->orWhere('payload->provider_lifecycle->resumed_at', '>', 0)->orWhereIn('result_status', self::LEGACY_EXPIRY_STATUSES))->whereNotIn('unique_key', array_keys($matches))->with('markets')->chunkById($basketball === null ? 100 : 10, function ($storedMatches) use (&$matches, $deletedKeys, $sport, $basketball): void {
                     foreach ($storedMatches as $stored) {
                         if (isset($matches[$stored->unique_key]) || isset($deletedKeys[$stored->unique_key])) {
                             continue;
@@ -284,12 +291,28 @@ class MatchBackup
                                 $restored['markets'][$market->market_id.'_'.$market->market_type][] = $market->payload;
                             }
                         }
-                        $matches[$stored->unique_key] = $restored;
+                        if ($basketball !== null) {
+                            $basketball->store([$stored->unique_key => $restored], 30, false, []);
+                            $matches[$stored->unique_key] = $basketball->index()['matches'][$stored->unique_key] ?? [];
+                        } else {
+                            $matches[$stored->unique_key] = $restored;
+                        }
                     }
                 });
                 unset($deletedKeys);
                 $changes = 0;
                 foreach ($matches as $key => &$match) {
+                    if ($basketball !== null) {
+                        $metadata = $match;
+                        $record = $basketball->read(matchKeys: [$key]);
+                        if (! isset($record[$key])) {
+                            unset($matches[$key]);
+
+                            continue;
+                        }
+                        $match = $record[$key];
+                        unset($record);
+                    }
                     $previous = $match;
                     $wasHidden = ! empty($match['internal_backup']);
                     $match = $this->transition($match, $sport, $now);
@@ -310,6 +333,10 @@ class MatchBackup
                             Redis::zadd($tombstoneKey, $now + (int) config('services.match_lifecycle.tombstone_seconds'), (string) $key);
                             unset($matches[$key]);
                             $changes++;
+                        }
+
+                        if ($basketball !== null && isset($matches[$key])) {
+                            $match = $metadata;
                         }
 
                         continue;
@@ -335,6 +362,10 @@ class MatchBackup
                     if ($wasHidden !== ! empty($match['internal_backup'])) {
                         $changes++;
                     }
+                    if ($basketball !== null) {
+                        $basketball->store([$key => $match], 30, false, [$key => $previous]);
+                        $match = $metadata;
+                    }
                 }
                 unset($match, $previous, $updates, $payload);
                 if ($sport === 'football' && app(FootballMatchCache::class)->active()) {
@@ -343,7 +374,9 @@ class MatchBackup
                 if ($sport === 'tennis' && app(TennisMatchCache::class)->active()) {
                     app(TennisMatchCache::class)->removeCleaned();
                 }
-                if ($matches !== []) {
+                if ($basketball !== null) {
+                    $basketball->removeCleaned();
+                } elseif ($matches !== []) {
                     if ($sport === 'football' || ($sport === 'tennis' && app(TennisMatchCache::class)->active())) {
                         storeInRedis($cacheKey, $matches, 30, false, replace: true);
                     } else {

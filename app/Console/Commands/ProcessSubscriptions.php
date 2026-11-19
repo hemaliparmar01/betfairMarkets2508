@@ -30,12 +30,12 @@ class ProcessSubscriptions extends Command
                                 return;
                             }
                             $end = $record->customer->subscription_ends_at;
-                            if (! $record->auto_renew && $end !== null && $end->lte(now())) {
+                            if (! $record->auto_renew && $end !== null && $record->customer->hasExpiredSubscription()) {
                                 $record->update(['status' => 'expired', 'active_customer_id' => null, 'next_billing_at' => null]);
 
                                 return;
                             }
-                            if ($end !== null && $end->lte(now()) && $record->auto_renew && $record->status === 'active') {
+                            if ($end !== null && $record->customer->hasExpiredSubscription() && $record->auto_renew && $record->status === 'active') {
                                 $record->update(['status' => 'past_due']);
                             }
                             if ($record->gateway !== 'bog' || ! config('services.bog.recurring_enabled') || ! $record->auto_renew
@@ -61,7 +61,7 @@ class ProcessSubscriptions extends Command
                                 throw new \RuntimeException('BOG did not return a renewal order ID.');
                             }
                             $payment->update(['status' => 'submitted', 'payload' => $payment->payload + ['order_id' => $response['id']]]);
-                            if ($end !== null && $end->lte(now())) {
+                            if ($end !== null && $record->customer->hasExpiredSubscription()) {
                                 $record->update(['status' => 'past_due']);
                             }
                         });

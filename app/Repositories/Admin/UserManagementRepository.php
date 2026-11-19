@@ -72,7 +72,7 @@ class UserManagementRepository
                     ->orWhere(function (Builder $innerQuery): void {
                         $innerQuery
                             ->where('status', 'cancelled')
-                            ->whereHas('customer', fn ($query) => $query->where('subscription_ends_at', '>=', now()));
+                            ->whereHas('customer', fn ($query) => $query->where('subscription_ends_at', '>=', Customer::subscriptionDateCutoff()));
                     });
             })
             ->orderByRaw("CASE WHEN status IN ('active', 'pending') THEN 0 ELSE 1 END")
@@ -175,7 +175,7 @@ class UserManagementRepository
                 $query->whereNull('admin_free_days')->orWhere('admin_free_days', '!=', '-1');
             })
             ->where(function (Builder $query) use ($days): void {
-                $query->whereBetween('subscription_ends_at', [now(), now()->copy()->addDays($days)])
+                $query->whereBetween('subscription_ends_at', [Customer::subscriptionDateCutoff(), Customer::subscriptionDateCutoff()->timezone(config('services.subscriptions.expiry_timezone'))->addDays($days)->endOfDay()->utc()])
                     ->orWhereBetween('trial_ends_at', [now(), now()->copy()->addDays($days)]);
             })
             ->count();
@@ -219,7 +219,7 @@ class UserManagementRepository
         $endsAt = null;
         if ($grantsAccess && ! $lifetime) {
             $days = $freeDays > 0 ? $freeDays : $additionalDays;
-            $base = $customer->subscription_ends_at?->isFuture() ? $customer->subscription_ends_at->copy() : now();
+            $base = $customer->hasActiveSubscription() ? $customer->subscription_ends_at->copy() : now();
             if ($startsAt->gt($base)) {
                 $base = $startsAt->copy();
             }

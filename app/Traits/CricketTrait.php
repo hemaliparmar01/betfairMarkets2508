@@ -18,7 +18,7 @@ trait CricketTrait
 
     protected ?int $marketActivityNextPage = null;
 
-    public function getCricketMatches(?array &$matchesById = null): array
+    public function getCricketMatches(?array &$matchesById = null, bool $prematchOnly = false): array
     {
         if (in_array(request()->input('type'), ['ht00', '00_70', 'fav_losing', 'fav_not_winning'], true)) {
             return [];
@@ -35,7 +35,11 @@ trait CricketTrait
         $timezone = getCurrentUserTimezone();
         $today = Carbon::now($timezone)->toDateString();
         $type = request()->input('type', 'all');
-        $matches = array_filter($visibleMatches, static function (array $match) use ($today, $timezone, $type, $favoriteKeys): bool {
+        $matches = array_filter($visibleMatches, static function (array $match) use ($today, $timezone, $type, $favoriteKeys, $prematchOnly): bool {
+            if ($prematchOnly && (($match['result_status'] ?? '') !== 'Prematch' || (int) ($match['timestamp'] ?? 0) <= time())) {
+                return false;
+            }
+
             if (($match['data_sync_complete'] ?? false) !== true || ! isset($match['sportsApiPro_match_id'], $match['timestamp'])) {
                 return false;
             }
@@ -316,7 +320,7 @@ trait CricketTrait
     public function getMarketActivites(): array
     {
         $matchesById = [];
-        $groups = $this->getCricketMatches($matchesById);
+        $groups = $this->getCricketMatches($matchesById, prematchOnly: true);
         $this->marketActivityHasMore = $this->cricketHasMore;
         $this->marketActivityNextPage = $this->cricketNextPage;
         $marketType = request()->filled('market_name') ? request()->input('market_name') : null;

@@ -7,6 +7,7 @@ use App\Http\Controllers\Users\Tennis\TennisSyncController;
 use App\Models\PredictionVote;
 use App\Services\AlertService;
 use App\Services\MatchBackup;
+use App\Services\PinnacleArchive;
 use App\Traits\FootballTrait;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\Client\ConnectionException;
@@ -15,6 +16,7 @@ use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\AcceptHeader;
 
@@ -55,6 +57,11 @@ class FootballController extends Controller
             $pinnacleArchiveStart = now('Asia/Tbilisi')->subHours(6)->startOfDay()->addHours(6);
             $pinnacleArchiveEnd = $pinnacleArchiveStart->copy()->addDay();
             $pinnacleArchiveStats = [];
+            $pinnacleSport = $capture ? 'all' : AlertService::pinnacleSport(['sport' => request('sport', 'soccer')]);
+            if (! $capture && ! in_array($pinnacleSport, AlertService::PINNACLE_SPORTS, true)) {
+                $pinnacleSport = 'soccer';
+            }
+            $pinnacleSportCounts = [];
             if ($capture) {
                 $pinnaclePayload = $pinnacleSnapshot;
             } elseif ($pinnacleArchive) {
@@ -72,23 +79,21 @@ class FootballController extends Controller
                 $archiveQuery = DB::table('pinnacle_drop_archives')
                     ->where('alerted_at', '>=', $pinnacleArchiveStart->timestamp)
                     ->where('alerted_at', '<', $pinnacleArchiveEnd->timestamp)
+                    ->where('is_live', false)->whereIn('sport', AlertService::PINNACLE_SPORTS)
+                    ->where(fn ($query) => $query->whereNull('start_timestamp')->orWhere('start_timestamp', '<=', 0)->orWhere('start_timestamp', '>', $archiveNow->timestamp))
                     ->where(function ($query) use ($monitorCutoff): void {
                         $query->where('payload->monitor_received_at', '<=', $monitorCutoff)
                             ->orWhere(fn ($query) => $query->whereNull('payload->monitor_received_at')->where('alerted_at', '<=', (int) $monitorCutoff));
                     });
+                $archiveQuery->where(function ($query) use ($archiveNow): void {
+                    $query->where('expires_at', '>', $archiveNow->timestamp)
+                        ->orWhere(fn ($query) => $query->whereNull('expires_at')->where('alerted_at', '>', $archiveNow->timestamp - PinnacleArchive::RETENTION_SECONDS));
+                });
                 $query = clone $archiveQuery;
-                if (($filters['mode'] ?? 'all') !== 'all') {
-                    $query->where('is_live', $filters['mode'] === 'live');
-                }
                 if (! isset($filters['before_key'])) {
-                    $sports = $archiveQuery->groupBy('sport')->orderBy('sport')
-                        ->selectRaw('sport, COUNT(*) AS total, COUNT(betfair_higher) AS compared, SUM(CASE WHEN betfair_higher = 1 THEN 1 ELSE 0 END) AS higher')->get();
-                    $pinnacleArchiveStats = ['sports' => $sports, 'total' => (int) $sports->sum('total'),
-                        'compared' => (int) $sports->sum('compared'), 'higher' => (int) $sports->sum('higher')];
+                    $pinnacleArchiveStats = app(PinnacleArchive::class)->summary($pinnacleArchiveStart->timestamp);
                 }
-                if (($filters['sport'] ?? 'all') !== 'all') {
-                    $query->where('sport', $filters['sport']);
-                }
+                $query->where('sport', $pinnacleSport);
                 if (($filters['market_filter'] ?? 'all') === 'main') {
                     $query->where('market_group', '<', 3);
                 } elseif (($filters['market_filter'] ?? 'all') === 'handicap') {
@@ -110,7 +115,7 @@ class FootballController extends Controller
                     $query->where(fn ($query) => $query->where('alerted_at', '<', $filters['before_time'])
                         ->orWhere(fn ($query) => $query->where('alerted_at', $filters['before_time'])->where('alert_key', '<', $filters['before_key'])));
                 }
-                $rows = $query->orderByDesc('alerted_at')->orderByDesc('alert_key')->limit(101)->get(['alerted_at', 'alert_key', 'payload']);
+                $rows = $query->orderByDesc('alerted_at')->orderByDesc('alert_key')->limit(101)->get(['alerted_at', 'alert_key', 'payload', 'expires_at']);
                 $pinnacleArchiveHasMore = $rows->count() > 100;
                 if ($pinnacleArchiveHasMore) {
                     $rows->pop();
@@ -123,6 +128,7 @@ class FootballController extends Controller
                     if (! is_array($drop)) {
                         continue;
                     }
+                    $drop['archive_expires_at'] = (int) ($row->expires_at ?? ((int) ($drop['monitor_received_at'] ?? $drop['alerted'] ?? 0) + PinnacleArchive::RETENTION_SECONDS));
                     $pinnaclePayload['alerts'][] = $drop;
                     $pinnaclePayload['signals'][] = $drop;
                     if (is_array($drop['archive_parent'] ?? null)) {
@@ -140,6 +146,8 @@ class FootballController extends Controller
                 $pinnacleAlerts = array_values(array_filter($pinnacleAlerts, static fn (array $alert): bool => (float) ($alert['monitor_received_at'] ?? $alert['alerted'] ?? 0) > $cutoff));
                 $archivedMonitor = Cache::remember('pinnacle:active-archive:'.$pinnacleArchiveStart->timestamp, 5, static function () use ($cutoff, $pinnacleArchiveStart): array {
                     return DB::table('pinnacle_drop_archives')->where('alerted_at', '>=', $pinnacleArchiveStart->timestamp)
+                        ->where('is_live', false)->whereIn('sport', AlertService::PINNACLE_SPORTS)
+                        ->where(fn ($query) => $query->whereNull('start_timestamp')->orWhere('start_timestamp', '<=', 0)->orWhere('start_timestamp', '>', now()->timestamp))
                         ->where(function ($query) use ($cutoff): void {
                             $query->where('payload->monitor_received_at', '>', (int) $cutoff)
                                 ->orWhere(fn ($query) => $query->whereNull('payload->monitor_received_at')->where('alerted_at', '>', (int) $cutoff));
@@ -152,6 +160,11 @@ class FootballController extends Controller
                     }
                 }
             }
+            $pinnacleAlerts = array_values(array_filter($pinnacleAlerts, [AlertService::class, 'allowsPinnacleMarket']));
+            $pinnacleSportCounts = array_count_values(array_column($pinnacleAlerts, 'sport'));
+            if (! $capture) {
+                $pinnacleAlerts = array_values(array_filter($pinnacleAlerts, static fn (array $drop): bool => AlertService::pinnacleSport($drop) === $pinnacleSport));
+            }
             $dropTimeQuotes = [];
             $alertKeys = array_values(array_filter(array_column($pinnacleAlerts, 'alert_key')));
             if (! $capture && ! $pinnacleArchive && $alertKeys !== []) {
@@ -160,7 +173,7 @@ class FootballController extends Controller
                 }
             }
             $pinnacleFeeds = [];
-            foreach (['live', 'prematch'] as $mode) {
+            foreach (['prematch'] as $mode) {
                 $feed = $pinnaclePayload['feeds'][$mode] ?? [];
                 $pinnacleFeeds[$mode] = time() - (int) ($feed['last_frame_at'] ?? 0) <= 90
                     ? ($feed['status'] ?? 'disconnected')
@@ -251,13 +264,41 @@ class FootballController extends Controller
                 $eventSport = (string) ($event['sport'] ?? '');
                 $existingEvent = $pinnacleEvents[$eventSport][$event['id']] ?? null;
                 if ($existingEvent === null || (int) ($event['alerted'] ?? 0) > (int) ($existingEvent['alerted'] ?? 0)) {
-                    $pinnacleEvents[$eventSport][$event['id']] = $event;
+                    $pinnacleEvents[$eventSport][$event['id']] = array_intersect_key($event, array_flip(['id', 'sport', 'home', 'away', 'country', 'league', 'starts', 'start', 'alerted']));
+                }
+            }
+            unset($event, $pinnaclePayload);
+            $fixtureRequests = [];
+            foreach ($pinnacleArchive ? [] : $pinnacleAlerts as $drop) {
+                $sport = $drop['sport'] ?? '';
+                if (! isset($sportKeys[$sport])) {
+                    continue;
+                }
+                $eventId = (string) (($drop['parent_id'] ?? null) ?: ($drop['id'] ?? ''));
+                $selectionNames = in_array(strtolower(trim((string) ($drop['home'] ?? ''))), ['yes', 'no'], true)
+                    && in_array(strtolower(trim((string) ($drop['away'] ?? ''))), ['yes', 'no'], true);
+                $parent = $drop['archive_parent'] ?? $pinnacleEvents[$sport][$drop['parent_id'] ?? '']
+                    ?? ($selectionNames ? ($pinnacleEvents[$sport][$drop['id'] ?? ''] ?? null) : null);
+                $starts = $parent['starts'] ?? $parent['start'] ?? $drop['starts'] ?? $drop['start'] ?? null;
+                $timestamp = is_numeric($starts) ? (int) $starts : (is_string($starts) ? (int) strtotime($starts) : 0);
+                if ($timestamp > 100_000_000_000) {
+                    $timestamp = intdiv($timestamp, 1000);
+                }
+                $status = ($drop['is_live'] ?? false) ? 'Live' : 'Prematch';
+                $requestKey = $sportKeys[$sport].'|'.$status;
+                $mappedId = $eventMappings[$sport][$eventId] ?? null;
+                if ($mappedId !== null) {
+                    $fixtureRequests[$requestKey]['ids'][(string) $mappedId] = (string) $mappedId;
+                } elseif ($timestamp > 0) {
+                    $fixtureRequests[$requestKey]['starts'][$timestamp] = $timestamp;
                 }
             }
             $remainingLookups = 1;
-            $legacyFootballMatches = ! $pinnacleArchive && (! $capture || $currentPinnacleQuote) && $sportsmeldKey === '' && isset($eventIds['soccer']) ? (getInRedis('Football:matches', readOnly: true) ?? []) : [];
+            $footballIndex = ! $pinnacleArchive && (! $capture || $currentPinnacleQuote) && isset($eventIds['soccer'])
+                ? getInRedis('Football:matches', fixtureIndex: true, marketActivityIndex: true) : null;
+            $legacyFootballMatches = ! $pinnacleArchive && (! $capture || $currentPinnacleQuote) && $sportsmeldKey === '' && isset($eventIds['soccer']) && $footballIndex === null
+                ? $this->pinnacleLegacyFootballMatches() : [];
             $legacyFootballByEvent = array_column($legacyFootballMatches, null, 'betfair_match_id');
-            $footballIndex = ($sportsmeldKey !== '' || $currentPinnacleQuote) && isset($eventIds['soccer']) ? getInRedis('Football:matches', fixtureIndex: true, marketActivityIndex: true) : null;
 
             foreach ($pinnacleAlerts as &$alert) {
                 $alert = array_replace($alert, $dropTimeQuotes[$alert['alert_key'] ?? ''] ?? []);
@@ -296,16 +337,48 @@ class FootballController extends Controller
                         $mappedId = $eventMappings[$sport][$eventId] ?? null;
                         $fixtures = $legacyFootballMatches;
                         if ($mappedId !== null || $startTimestamp > 0) {
-                            $fixtureWindow = $sportTable.'|'.$status.'|'.($mappedId !== null ? 'id:'.$mappedId : 'start:'.$startTimestamp);
-                            $storedFixtures = $fixtureWindows[$fixtureWindow] ??= DB::table($sportTable.'_matches')
-                                ->when($mappedId !== null,
-                                    fn ($query) => $query->where('betfair_match_id', $mappedId),
-                                    fn ($query) => $query->whereBetween('start_timestamp', [$startTimestamp - 3600, $startTimestamp + 3600]))
-                                ->where('result_status', $status)
-                                ->whereNotNull('betfair_match_id')
-                                ->get(['unique_key', 'sports_api_pro_match_id', 'betfair_match_id', 'team1', 'team2', 'tournament', 'result_status', 'start_timestamp as timestamp', 'data_sync_complete', 'payload'])
-                                ->map(static fn (object $fixture): array => array_replace(array_intersect_key(json_decode($fixture->payload, true) ?? [], ['internal_backup' => true, 'provider_lifecycle' => true]), array_diff_key((array) $fixture, ['payload' => true])))
-                                ->all();
+                            $fixtureWindow = $sportTable.'|'.$status;
+                            if (! isset($fixtureWindows[$fixtureWindow])) {
+                                $request = $fixtureRequests[$fixtureWindow] ?? [];
+                                $starts = array_values($request['starts'] ?? []);
+                                sort($starts, SORT_NUMERIC);
+                                $ranges = [];
+                                foreach ($starts as $timestamp) {
+                                    $last = array_key_last($ranges);
+                                    if ($last !== null && $timestamp - 3600 <= $ranges[$last][1]) {
+                                        $ranges[$last][1] = max($ranges[$last][1], $timestamp + 3600);
+                                    } else {
+                                        $ranges[] = [$timestamp - 3600, $timestamp + 3600];
+                                    }
+                                }
+                                $fixtureWindows[$fixtureWindow] = DB::table($sportTable.'_matches')
+                                    ->where('result_status', $status)->whereNotNull('betfair_match_id')
+                                    ->where(function ($query) use ($request, $ranges, $mappedId, $startTimestamp): void {
+                                        $ids = array_values($request['ids'] ?? []);
+                                        if ($ids !== []) {
+                                            $query->whereIn('betfair_match_id', $ids);
+                                        }
+                                        foreach ($ranges as $range) {
+                                            $query->orWhereBetween('start_timestamp', $range);
+                                        }
+                                        if ($ids === [] && $ranges === []) {
+                                            if ($mappedId !== null) {
+                                                $query->where('betfair_match_id', $mappedId);
+                                            } else {
+                                                $query->whereBetween('start_timestamp', [$startTimestamp - 3600, $startTimestamp + 3600]);
+                                            }
+                                        }
+                                    })
+                                    ->get(['unique_key', 'sports_api_pro_match_id', 'betfair_match_id', 'team1', 'team2', 'tournament', 'result_status',
+                                        'start_timestamp as timestamp', 'data_sync_complete', 'payload->internal_backup as internal_backup', 'payload->provider_lifecycle as provider_lifecycle'])
+                                    ->map(static fn (object $fixture): array => array_replace((array) $fixture, [
+                                        'internal_backup' => json_decode($fixture->internal_backup ?? 'null', true),
+                                        'provider_lifecycle' => json_decode($fixture->provider_lifecycle ?? 'null', true),
+                                    ]))->all();
+                            }
+                            $storedFixtures = array_values(array_filter($fixtureWindows[$fixtureWindow], static fn (array $fixture): bool => $mappedId !== null
+                                ? (string) $fixture['betfair_match_id'] === (string) $mappedId
+                                : abs((int) $fixture['timestamp'] - $startTimestamp) <= 3600));
                             $fixtures = $storedFixtures;
                             $legacyCandidates = $mappedId === null ? $legacyFootballMatches : (isset($legacyFootballByEvent[$mappedId]) ? [$legacyFootballByEvent[$mappedId]] : []);
                             if ($legacyCandidates !== []) {
@@ -408,13 +481,18 @@ class FootballController extends Controller
                         continue;
                     }
                     $matchedFixture = $resolvedEvents[$resolutionKey]['fixture'];
-                    if ($matchedFixture !== null && $sport === 'soccer' && $footballIndex !== null && ! empty($matchedFixture['sports_api_pro_match_id']) && empty($resolvedEvents[$resolutionKey]['snapshot_checked'])) {
-                        $rows = getInRedis('Football:matches', readOnly: true, matchIds: [$matchedFixture['sports_api_pro_match_id']], snapshot: $footballIndex);
+                    if ($matchedFixture !== null && $sport === 'soccer' && $footballIndex !== null && empty($resolvedEvents[$resolutionKey]['snapshot_checked'])) {
+                        $matchId = $matchedFixture['sports_api_pro_match_id'] ?? $matchedFixture['sportsApiPro_match_id'] ?? null;
+                        $cacheKey = $matchId !== null ? ($footballIndex['ids'][(string) $matchId] ?? null) : ($matchedFixture['unique_key'] ?? null);
+                        $bytes = $footballIndex['matches'][$cacheKey]['_payload_bytes'] ?? $footballIndex['positions'][$cacheKey][1] ?? null;
+                        $rows = $cacheKey !== null && is_numeric($bytes) && (int) $bytes <= 4_194_304
+                            ? getInRedis('Football:matches', readOnly: true, snapshot: $footballIndex, matchKeys: [$cacheKey]) : [];
                         $currentFixture = $rows ? reset($rows) : null;
                         if ($currentFixture !== null && (string) ($currentFixture['betfair_match_id'] ?? '') === (string) $matchedFixture['betfair_match_id']
                             && ($currentFixture['result_status'] ?? null) === $status) {
-                            $matchedFixture = array_replace($currentFixture, ['unique_key' => $matchedFixture['unique_key']]);
+                            $matchedFixture = array_replace($matchedFixture, $this->pinnacleFixtureQuote($currentFixture), ['unique_key' => $matchedFixture['unique_key']]);
                         }
+                        unset($rows, $currentFixture);
                         $resolvedEvents[$resolutionKey]['fixture'] = $matchedFixture;
                         $resolvedEvents[$resolutionKey]['snapshot_checked'] = true;
                     }
@@ -478,7 +556,7 @@ class FootballController extends Controller
                                 ->where($sportTable.'_match_unique_key', $matchedFixture['unique_key'])
                                 ->where('market_type', $marketType)
                                 ->get(['market_id', 'payload'])->groupBy('market_id')
-                                ->map(static fn ($rows): array => $rows->map(static fn (object $row): array => json_decode($row->payload, true) ?? [])->all())
+                                ->map(fn ($rows): array => $rows->map(fn (object $row): array => $this->pinnacleRunnerQuote(json_decode($row->payload, true) ?? [], $capture && ! $currentPinnacleQuote))->all())
                                 ->all();
                             $markets = $marketSnapshots[$marketKey];
                         }
@@ -626,13 +704,14 @@ class FootballController extends Controller
                     'data' => $pinnacleAlerts,
                     'connected' => $pinnacleFeedConnected,
                     'feeds' => $pinnacleFeeds,
+                    'counts' => $pinnacleSportCounts,
                     ...($pinnacleArchive ? ['archive' => true, 'has_more' => $pinnacleArchiveHasMore, 'next_cursor' => $pinnacleArchiveCursor, 'summary' => $pinnacleArchiveStats] : []),
                 ]);
             }
 
             $pinnacleLeagueOptions = app(AlertService::class)->pinnacleMonitorLeagueOptions();
 
-            return view('users.sports.Football.marketActivity', compact('pinnacleLeagueOptions', 'pinnacleAlerts', 'pinnacleFeedConnected', 'pinnacleFeeds', 'pinnacleArchive', 'pinnacleArchiveHasMore', 'pinnacleArchiveCursor', 'pinnacleArchiveStart', 'pinnacleArchiveEnd', 'pinnacleArchiveStats'));
+            return view('users.sports.Football.marketActivity', compact('pinnacleSport', 'pinnacleSportCounts', 'pinnacleLeagueOptions', 'pinnacleAlerts', 'pinnacleFeedConnected', 'pinnacleFeeds', 'pinnacleArchive', 'pinnacleArchiveHasMore', 'pinnacleArchiveCursor', 'pinnacleArchiveStart', 'pinnacleArchiveEnd', 'pinnacleArchiveStats'));
         }
 
         $marketActivites = $this->getMarketActivites();
@@ -800,6 +879,49 @@ class FootballController extends Controller
         }
 
         return $response;
+    }
+
+    /** @return array<string, array<string, mixed>> */
+    private function pinnacleLegacyFootballMatches(): array
+    {
+        $limit = 2_097_152;
+        $encoded = Redis::getrange('Football:matches', 0, $limit);
+        if (! is_string($encoded) || strlen($encoded) > $limit) {
+            return [];
+        }
+        $matches = json_decode($encoded, true);
+        if (! is_array($matches)) {
+            return [];
+        }
+        $matches = app(FootballSyncController::class)->mergeDuplicateMatches($matches);
+
+        return array_map(fn (array $match): array => $this->pinnacleFixtureQuote($match), $matches);
+    }
+
+    /** @param array<string, mixed> $match
+     * @return array<string, mixed>
+     */
+    private function pinnacleFixtureQuote(array $match): array
+    {
+        $quote = array_intersect_key($match, array_flip(['unique_key', 'sportsApiPro_match_id', 'sports_api_pro_match_id', 'betfair_match_id',
+            'team1', 'team2', 'tournament', 'tournament_country', 'timestamp', 'result_status', 'data_sync_complete', 'is_virtual', 'internal_backup', 'provider_lifecycle']));
+        $quote['markets'] = array_map(fn (array $runners): array => array_map(fn (array $runner): array => $this->pinnacleRunnerQuote($runner), $runners), $match['markets'] ?? []);
+
+        return $quote;
+    }
+
+    /** @param array<string, mixed> $runner
+     * @return array<string, mixed>
+     */
+    private function pinnacleRunnerQuote(array $runner, bool $withHistory = false): array
+    {
+        $fields = ['marketType', 'marketId', 'name', 'runner', 'runnerId', 'handicap', 'currentBackOdds', 'backOdds', 'layOdds',
+            'backSize', 'laySize', 'market_status', 'odds_history_processed_at', 'odds_history_incomplete'];
+        if ($withHistory) {
+            array_push($fields, 'backOddsHistory', 'monitoring_baseline_version', 'opening_odds_source', 'initialBackOdds', 'initialBackOddsTimestamp');
+        }
+
+        return array_intersect_key($runner, array_flip($fields));
     }
 
     public function tempDataMerge()

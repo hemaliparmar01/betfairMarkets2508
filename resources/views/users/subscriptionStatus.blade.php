@@ -3,7 +3,7 @@
         'Plan' => $customer->subscription_plan ?: '7-Day Free Trial',
         'Status' => $customer->hasLifetimeAccess() ? 'Lifetime Access' : ($customer->hasActiveSubscription() ? 'Active' : 'Expired'),
         'Trial Ends At' => $customer->trial_ends_at ? \Illuminate\Support\Carbon::parse($customer->trial_ends_at)->format('d M Y, H:i') : '—',
-        'Subscription Ends At' => $customer->hasLifetimeAccess() ? 'Lifetime Access' : ($customer->subscription_ends_at?->format('d M Y, H:i') ?? '—'),
+        'Subscription Ends At' => $customer->hasLifetimeAccess() ? 'Lifetime Access' : ($customer->subscription_ends_at?->copy()->timezone(config('services.subscriptions.expiry_timezone'))->format('d M Y') ?? '—'),
         'Subscription Starts At' => $customer->subscription_starts_at?->format('d M Y, H:i') ?? '—',
         'Subscription Source' => $customer->hasLifetimeAccess() || $customer->admin_free_days > 0 || $customerSubscriptions->first()?->gateway === 'admin' ? 'Admin Granted' : ($customerSubscriptions->isNotEmpty() ? 'Paid' : 'None'),
         'Additional Free Days' => $customer->hasLifetimeAccess() ? 'Lifetime Access' : (int) $customer->admin_free_days,
@@ -18,7 +18,7 @@
             <div><dt>{{ __('Status') }}</dt><dd>{{ ucfirst(str_replace('_', ' ', $subscription->status)) }}</dd></div>
             <div><dt>{{ __('Subscription source') }}</dt><dd>{{ $subscription->gateway === 'admin' ? 'Admin Granted' : 'Paid · '.$subscription->gateway }}</dd></div>
             <div><dt>{{ __('Billing period starts') }}</dt><dd>{{ $customer->subscription_starts_at?->format('d M Y H:i') ?? '—' }}</dd></div>
-            <div><dt>{{ __('Access ends') }}</dt><dd>{{ $customer->hasLifetimeAccess() ? 'Lifetime Access' : ($customer->subscription_ends_at?->format('d M Y H:i') ?? '—') }}</dd></div>
+            <div><dt>{{ __('Access ends') }}</dt><dd>{{ $customer->hasLifetimeAccess() ? 'Lifetime Access' : ($customer->subscription_ends_at?->copy()->timezone(config('services.subscriptions.expiry_timezone'))->format('d M Y') ?? '—') }}</dd></div>
             <div><dt>{{ __('Next renewal') }}</dt><dd>{{ $subscription->next_billing_at?->format('d M Y H:i') ?? '—' }}</dd></div>
             <div><dt>{{ __('AutoPay') }}</dt><dd>{{ __($subscription->auto_renew ? 'Enabled' : 'Disabled') }}</dd></div>
         </dl>

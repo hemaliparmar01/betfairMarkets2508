@@ -28,7 +28,7 @@ trait TennisTrait
         return filled($match['betfair_match_id'] ?? null) ? 'betfair:'.$match['betfair_match_id'] : null;
     }
 
-    public function getTennisMatches(?array &$matchesById = null): array
+    public function getTennisMatches(?array &$matchesById = null, bool $prematchOnly = false): array
     {
         if (in_array(request()->input('type'), ['ht00', '00_70'], true)) {
             return [];
@@ -49,7 +49,11 @@ trait TennisTrait
         $favoriteKeys = $customerId === null ? [] : array_fill_keys(Favorite::query()->where('sport', 'tennis')->where('customer_id', $customerId)->pluck('event_key')->all(), true);
         $timezone = getCurrentUserTimezone();
         $today = Carbon::now($timezone)->toDateString();
-        $matches = array_filter($visibleMatches, static function (array $match) use ($today, $timezone, $type, $favoriteKeys): bool {
+        $matches = array_filter($visibleMatches, static function (array $match) use ($today, $timezone, $type, $favoriteKeys, $prematchOnly): bool {
+            if ($prematchOnly && (($match['result_status'] ?? '') !== 'Prematch' || (int) ($match['timestamp'] ?? 0) <= time())) {
+                return false;
+            }
+
             if (! isset($match['timestamp']) || ! filled($match['sportsApiPro_match_id'] ?? null)) {
                 return false;
             }
@@ -286,7 +290,7 @@ trait TennisTrait
     public function getMarketActivites(): array
     {
         $matchesById = [];
-        $groups = $this->getTennisMatches($matchesById);
+        $groups = $this->getTennisMatches($matchesById, prematchOnly: true);
         $this->marketActivityHasMore = $this->tennisHasMore;
         $this->marketActivityNextPage = $this->tennisNextPage;
         $marketType = request()->filled('market_name') ? request()->input('market_name') : null;

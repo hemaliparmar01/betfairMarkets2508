@@ -16,7 +16,7 @@ trait GreyhoundsTrait
 
     protected ?int $greyhoundsNextRefreshAt = null;
 
-    public function getGreyhoundsMatches(bool $grouped = true): array
+    public function getGreyhoundsMatches(bool $grouped = true, bool $prematchOnly = false): array
     {
         if (in_array(request()->input('type'), ['ht00', '00_70', 'fav_losing', 'fav_not_winning'], true)) {
             return [];
@@ -49,7 +49,10 @@ trait GreyhoundsTrait
             }
         }
         $this->greyhoundsNextRefreshAt = $boundaries === [] ? null : min($boundaries);
-        $matches = array_values(array_filter($matches, static function (array $race) use ($today, $timezone, $type, $favorites): bool {
+        $matches = array_values(array_filter($matches, static function (array $race) use ($today, $timezone, $type, $favorites, $prematchOnly): bool {
+            if ($prematchOnly && (($race['result_status'] ?? '') !== 'Prematch' || (int) ($race['timestamp'] ?? 0) <= time())) {
+                return false;
+            }
             if (! $race['details_available'] || (int) $race['timestamp'] <= time() || ($race['result_status'] ?? '') === 'Finished' || empty($race['betfair_match_id']) || Carbon::createFromTimestamp((int) $race['timestamp'], $timezone)->toDateString() !== $today) {
                 return false;
             }
@@ -132,7 +135,7 @@ trait GreyhoundsTrait
 
     public function getMarketActivites(): array
     {
-        return $this->getGreyhoundsMatches(false);
+        return $this->getGreyhoundsMatches(false, prematchOnly: true);
     }
 
     public function getGreyhoundsMatchDetail(string $matchId): ?array

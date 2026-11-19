@@ -59,6 +59,52 @@ class AlertService
         return (json_decode($stored ?? '', true) ?? []) + ['higher' => false, 'leagues' => null];
     }
 
+    /** @param array<string, mixed> $drop */
+    public const PINNACLE_SPORTS = ['soccer', 'tennis', 'basketball', 'ice-hockey', 'baseball', 'cricket', 'esports'];
+
+    public static function pinnacleSport(array $drop): string
+    {
+        $id = (int) ($drop['sport_id'] ?? 0);
+        if ($id > 0) {
+            return [1 => 'soccer', 2 => 'tennis', 3 => 'basketball', 4 => 'ice-hockey', 6 => 'baseball', 11 => 'esports', 13 => 'cricket'][$id] ?? '';
+        }
+        $sport = str_replace(['_', ' '], '-', strtolower(trim((string) ($drop['sport'] ?? ''))));
+
+        return ['football' => 'soccer', 'hockey' => 'ice-hockey', 'e-sports' => 'esports'][$sport] ?? $sport;
+    }
+
+    public static function pinnacleStartsAt(array $drop): int
+    {
+        $starts = $drop['starts'] ?? $drop['start'] ?? $drop['archive_parent']['starts'] ?? null;
+        $timestamp = is_numeric($starts) ? (int) $starts : (is_string($starts) ? (int) strtotime($starts) : 0);
+
+        return $timestamp > 100_000_000_000 ? (int) floor($timestamp / 1000) : $timestamp;
+    }
+
+    public static function allowsPinnacleMarket(array $drop): bool
+    {
+        $sport = self::pinnacleSport($drop);
+        $starts = self::pinnacleStartsAt($drop);
+        if (! in_array($sport, self::PINNACLE_SPORTS, true)
+            || filter_var($drop['is_live'] ?? false, FILTER_VALIDATE_BOOLEAN)
+            || strtolower((string) ($drop['feed'] ?? 'prematch')) !== 'prematch'
+            || ($starts > 0 && $starts <= now()->timestamp)) {
+            return false;
+        }
+        $basketball = $sport === 'basketball';
+        if (! $basketball) {
+            return true;
+        }
+        foreach (['sect', 'market_type', 'marketType'] as $field) {
+            $market = trim(preg_replace('/[\s_-]+/', ' ', strtolower((string) ($drop[$field] ?? ''))));
+            if (preg_match('/^(?:(?:asian )?handicaps?|(?:point )?spreads?|ah)(?:$|\s|\()/i', $market) === 1) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     /** @return array{string, string}|null */
     public static function pinnacleCompetition(array $drop): ?array
     {
@@ -314,7 +360,7 @@ class AlertService
             ->where(fn (Builder $query) => $query->whereNull('admin_free_days')->orWhere('admin_free_days', '!=', -1))->where(function (Builder $query): void {
                 $query->whereNull('trial_ends_at')->orWhere('trial_ends_at', '<=', now());
             })->where(function (Builder $query): void {
-                $query->whereNull('subscription_ends_at')->orWhere('subscription_ends_at', '<=', now());
+                $query->whereNull('subscription_ends_at')->orWhere('subscription_ends_at', '<', Customer::subscriptionDateCutoff());
             })->where(function (Builder $query): void {
                 $query->whereNotNull('trial_ends_at')->orWhereNotNull('subscription_ends_at');
             })->lazyById(100)->each(fn (Customer $customer) => $this->process('expired', [], ['expires' => max($customer->trial_ends_at?->timestamp ?? 0, $customer->subscription_ends_at?->timestamp ?? 0)], $customer->id));
@@ -519,7 +565,8 @@ class AlertService
         $matchId = $match['sportsApiPro_match_id'] ?? null;
         if ($pinnacle !== null) {
             if ($type !== 'prematch_drops' || ! is_array($pinnacle) || empty($pinnacle['id']) || empty($pinnacle['home']) || empty($pinnacle['away'])
-                || empty($pinnacle['alert_key']) || ($pinnacle['is_live'] ?? false) || ($pinnacle['feed'] ?? '') === 'live') {
+                || empty($pinnacle['alert_key']) || ! self::allowsPinnacleMarket($pinnacle)
+                || ($pinnacle['is_live'] ?? false) || ($pinnacle['feed'] ?? '') === 'live') {
                 return null;
             }
             $from = (float) ($pinnacle['from_price'] ?? 0);
@@ -726,7 +773,10 @@ class AlertService
         }
         $payload = json_decode($alert->payload, true);
         $pinnacle = $alert->type === 'prematch_drops' && ($payload['context']['provider'] ?? null) === 'pinnacle';
-        if ($alert->type === 'market_shock' || ($alert->type === 'prematch_drops' && ! $pinnacle)) {
+        $pinnacleDrop = ($payload['context']['pinnacle_drop'] ?? []) + ['sport' => $payload['context']['sport'] ?? $payload['context']['movement']['sport'] ?? '',
+            'sect' => $payload['context']['movement']['market'] ?? ''];
+        if ($alert->type === 'market_shock' || ($alert->type === 'prematch_drops' && ! $pinnacle)
+            || ($pinnacle && ! self::allowsPinnacleMarket($pinnacleDrop))) {
             DB::table('alerts')->where('id', $alertId)->update(['fanned_out_at' => now()]);
 
             return 0;
@@ -747,7 +797,7 @@ class AlertService
             if ($alert->type !== 'expired') {
                 $query->where(function (Builder $eligible): void {
                     $eligible->where('admin_free_days', -1)->orWhere('trial_ends_at', '>', now())->orWhere(function (Builder $paid): void {
-                        $paid->where('subscription_ends_at', '>', now())->where(fn (Builder $start) => $start->whereNull('subscription_starts_at')->orWhere('subscription_starts_at', '<=', now()));
+                        $paid->where('subscription_ends_at', '>=', Customer::subscriptionDateCutoff())->where(fn (Builder $start) => $start->whereNull('subscription_starts_at')->orWhere('subscription_starts_at', '<=', now()));
                     });
                 });
             }
@@ -934,6 +984,11 @@ class AlertService
                 $alert = DB::table('alerts')->find($delivery->alert_id);
                 $payload = json_decode($alert->payload, true);
                 $allowed = $customer !== null && ($alert->type === 'expired' ? (! $this->eligible($customer) && $customer->is_verified && ! $customer->is_blocked && ! $customer->is_suspended) : $this->eligible($customer));
+                if ($allowed && $alert->type === 'prematch_drops' && ($payload['context']['provider'] ?? null) === 'pinnacle') {
+                    $drop = ($payload['context']['pinnacle_drop'] ?? []) + ['sport' => $payload['context']['sport'] ?? $payload['context']['movement']['sport'] ?? '',
+                        'sect' => $payload['context']['movement']['market'] ?? ''];
+                    $allowed = self::allowsPinnacleMarket($drop);
+                }
                 $betfairBack = null;
                 if ($allowed && $delivery->channel === 'telegram') {
                     $allowed = $customer->telegram_available && $customer->telegram_chat_id === $delivery->destination;

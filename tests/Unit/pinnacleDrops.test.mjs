@@ -18,7 +18,7 @@ function harness(alerts = [base], options = {}) {
     };
     const output = { innerHTML: '', textContent: '' };
     const state = { alerts, view: 'advanced', mode: 'prematch', sport: 'all', collapsedGroups: new Set(), flashes: new Map() };
-    const context = vm.createContext({ setTimeout() {}, clearTimeout() {}, state, matchStartLabels, URL, root: { dataset: { timezone: options.timezone ?? 'UTC' }, querySelectorAll: () => [], querySelector: selector => ({
+    const context = vm.createContext({ AbortController, setTimeout() {}, clearTimeout() {}, state, matchStartLabels, URL, root: { dataset: { timezone: options.timezone ?? 'UTC' }, querySelectorAll: () => [], querySelector: selector => ({
         '[data-pinnacle-higher]': options.higher ? { checked: true } : null,
         '[data-pinnacle-league-picker]': {
             querySelector: selector => selector === '[data-pinnacle-leagues]' ? {
@@ -104,16 +104,19 @@ test('new or changed drops flash once; initial render and identical polls do not
     assert.doesNotMatch(app.output.innerHTML, /drop-row drop-flash/);
 });
 
-test('archive renders older drops from every market without flashing historical rows', () => {
+test('archive renders retained drops without flashing and hides expired details', () => {
     const app = harness([base, { ...base, alert_key: 'handicap', sect: 'Asian Handicap', point: 4 }]);
     app.state.archive = true;
     app.state.marketFilter = 'all';
-    app.advance(12 * 3600000);
+    app.advance(12 * 60000);
     app.evaluate('receiveAlerts(state.alerts); render()');
     assert.equal(app.state.flashes.size, 0);
     assert.equal((app.output.innerHTML.match(/data-alert-index=/g) ?? []).length, 2);
     assert.match(app.output.innerHTML, /Asian Handicap/);
     assert.doesNotMatch(app.output.innerHTML, /drop-row drop-flash/);
+    app.advance(18 * 60000);
+    app.evaluate('render()');
+    assert.doesNotMatch(app.output.innerHTML, /data-alert-index=/);
 });
 
 test('prematch and live drops expire at seven minutes while archive history remains available', () => {
@@ -136,7 +139,15 @@ test('prematch and live drops expire at seven minutes while archive history rema
     }
     app.state.archive = true;
     app.state.mode = 'prematch';
-    assert.equal(app.evaluate('filtered().length'), 5);
+    assert.equal(app.evaluate('filtered().length'), 4);
+});
+
+test('archive retention uses the server expiry and keeps an alert only until its exact boundary', () => {
+    const app = harness([{...base, archive_expires_at: 1001}]);
+    app.state.archive = true;
+    assert.equal(app.evaluate('filtered().length'), 1);
+    app.advance(1000);
+    assert.equal(app.evaluate('filtered().length'), 0);
 });
 
 test('separate drops for one outcome keep their own expiry and render in arrival order', () => {
@@ -167,6 +178,37 @@ test('expired drops disappear on the existing refresh even if the request fails'
     app.evaluate(source.slice(source.indexOf('                let refreshing ='), source.indexOf('                let realtimeAttempts =')));
     await app.evaluate('refresh()');
     assert.doesNotMatch(app.output.innerHTML, /data-alert-index=/);
+});
+
+test('a stalled refresh is aborted after twenty seconds and releases the request guard', async () => {
+    const app = harness();
+    app.evaluate(`
+        globalThis.window = {location: {origin: 'https://example.test'}};
+        root.dataset.sourceUrl = '/pinnacle';
+        globalThis.updateStatus = () => {};
+        globalThis.timeoutDelay = null;
+        globalThis.timeoutCallback = null;
+        globalThis.timeoutCleared = false;
+        globalThis.setTimeout = (callback, delay) => {
+            if (delay === 20000) { timeoutDelay = delay; timeoutCallback = callback; }
+            return 77;
+        };
+        globalThis.clearTimeout = id => { if (id === 77) timeoutCleared = true; };
+        globalThis.fetch = (url, options) => new Promise((resolve, reject) => {
+            globalThis.requestSignal = options.signal;
+            options.signal.addEventListener('abort', () => reject(new Error('timeout')), {once: true});
+        });
+    `);
+    app.evaluate(source.slice(source.indexOf('                let refreshing ='), source.indexOf('                let realtimeAttempts =')));
+    const pending = app.evaluate('refresh()');
+    assert.equal(app.evaluate('timeoutDelay'), 20000);
+    assert.equal(app.evaluate('refreshing'), true);
+    app.evaluate('timeoutCallback()');
+    await pending;
+    assert.equal(app.evaluate('requestSignal.aborted'), true);
+    assert.equal(app.evaluate('refreshing'), false);
+    assert.equal(app.evaluate('timeoutCleared'), true);
+    assert.equal(app.state.alerts.length, 1);
 });
 
 test('archive load-more sends its keyset and active filters, appends once, and makes no automatic request', async () => {
@@ -218,7 +260,7 @@ test('archive reuses the existing timer only to roll over at midnight without no
 });
 
 test('archive info tooltip opens immediately on hover and toggles on mobile tap in both languages', () => {
-    const key = 'Outdated odds drop data is automatically moved to the archive and stored for 24 hours.';
+    const key = 'Incoming alerts are logged in the daily statistics counters, remain visible in the archive for 30 minutes, and are then automatically purged as outdated data.';
     const button = source.split('\n').find(line => line.includes('data-archive-info aria-label='));
     const click = button.match(/onclick="([^"]+)"/)[1];
     for (const locale of ['en', 'ka']) {
@@ -260,15 +302,15 @@ test('start windows are cumulative, include boundaries, and exclude missing, pas
     );
     const app = harness(alerts, {now});
     app.state.timeFilter = '1h';
-    assert.equal(app.evaluate('filtered().map(alert => alert.alert_key).join(",")'), '0,3600');
+    assert.equal(app.evaluate('filtered().map(alert => alert.alert_key).join(",")'), '3600');
     app.state.timeFilter = '3h';
-    assert.equal(app.evaluate('filtered().map(alert => alert.alert_key).join(",")'), '0,3600,3601,10800');
+    assert.equal(app.evaluate('filtered().map(alert => alert.alert_key).join(",")'), '3600,3601,10800');
     app.state.mode = 'live';
     assert.equal(app.evaluate('filtered().length'), 0);
     app.state.timeFilter = 'all';
-    assert.equal(app.evaluate('filtered().map(alert => alert.alert_key).join(",")'), 'live');
+    assert.equal(app.evaluate('filtered().length'), 0);
     app.state.mode = 'prematch';
-    assert.equal(app.evaluate('filtered().length'), alerts.length - 1);
+    assert.equal(app.evaluate('filtered().length'), alerts.length - 3);
 });
 
 test('calendar filters use the customer timezone across midnight and daylight saving changes', () => {
@@ -345,7 +387,6 @@ test('start countdown appears below the league in both languages and views and a
                 [172800, 'Starts in 2d 0h', 'იწყება 2 დღეში 0 სთ-ში'],
                 [86340, 'Starts in 23h 59m', 'იწყება 23 სთ 59 წთ-ში'],
                 [516960, 'Starts in 5d 23h', 'იწყება 5 დღეში 23 სთ-ში'],
-                [0, 'Starting now', 'ახლა იწყება'],
             ]) {
                 app.state.alerts[0].start_timestamp = now / 1000 + seconds;
                 app.evaluate('render()');
@@ -589,4 +630,41 @@ test('unavailable Betfair tooltip anchors to its cell when no child element exis
     assert.equal(app.evaluate('tooltip.textContent'), 'Betfair quote unavailable');
     assert.equal(app.evaluate('tooltip.style.visibility'), 'visible');
     assert.equal(app.evaluate('tooltip.style.top'), '116px');
+});
+
+
+test('prematch views hide live and kicked-off rows even with legacy all or live filters', () => {
+    const app = harness([base, {...base, alert_key: 'live', is_live: true}, {...base, alert_key: 'started', start_timestamp: 1000}, {...base, alert_key: 'future', start_timestamp: 1060}]);
+    for (const archive of [false, true]) {
+        app.state.archive = archive;
+        app.state.alerts.forEach(alert => { alert.expires_at = 2000; });
+        app.state.mode = 'all';
+        assert.equal(app.evaluate('filtered().length'), 2);
+        app.state.mode = 'live';
+        assert.equal(app.evaluate('filtered().length'), 0);
+    }
+    assert.match(source, /mode: 'prematch', sportCounts:/);
+    assert.doesNotMatch(source, /data-mode="(?:live|all)"/);
+});
+
+
+test('country precedes the league in live-refresh and archive tables without duplicate prefixes', () => {
+    for (const archive of [false, true]) {
+        for (const view of ['simple', 'advanced']) {
+            const app = harness([{...base, country: 'Uruguay', league: 'Segunda Division'}]);
+            Object.assign(app.state, {archive, view});
+            app.evaluate('render()');
+            assert.match(app.output.innerHTML, />Uruguay - Segunda Division<\/small>/);
+            assert.equal(app.evaluate('competitionLabel({country: "Uruguay", league: "Uruguay - Segunda Division"})'), 'Uruguay - Segunda Division');
+            assert.equal(app.evaluate('competitionLabel({country: "", league: "Premier League"})'), 'Unknown country - Premier League');
+        }
+    }
+    assert.match(source, /escapeHtml\(competitionLabel\(alert\)\)/);
+});
+
+test('country and championship labels escape HTML from incoming alerts', () => {
+    const app = harness([{...base, country: '<Uruguay>', league: '<Segunda Division>'}]);
+    app.evaluate('render()');
+    assert.match(app.output.innerHTML, /&lt;Uruguay(?:>|&gt;) - &lt;Segunda Division(?:>|&gt;)/);
+    assert.doesNotMatch(app.output.innerHTML, /<Uruguay>|<Segunda Division>/);
 });

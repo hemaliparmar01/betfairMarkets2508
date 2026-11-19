@@ -15,6 +15,7 @@ use Database\Factories\CustomerFactory;
 use Database\Factories\SubscriptionsFactory;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\RequestException;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -210,7 +211,7 @@ class SubscriptionTest extends TestCase
     {
         $record = $this->subscription();
         $service = app(SubscriptionService::class);
-        $service->paid($record, 'paid', 'sale', '10', 'EUR', now()->subDays(30));
+        $service->paid($record, 'paid', 'sale', '10', 'EUR', now()->subDays(31));
         $end = $this->customer->fresh()->subscription_ends_at->toDateTimeString();
         $service->failed($record, 'failure-1');
         $service->failed($record, 'failure-1');
@@ -436,10 +437,40 @@ class SubscriptionTest extends TestCase
     {
         $record = $this->subscription($gateway);
         $record->update(['status' => 'cancelled', 'auto_renew' => false]);
-        $this->customer->forceFill(['subscription_ends_at' => now()->subMinute()])->save();
+        $this->customer->forceFill(['subscription_ends_at' => now()->subDay()])->save();
         $this->artisan('subscriptions:process')->assertSuccessful();
         $this->assertSame('expired', $record->fresh()->status);
         $this->assertFalse($this->customer->fresh()->hasActiveSubscription());
+        Http::assertNothingSent();
+    }
+
+    #[TestWith(['paypal', false])]
+    #[TestWith(['bog', false])]
+    #[TestWith(['tbc_flitt', false])]
+    #[TestWith(['paypal', true])]
+    #[TestWith(['bog', true])]
+    #[TestWith(['tbc_flitt', true])]
+    public function test_paid_access_lasts_through_expiry_date_until_georgian_midnight(string $gateway, bool $autoRenew): void
+    {
+        config(['services.subscriptions.expiry_timezone' => 'Asia/Tbilisi']);
+        $this->travelTo(Carbon::parse('2026-11-18T19:59:59Z'));
+        $record = $this->subscription($gateway);
+        $record->update(['status' => 'active', 'auto_renew' => $autoRenew, 'next_billing_at' => now()->addDays(2)]);
+        $this->customer->forceFill(['subscription_starts_at' => now()->subDay(), 'subscription_ends_at' => '2026-11-18 10:00:00'])->save();
+
+        $this->artisan('subscriptions:process')->assertSuccessful();
+
+        $this->assertTrue($this->customer->fresh()->hasActiveSubscription());
+        $this->assertFalse($this->customer->fresh()->hasExpiredSubscription());
+        $this->assertSame('active', $record->fresh()->status);
+        $this->assertSame('2026-11-18 10:00:00', $this->customer->fresh()->subscription_ends_at->toDateTimeString());
+
+        $this->travel(1)->seconds();
+        $this->artisan('subscriptions:process')->assertSuccessful();
+
+        $this->assertFalse($this->customer->fresh()->hasActiveSubscription());
+        $this->assertTrue($this->customer->fresh()->hasExpiredSubscription());
+        $this->assertSame($autoRenew ? 'past_due' : 'expired', $record->fresh()->status);
         Http::assertNothingSent();
     }
 
@@ -459,7 +490,7 @@ class SubscriptionTest extends TestCase
     {
         $record = $this->subscription($gateway);
         $record->update(['status' => 'active', 'next_billing_at' => now()->subMinute()]);
-        $this->customer->forceFill(['subscription_ends_at' => now()->subMinute()])->save();
+        $this->customer->forceFill(['subscription_ends_at' => now()->subDay()])->save();
 
         $this->artisan('subscriptions:process')->assertSuccessful();
         $this->artisan('subscriptions:process')->assertSuccessful();
@@ -592,7 +623,7 @@ class SubscriptionTest extends TestCase
         $this->bogConfiguration();
         $record = $this->subscription('bog');
         $record->update(['status' => 'active', 'next_billing_at' => now()->subMinute()]);
-        $this->customer->forceFill(['subscription_ends_at' => now()->subMinute()])->save();
+        $this->customer->forceFill(['subscription_ends_at' => now()->subDay()])->save();
         Http::fake([
             'bog.example/oauth' => Http::response(['access_token' => 'bog-token']),
             'bog.example/payments/v1/ecommerce/orders/order-test/subscribe' => Http::response(['id' => 'renewal-order']),

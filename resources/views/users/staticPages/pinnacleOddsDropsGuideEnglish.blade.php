@@ -164,7 +164,7 @@
             <div class="market-activity-subsection-title [font-size:16px] font-semibold [color:var(--text-brand-60)] [margin-bottom:10px] [transition:color_0.3s] dark:[color:rgb(var(--text-soft))]">4.6 Sport Filters</div>
             <p>The page supports the following sports:</p>
             <ul class="guide-list [&_li::before]:content-['▸'] list-none p-0 [margin:8px_0_14px] [&_li]:[padding:5px_0_5px_22px] [&_li]:[position:relative] [&_li]:[font-size:13px] [&_li::before]:[position:absolute] [&_li::before]:[left:4px] [&_li::before]:[color:rgb(var(--primary))] [&_li::before]:[font-weight:700] dark:[&_li::before]:[color:rgb(var(--primary))]">
-                <li>⚽ Soccer</li>
+                <li>⚽ Football</li>
                 <li>🎾 Tennis</li>
                 <li>🏀 Basketball</li>
                 <li>🏒 Ice Hockey</li>

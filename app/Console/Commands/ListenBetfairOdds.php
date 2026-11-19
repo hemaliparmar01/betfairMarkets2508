@@ -373,6 +373,8 @@ class ListenBetfairOdds extends Command
                                 ]);
                             }
 
+                            reportSportsListenerMemory('betfair');
+
                             if ($pendingChanges['live'] === [] && $pendingChanges['prematch'] === [] && ($pendingChanges['greyhounds'] ?? []) === [] && ($pendingChanges['horse_prematch'] ?? []) === []) {
                                 EventLoop::cancel($flushTimer);
                                 $flushTimer = null;
@@ -623,7 +625,26 @@ class ListenBetfairOdds extends Command
 
     private function updateFootballCache(array $events, bool $isLive): bool
     {
-        $matches = getInRedis('Football:matches') ?? [];
+        if (count($events) > 25) {
+            $updated = false;
+            foreach (array_chunk($events, 25, preserve_keys: true) as $batch) {
+                $updated = $this->updateFootballCache($batch, $isLive) || $updated;
+            }
+
+            return $updated;
+        }
+
+        $index = getInRedis('Football:matches', fixtureIndex: true);
+        if ($index !== null) {
+            $candidates = array_filter($index['matches'], static fn (array $match): bool => ($match['result_status'] ?? '') !== 'Finished'
+                && isset($events[(string) ($match['betfair_match_id'] ?? '')]));
+            $matches = $candidates === [] ? [] : getInRedis('Football:matches', readOnly: true, snapshot: $index, matchKeys: array_keys($candidates));
+            if ($matches === null) {
+                throw new \RuntimeException('Football fixture index changed during Betfair odds update.');
+            }
+        } else {
+            $matches = getInRedis('Football:matches') ?? [];
+        }
         $existingMatches = $matches;
         $databaseOnly = [];
         $visibleEventIds = array_column(array_filter($matches, static fn (array $match): bool => ($match['result_status'] ?? '') !== 'Finished'
@@ -877,8 +898,9 @@ class ListenBetfairOdds extends Command
         unset($databaseMarkets, $previousMarkets, $storedMarkets, $previousRunner, $runner, $updatedMarkets, $marketLiquidity, $snapshots);
         if ($updated) {
             app(FootballSyncController::class)->persistOddsSnapshots($changedMatches);
-            if (array_diff_key($changedMatches, $databaseOnly) !== []) {
-                storeInRedis('Football:matches', array_replace($existingMatches, array_diff_key($matches, $databaseOnly)), 30, false, $existingMatches);
+            $cacheChanges = array_diff_key($changedMatches, $databaseOnly);
+            if ($cacheChanges !== []) {
+                storeInRedis('Football:matches', $cacheChanges, 30, false, $existingMatches, replace: $index !== null, fixtureSnapshot: $index);
             }
             unset($changedMatches);
         }

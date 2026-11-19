@@ -28,10 +28,7 @@ Schedule::call(static function (): void {
 
 Schedule::command('sports:process-match-backups --scheduled')->runInBackground()->everyMinute()->withoutOverlapping(5);
 
-Schedule::call(static function (): void {
-    $start = now('Asia/Tbilisi')->subHours(6)->startOfDay()->addHours(6)->timestamp;
-    DB::table('pinnacle_drop_archives')->where('alerted_at', '<', $start)->delete();
-})->name('pinnacle-archive-cleanup')->dailyAt('06:00')->timezone('Asia/Tbilisi')->withoutOverlapping();
+Schedule::command('pinnacle:archive-maintain')->name('pinnacle-archive-cleanup')->everyMinute()->withoutOverlapping(10);
 
 Schedule::call(static function (): void {
     DB::table('football_timeline')->where('created_at', '<=', now()->subDays(3))->delete();

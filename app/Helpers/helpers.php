@@ -3,6 +3,7 @@
 use App\Http\Controllers\Users\Football\FootballController;
 use App\Http\Controllers\Users\Football\FootballSyncController;
 use App\Http\Controllers\Users\Tennis\TennisSyncController;
+use App\Services\BasketballMatchCache;
 use App\Services\FootballMatchCache;
 use App\Services\MatchBackup;
 use App\Services\TennisMatchCache;
@@ -748,6 +749,31 @@ if (! function_exists('ApiCallPool')) {
     }
 }
 
+if (! function_exists('reportSportsListenerMemory')) {
+    function reportSportsListenerMemory(string $listener): void
+    {
+        static $lastSampleAt = 0.0;
+        $now = microtime(true);
+        if ($now - $lastSampleAt < 60) {
+            return;
+        }
+        $lastSampleAt = $now;
+        $allocatedBefore = memory_get_usage(true);
+        $cycles = gc_collect_cycles();
+        $releasedBytes = gc_mem_caches();
+        Log::info('Sports listener memory sample', [
+            'listener' => $listener,
+            'pid' => getmypid(),
+            'used_bytes' => memory_get_usage(),
+            'allocated_before_bytes' => $allocatedBefore,
+            'allocated_bytes' => memory_get_usage(true),
+            'peak_bytes' => memory_get_peak_usage(true),
+            'released_bytes' => $releasedBytes,
+            'collected_cycles' => $cycles,
+        ]);
+    }
+}
+
 if (! function_exists('queueSportsSynchronization')) {
     function queueSportsSynchronization(string $controller, string $method): void
     {
@@ -760,6 +786,9 @@ if (! function_exists('queueSportsSynchronization')) {
         try {
             dispatch(static function (CallQueuedClosure $job) use ($controller, $method, $key, $owner): void {
                 $retrying = false;
+                gc_mem_caches();
+                memory_reset_peak_usage();
+                $startedAt = hrtime(true);
                 try {
                     app($controller)->{$method}();
                 } catch (LockTimeoutException) {
@@ -768,6 +797,15 @@ if (! function_exists('queueSportsSynchronization')) {
                     if (! $retrying) {
                         Cache::store('redis')->restoreLock($key, $owner)->release();
                     }
+                    $peak = memory_get_peak_usage(true);
+                    $released = gc_mem_caches();
+                    Log::info('Sports synchronization memory sample', [
+                        'controller' => $controller, 'method' => $method, 'pid' => getmypid(),
+                        'duration_ms' => round((hrtime(true) - $startedAt) / 1_000_000, 2),
+                        'peak_bytes' => $peak, 'used_bytes' => memory_get_usage(),
+                        'allocated_bytes' => memory_get_usage(true), 'released_bytes' => $released,
+                        'retrying' => $retrying,
+                    ]);
                 }
             })->name($controller.'::'.$method)->onConnection('sports-realtime')
                 ->onQueue(str_contains($method, 'Live') ? 'sports-sync-live' : 'sports-sync-prematch')
@@ -847,22 +885,29 @@ if (! function_exists('getSportsApiProImage')) {
                     $imagePath = '/'.$directory.'/'.basename($images[0]);
                     $cacheKey = $prefix.':matches';
                     $updated = withRedisLock($cacheKey, static function () use ($cacheKey, $type, $entityId, $imagePath, $sport): bool {
-                        $matches = getInRedis($cacheKey) ?? [];
-                        $updated = false;
                         $fields = $type === 'teams'
                             ? ['home_team_logo' => 'home_team_id', 'away_team_logo' => 'away_team_id']
                             : ['tournament_logo' => in_array($sport, ['football', 'cricket'], true) ? 'tournament_id' : 'tournament_image_id'];
-                        foreach ($matches as &$match) {
-                            foreach ($fields as $field => $idField) {
-                                if ((int) ($match[$idField] ?? 0) === $entityId && ($match[$field] ?? null) !== $imagePath) {
-                                    $match[$field] = $imagePath;
-                                    $updated = true;
+                        $index = $sport === 'basketball' ? getInRedis($cacheKey, fixtureIndex: true) : null;
+                        $batches = $index === null ? [null] : array_chunk(array_keys(array_filter($index['matches'], static fn (array $match): bool => array_any($fields, static fn (string $idField): bool => (int) ($match[$idField] ?? 0) === $entityId))), 25);
+                        $updated = false;
+                        foreach ($batches as $keys) {
+                            $matches = $index === null ? (getInRedis($cacheKey) ?? []) : getInRedis($cacheKey, matchKeys: $keys, snapshot: $index);
+                            $existingMatches = $matches;
+                            $changed = false;
+                            foreach ($matches as &$match) {
+                                foreach ($fields as $field => $idField) {
+                                    if ((int) ($match[$idField] ?? 0) === $entityId && ($match[$field] ?? null) !== $imagePath) {
+                                        $match[$field] = $imagePath;
+                                        $changed = true;
+                                    }
                                 }
                             }
-                        }
-                        unset($match);
-                        if ($updated) {
-                            storeInRedis($cacheKey, $matches);
+                            unset($match);
+                            if ($changed) {
+                                storeInRedis($cacheKey, $matches, existingData: $existingMatches);
+                                $updated = true;
+                            }
                         }
 
                         return $updated;
@@ -904,9 +949,15 @@ if (! function_exists('storeInRedis')) {
      * @param  array<string, mixed>  $data
      * @param  array<string, mixed>|null  $existingData
      * @param  array<string, mixed>|null  $fixtureSnapshot  A validated fixture index for updates to existing rows.
+     * @param  string|null  $expectedSnapshot  Atomically replace an indexed snapshot only if its original bytes still match, retaining its TTL.
      */
-    function storeInRedis(string $cacheKey, array $data, int $ttlMinutes = 10, bool $mergeLifecycle = true, ?array $existingData = null, bool $replace = false, ?array $fixtureSnapshot = null): void
+    function storeInRedis(string $cacheKey, array $data, int $ttlMinutes = 10, bool $mergeLifecycle = true, ?array $existingData = null, bool $replace = false, ?array $fixtureSnapshot = null, ?string $expectedSnapshot = null): void
     {
+        if ($cacheKey === 'Basketball:matches' && app(BasketballMatchCache::class)->active()) {
+            app(BasketballMatchCache::class)->store($data, $ttlMinutes, $mergeLifecycle, $existingData);
+
+            return;
+        }
         if ($cacheKey === 'Tennis:matches') {
             $data = array_filter($data, static fn (array $match): bool => TennisSyncController::tennisCompetition($match) !== null);
             if (app(TennisMatchCache::class)->active()) {
@@ -1185,7 +1236,11 @@ if (! function_exists('storeInRedis')) {
             $marker = "\n".strtr(str_pad(decbin(hexdec(substr(hash('sha256', $metadata), 0, 15))), 64, '0', STR_PAD_LEFT), '01', " \t")."\n";
             $serialized .= $marker;
             $metadata = $canonical ? substr_replace($metadata, ',"marker":'.json_encode($marker, JSON_THROW_ON_ERROR).'}', -1) : '';
-            Redis::eval('redis.call("SET", KEYS[1], ARGV[1], "EX", ARGV[3]); if ARGV[2] ~= "" then redis.call("SET", KEYS[2], ARGV[2], "EX", ARGV[3]) else redis.call("DEL", KEYS[2]) end; return 1', 2, $cacheKey, $cacheKey.':fixtures', $serialized, $metadata, $ttlMinutes * 60);
+            if ($expectedSnapshot !== null) {
+                Redis::eval('if redis.call("GET", KEYS[1]) ~= ARGV[3] then return 0 end; local ttl = redis.call("PTTL", KEYS[1]); redis.call("SET", KEYS[1], ARGV[1], "KEEPTTL"); if ARGV[2] ~= "" then redis.call("SET", KEYS[2], ARGV[2]); if ttl >= 0 then redis.call("PEXPIRE", KEYS[2], ttl) end else redis.call("DEL", KEYS[2]) end; return 1', 2, $cacheKey, $cacheKey.':fixtures', $serialized, $metadata, $expectedSnapshot);
+            } else {
+                Redis::eval('redis.call("SET", KEYS[1], ARGV[1], "EX", ARGV[3]); if ARGV[2] ~= "" then redis.call("SET", KEYS[2], ARGV[2], "EX", ARGV[3]) else redis.call("DEL", KEYS[2]) end; return 1', 2, $cacheKey, $cacheKey.':fixtures', $serialized, $metadata, $ttlMinutes * 60);
+            }
         } else {
             if ($replace) {
                 Redis::setex($cacheKey, $ttlMinutes * 60, json_encode($mergedData));
@@ -1207,6 +1262,14 @@ if (! function_exists('getInRedis')) {
      */
     function getInRedis(string $cacheKey, bool $restoreVisibleFootballTimelines = false, bool $readOnly = false, ?array $matchIds = null, bool $fixtureIndex = false, ?array $snapshot = null, ?array $matchKeys = null, bool $marketActivityIndex = false): mixed
     {
+        if ($cacheKey === 'Basketball:matches' && app(BasketballMatchCache::class)->active()) {
+            return $fixtureIndex
+                ? app(BasketballMatchCache::class)->index()
+                : app(BasketballMatchCache::class)->read($matchIds, $matchKeys, $snapshot);
+        }
+        if ($cacheKey === 'Basketball:matches' && $fixtureIndex) {
+            return null;
+        }
         if ($cacheKey === 'Tennis:matches' && app(TennisMatchCache::class)->active()) {
             return $fixtureIndex
                 ? app(TennisMatchCache::class)->index()
@@ -1362,7 +1425,11 @@ if (! function_exists('getInRedis')) {
                 unset($match);
                 unset($savedTimelines, $timelineIds, $matchKeys, $timeline, $saved);
                 if ($changed && ! isset($selectedMatches)) {
-                    Redis::eval('if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("SET", KEYS[1], ARGV[2], "KEEPTTL") end return 0', 1, $cacheKey, $cachedData, json_encode($matches));
+                    if (config('services.football_fixture_index')) {
+                        storeInRedis($cacheKey, $matches, mergeLifecycle: false, replace: true, expectedSnapshot: $cachedData);
+                    } else {
+                        Redis::eval('if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("SET", KEYS[1], ARGV[2], "KEEPTTL") end return 0', 1, $cacheKey, $cachedData, json_encode($matches));
+                    }
                 }
             } catch (Throwable $exception) {
                 Log::warning('Football timeline read fallback unavailable', [

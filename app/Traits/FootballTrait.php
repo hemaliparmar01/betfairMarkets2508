@@ -1228,6 +1228,7 @@ trait FootballTrait
                 $getData = array_filter($getData, static fn (array $match): bool => (string) ($match['sportsApiPro_match_id'] ?? '') === $matchId);
             }
         }
+        $getData = array_filter($getData, static fn (array $match): bool => ($match['result_status'] ?? '') === 'Prematch' && (int) ($match['timestamp'] ?? 0) > time());
         $now = time();
         $type = request()->input('type', 'all');
 

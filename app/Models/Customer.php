@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Carbon;
 
 #[Fillable([
     'name',
@@ -99,13 +100,24 @@ class Customer extends Authenticatable
         return $this->admin_free_days === -1;
     }
 
+    public static function subscriptionDateCutoff(): Carbon
+    {
+        return now(config('services.subscriptions.expiry_timezone', 'Asia/Tbilisi'))->startOfDay()->utc();
+    }
+
+    public function hasExpiredSubscription(): bool
+    {
+        return ! $this->hasLifetimeAccess()
+            && ($this->subscription_ends_at?->lt(self::subscriptionDateCutoff()) ?? false);
+    }
+
     public function hasActiveSubscription(): bool
     {
         if ($this->hasLifetimeAccess()) {
             return true;
         }
 
-        return ($this->subscription_ends_at?->isFuture() ?? false)
+        return ($this->subscription_ends_at?->gte(self::subscriptionDateCutoff()) ?? false)
             && ($this->subscription_starts_at === null || $this->subscription_starts_at->lte(now()));
     }
 

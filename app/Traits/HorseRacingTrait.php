@@ -14,7 +14,7 @@ trait HorseRacingTrait
 
     protected ?int $horseracingNextPage = null;
 
-    public function getHorseRacingMatches(bool $grouped = true): array
+    public function getHorseRacingMatches(bool $grouped = true, bool $prematchOnly = false): array
     {
         if (in_array(request()->input('type'), ['ht00', '00_70', 'fav_losing', 'fav_not_winning'], true)) {
             return [];
@@ -31,7 +31,10 @@ trait HorseRacingTrait
         $today = Carbon::now($timezone)->toDateString();
         $type = request()->input('type', 'all');
         $matches = getVisibleSportsMatches('HorseRacing:matches');
-        $matches = array_values(array_filter($matches, static function (array $race) use ($today, $timezone, $type, $favorites): bool {
+        $matches = array_values(array_filter($matches, static function (array $race) use ($today, $timezone, $type, $favorites, $prematchOnly): bool {
+            if ($prematchOnly && (($race['result_status'] ?? '') !== 'Prematch' || (int) ($race['timestamp'] ?? 0) <= time())) {
+                return false;
+            }
             if (($race['result_status'] ?? '') === 'Finished' || ($race['data_sync_complete'] ?? false) !== true || Carbon::createFromTimestamp((int) $race['timestamp'], $timezone)->toDateString() !== $today) {
                 return false;
             }
@@ -114,7 +117,7 @@ trait HorseRacingTrait
 
     public function getMarketActivites(): array
     {
-        return $this->getHorseRacingMatches(false);
+        return $this->getHorseRacingMatches(false, prematchOnly: true);
     }
 
     public function getHorseRacingMatchDetail(string $matchId): ?array

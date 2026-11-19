@@ -4,6 +4,7 @@ namespace App\Providers;
 
 use App\Events\FootballSportsScoreUpdated;
 use App\Jobs\ProcessAlert;
+use App\Services\BasketballMatchCache;
 use App\Services\FootballMatchCache;
 use App\Services\TennisMatchCache;
 use Illuminate\Support\Facades\DB;
@@ -20,6 +21,7 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
+        $this->app->singleton(BasketballMatchCache::class);
         $this->app->singleton(FootballMatchCache::class);
         $this->app->singleton(TennisMatchCache::class);
 
