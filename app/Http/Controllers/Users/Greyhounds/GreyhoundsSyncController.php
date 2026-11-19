@@ -14,7 +14,7 @@ use Throwable;
 
 class GreyhoundsSyncController extends Controller
 {
-    public function syncBetFairPrematchData(): array
+    public function syncBetFairPrematchData(bool $includeMatches = true): array
     {
         $response = ApiCall('https://betfair-odds.com/betfair/v1/livemap', ['x-portal-apikey' => GetBetfairKey()], [
             'query' => ['feed' => 'greyhounds'],
@@ -37,20 +37,58 @@ class GreyhoundsSyncController extends Controller
             }
         }
 
-        return getInRedis('Greyhounds:matches') ?? [];
+        return $includeMatches ? (getInRedis('Greyhounds:matches') ?? []) : [];
     }
 
     public function mergeBetfairWebSocketData(array $events, bool $isLive = false, bool $isSnapshot = false, bool $deferIfBusy = false): ?bool
     {
+
+        $recordCache = sportsMatchRecordCache('Greyhounds:matches');
+        if ($recordCache !== null && ($isSnapshot || count($events) > 25)) {
+            $index = $recordCache->index();
+            if ($isSnapshot && $index['matches'] === []) {
+                foreach (GreyhoundsMatch::query()->with('markets')->where(fn ($query) => $query->where('result_status', '!=', 'Finished')->orWhereIn('betfair_match_id', array_keys($events)))->lazyById(10) as $stored) {
+                    $race = $stored->payload;
+                    $race['markets'] = [];
+                    foreach ($stored->markets as $selection) {
+                        $runner = $selection->payload;
+                        $race['markets'][$runner['marketId'].'_'.$runner['marketType']][$runner['runnerId'].'|'.($runner['handicap'] ?? 0)] = $runner;
+                    }
+                    $recordCache->store([$stored->unique_key => $race], 60, false, []);
+                }
+                $index = $recordCache->index();
+            }
+            if ($isSnapshot) {
+                foreach ($index['matches'] as $race) {
+                    if (($race['result_status'] ?? '') !== 'Finished' && ! array_key_exists((string) $race['betfair_match_id'], $events)) {
+                        $events[(string) $race['betfair_match_id']] = ['removed' => true];
+                    }
+                }
+            }
+            $changed = false;
+            foreach (array_chunk($events, 25, preserve_keys: true) as $batch) {
+                $result = $this->mergeBetfairWebSocketData($batch, $isLive, false, $deferIfBusy);
+                if ($result === null) {
+                    return null;
+                }
+                $changed = $result || $changed;
+            }
+
+            return $changed;
+        }
+
         return withRedisLock('Greyhounds:matches', function () use ($events, $isSnapshot): bool {
-            $matches = getInRedis('Greyhounds:matches') ?? [];
+            $index = getInRedis('Greyhounds:matches', fixtureIndex: true);
+            $keys = $index === null ? null : array_values(array_intersect_key(array_column($index['matches'], '_fixture_cache_key', 'betfair_match_id'), $events));
+            $matches = getInRedis('Greyhounds:matches', readOnly: true, matchKeys: $keys, snapshot: $index) ?? [];
+            $cachedSnapshot = $matches;
             $known = array_column($matches, 'betfair_match_id');
             $missing = array_diff(array_keys($events), $known);
             $query = GreyhoundsMatch::query()->with('markets');
             if ($matches === [] && $isSnapshot) {
                 $stored = $query->where('result_status', '!=', 'Finished')->orWhereIn('betfair_match_id', array_keys($events))->get();
             } else {
-                $stored = $missing === [] ? collect() : $query->whereIn('betfair_match_id', $missing)->get();
+                $stored = $missing === [] ? collect() : $query->whereIn('betfair_match_id', $missing)->lazyById(10);
             }
             foreach ($stored as $record) {
                 $race = $record->payload;
@@ -199,7 +237,7 @@ class GreyhoundsSyncController extends Controller
                 $this->storeMatchesInDatabase($changed);
             }
             if ($changed !== [] || $stored->isNotEmpty()) {
-                storeInRedis('Greyhounds:matches', $matches, 60);
+                storeInRedis('Greyhounds:matches', $matches, 60, existingData: $cachedSnapshot);
             }
 
             return $changed !== [];
@@ -208,6 +246,14 @@ class GreyhoundsSyncController extends Controller
 
     private function storeMatchesInDatabase(array $matches): void
     {
+
+        if (count($matches) > 10) {
+            foreach (array_chunk($matches, 10, preserve_keys: true) as $batch) {
+                $this->storeMatchesInDatabase($batch);
+            }
+
+            return;
+        }
         $cleaned = array_fill_keys(Redis::zrangebyscore('Greyhounds:matches:cleaned', time(), '+inf'), true);
         if ($cleaned !== []) {
             $matches = array_filter($matches, static fn (array $match): bool => ! isset($cleaned[$match['unique_key']]));

@@ -26,10 +26,8 @@ use App\Http\Controllers\Users\Cricket\CricketSyncController;
 use App\Http\Controllers\Users\Football\FootballSyncController;
 use App\Http\Controllers\Users\IceHockey\IceHockeySyncController;
 use App\Http\Controllers\Users\Tennis\TennisSyncController;
-use App\Services\BasketballMatchCache;
 use App\Services\FootballMatchCache;
 use App\Services\MatchBackup;
-use App\Services\TennisMatchCache;
 use Illuminate\Console\Command;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Queue\CallQueuedClosure;
@@ -463,7 +461,7 @@ class ListenSportsApiPro extends Command
                 }
             }
         }
-        if ($sport === 'basketball' && $isLiveScores && count($events) > 25 && app(BasketballMatchCache::class)->active()) {
+        if ($isLiveScores && count($events) > 25 && sportsMatchRecordCache($cacheKey) !== null && $sport !== 'football') {
             foreach (array_chunk($events, 25) as $batch) {
                 $this->processSportsFrame($sport, $config, array_replace($frame, ['data' => ['events' => $batch]]), $socket, $subscriptions, $cancellation, $deferOnContention);
             }
@@ -477,8 +475,7 @@ class ListenSportsApiPro extends Command
                 return $this->updateFootballCache($channel, $frameData, $type, $syncedIds);
             }
 
-            $individualMatches = ($sport === 'tennis' && app(TennisMatchCache::class)->active())
-                || ($sport === 'basketball' && app(BasketballMatchCache::class)->active());
+            $individualMatches = sportsMatchRecordCache($cacheKey) !== null;
             $cachedMatches = $frameIds === [] ? null : (getInRedis($cacheKey, matchIds: $individualMatches ? $frameIds : null) ?? []);
             if ($cachedMatches !== null) {
                 $syncedIds = $this->syncedMatchIds($cacheKey, $frameIds, $cachedMatches);
@@ -528,6 +525,7 @@ class ListenSportsApiPro extends Command
                 Log::warning('SportsAPI Pro live update broadcast failed', ['sport' => $sport, 'channel' => $channel, 'exception' => $e::class]);
             }
         }
+        sportsMatchRecordCache($cacheKey, activeOnly: false)?->releaseReadSnapshot();
     }
 
     /**
@@ -616,7 +614,7 @@ class ListenSportsApiPro extends Command
                 }
                 $cancellation->throwIfRequested();
                 $updated = withRedisLock($cacheKey, function () use ($sport, $config, $cacheKey, $matchId, $restMatch): bool {
-                    $index = in_array($sport, ['football', 'basketball'], true) ? getInRedis($cacheKey, fixtureIndex: true) : null;
+                    $index = getInRedis($cacheKey, fixtureIndex: true);
                     $matches = $index === null
                         ? (getInRedis($cacheKey) ?? [])
                         : getInRedis($cacheKey, readOnly: true, matchIds: [$matchId], snapshot: $index);
@@ -1150,7 +1148,7 @@ class ListenSportsApiPro extends Command
     private function syncedMatchIds(string $cacheKey, ?array $onlyIds = null, ?array $cachedMatches = null): array
     {
         $matches = $cachedMatches;
-        if ($matches === null && in_array($cacheKey, ['Football:matches', 'Basketball:matches'], true)) {
+        if ($matches === null) {
             $index = getInRedis($cacheKey, fixtureIndex: true);
             $matches = $index['matches'] ?? null;
         }

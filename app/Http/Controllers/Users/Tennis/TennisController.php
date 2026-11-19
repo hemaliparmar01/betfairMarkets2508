@@ -73,7 +73,9 @@ class TennisController extends Controller
 
             if ($matchId !== null && isset($allowedValues[$poll]) && in_array($value, $allowedValues[$poll], true) && ! request()->session()->has($sessionKey)) {
                 withRedisLock('Tennis:matches', function () use ($customerId, $matchId, $poll, $sessionKey, $value): void {
-                    $matches = getInRedis('Tennis:matches') ?? [];
+                    $matches = str_starts_with((string) $matchId, 'betfair:')
+                        ? sportsMatchesByBetfairId('Tennis:matches', substr((string) $matchId, 8))
+                        : (getInRedis('Tennis:matches', matchIds: [$matchId]) ?? []);
                     $matchKey = null;
 
                     foreach ($matches as $key => $match) {

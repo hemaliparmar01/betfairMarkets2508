@@ -1,3 +1,7 @@
+import { createMarketQuoteStream, mergeMarketQuote, marketStreamKey } from './marketActivityStream.js';
+window.createMarketQuoteStream = createMarketQuoteStream;
+window.mergeMarketQuote = mergeMarketQuote;
+window.marketStreamKey = marketStreamKey;
 import { updateFixtureRows } from './auth/dom.js';
 import { watchSubscriptionStatus } from './subscriptionStatus.js';
 import { bindCheckoutConsent } from './checkoutConsent.js';

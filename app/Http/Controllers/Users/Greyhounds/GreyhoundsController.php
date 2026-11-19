@@ -104,7 +104,7 @@ class GreyhoundsController extends Controller
 
             if ($matchId !== null && isset($allowedValues[$poll]) && in_array($value, $allowedValues[$poll], true) && ! request()->session()->has($sessionKey)) {
                 withRedisLock('Greyhounds:matches', function () use ($customerId, $matchId, $poll, $sessionKey, $value): void {
-                    $matches = getInRedis('Greyhounds:matches') ?? [];
+                    $matches = sportsMatchesByBetfairId('Greyhounds:matches', (string) $matchId);
                     $matchKey = null;
 
                     foreach ($matches as $key => $match) {

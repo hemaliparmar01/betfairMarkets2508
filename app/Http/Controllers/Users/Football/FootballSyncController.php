@@ -650,7 +650,7 @@ class FootballSyncController extends Controller
         return $match !== $original;
     }
 
-    public function syncBetFairLiveData()
+    public function syncBetFairLiveData(bool $includeMatches = true)
     {
         $url = 'https://betfair-odds.com/betfair/v1/livemap?feed=live&sports=soccer';
         $key = 'x-portal-apikey: '.$this->getBetferKeys;
@@ -659,7 +659,17 @@ class FootballSyncController extends Controller
         if (! is_array($liveData['liveMap'] ?? null)) {
             Log::warning('Football Betfair live snapshot unavailable; existing matches retained', $apiDiagnostics ?? []);
 
-            return getInRedis($cacheKey) ?? [];
+            return $includeMatches ? (getInRedis($cacheKey) ?? []) : [];
+        }
+
+        if (! $includeMatches && app(FootballMatchCache::class)->active()) {
+            foreach (array_chunk($liveData['liveMap'], 25, preserve_keys: true) as $batch) {
+                $rows = withRedisLock($cacheKey, fn (): array => $this->readBetFairData(['liveMap' => $batch], $cacheKey, true, 10, targeted: true), 30);
+                $this->storeMatchesInDatabase($rows);
+                unset($rows);
+            }
+
+            return [];
         }
 
         $matches = withRedisLock(
@@ -672,7 +682,7 @@ class FootballSyncController extends Controller
         return $matches;
     }
 
-    public function syncBetFairPrematchData()
+    public function syncBetFairPrematchData(bool $includeMatches = true)
     {
         $url = 'https://betfair-odds.com/betfair/v1/livemap?feed=prematch&sports=soccer';
         $key = 'x-portal-apikey: '.$this->getBetferKeys;
@@ -681,7 +691,17 @@ class FootballSyncController extends Controller
         if (! is_array($liveData['liveMap'] ?? null)) {
             Log::warning('Football Betfair prematch snapshot unavailable; existing matches retained', $apiDiagnostics ?? []);
 
-            return getInRedis($cacheKey) ?? [];
+            return $includeMatches ? (getInRedis($cacheKey) ?? []) : [];
+        }
+
+        if (! $includeMatches && app(FootballMatchCache::class)->active()) {
+            foreach (array_chunk($liveData['liveMap'], 25, preserve_keys: true) as $batch) {
+                $rows = withRedisLock($cacheKey, fn (): array => $this->readBetFairData(['liveMap' => $batch], $cacheKey, false, 30, targeted: true), 30);
+                $this->storeMatchesInDatabase($rows);
+                unset($rows);
+            }
+
+            return [];
         }
 
         $matches = withRedisLock(
@@ -694,7 +714,7 @@ class FootballSyncController extends Controller
         return $matches;
     }
 
-    public function syncSportsApiProLiveData()
+    public function syncSportsApiProLiveData(bool $includeMatches = true)
     {
         $url = 'https://api.sportsapipro.com/v2/football/live/all';
         $key = 'x-api-key: '.$this->getsportsAPIProKeys;
@@ -707,6 +727,20 @@ class FootballSyncController extends Controller
             return [];
         }
 
+        if (! $includeMatches && app(FootballMatchCache::class)->active()) {
+            $firstBatch = true;
+            foreach (array_chunk($liveData['events'], 25, preserve_keys: true) ?: [[]] as $batch) {
+                $rows = $this->readsportApiData(['events' => $batch], $cacheKey, true, 10, restoreDatabase: $firstBatch);
+                $this->storeMatchesInDatabase($rows, persistMarkets: false);
+                $this->queueBet365Favorites(matches: $rows);
+                $firstBatch = false;
+                unset($rows);
+            }
+            $this->mergePinnacleDrops(getInRedis('Pinnacle:drops')['signals'] ?? []);
+
+            return [];
+        }
+
         $matches = $this->readsportApiData($liveData, $cacheKey, true, 10);
         $this->storeMatchesInDatabase($matches, persistMarkets: false);
         $this->queueBet365Favorites(matches: $matches);
@@ -715,7 +749,7 @@ class FootballSyncController extends Controller
         return $matches;
     }
 
-    public function syncSportsApiProPrematchData()
+    public function syncSportsApiProPrematchData(bool $includeMatches = true)
     {
         $cacheKey = $this->sports.':matches';
         $key = 'x-api-key: '.$this->getsportsAPIProKeys;
@@ -726,6 +760,20 @@ class FootballSyncController extends Controller
             Log::warning('Football SportsAPI Pro schedule snapshot unavailable; existing matches retained', $apiDiagnostics ?? []);
 
             return;
+        }
+
+        if (! $includeMatches && app(FootballMatchCache::class)->active()) {
+            $firstBatch = true;
+            foreach (array_chunk($scheduleData['events'], 25, preserve_keys: true) ?: [[]] as $batch) {
+                $rows = $this->readsportApiData(['events' => $batch], $cacheKey, false, 30, restoreDatabase: $firstBatch);
+                $this->storeMatchesInDatabase($rows, persistMarkets: false);
+                $this->queueBet365Favorites(matches: $rows);
+                $firstBatch = false;
+                unset($rows);
+            }
+            $this->mergePinnacleDrops(getInRedis('Pinnacle:drops')['signals'] ?? []);
+
+            return [];
         }
 
         $matches = $this->readsportApiData(['events' => $scheduleData['events']], $cacheKey, false, 30);
@@ -1688,9 +1736,33 @@ class FootballSyncController extends Controller
         return true;
     }
 
-    private function readBetFairData(array $payloads, string $cacheKey, bool $isLiveApi, int $ttlSeconds)
+    private function betfairSnapshotMatches(array $events): array
     {
-        $getExistingRecords = getInRedis($cacheKey) ?? [];
+        $index = getInRedis('Football:matches', fixtureIndex: true);
+        if ($index === null) {
+            return getInRedis('Football:matches') ?? [];
+        }
+        $byBetfair = array_column($index['matches'], '_fixture_cache_key', 'betfair_match_id');
+        $keys = [];
+        foreach ($events as $eventId => $event) {
+            $key = $byBetfair[$eventId] ?? null;
+            if ($key === null && isset($event['team1'], $event['team2'], $event['openTimestamp'])) {
+                $starts = Carbon::parse($event['openTimestamp'])->timestamp;
+                $key = $this->checkIfRecordExistsOnAnotherApi($this->generateUniqueKey($event['team1'], $event['team2'], $starts),
+                    $event['team1'], $event['team2'], $starts, $index['matches']);
+            }
+            if ($key !== null) {
+                $keys[$key] = true;
+            }
+        }
+        $keys = array_keys($keys);
+
+        return getInRedis('Football:matches', readOnly: true, matchKeys: $keys, snapshot: $index);
+    }
+
+    private function readBetFairData(array $payloads, string $cacheKey, bool $isLiveApi, int $ttlSeconds, bool $targeted = false): array
+    {
+        $getExistingRecords = $targeted ? $this->betfairSnapshotMatches($payloads['liveMap'] ?? []) : (getInRedis($cacheKey) ?? []);
         $mainArray = array_filter($getExistingRecords, static fn (array $match): bool => ($match['result_status'] ?? null) === 'Finished');
         $databaseMarkets = [];
         $databaseLookupKeys = [];
@@ -1934,7 +2006,7 @@ class FootballSyncController extends Controller
         return $mainArray;
     }
 
-    private function readsportApiData(array $payloads, string $cacheKey, bool $isLive, int $ttlSeconds): array
+    private function readsportApiData(array $payloads, string $cacheKey, bool $isLive, int $ttlSeconds, bool $restoreDatabase = true): array
     {
         $payloads['events'] = array_filter($payloads['events'] ?? [], static fn (array $event): bool => self::allowsFootballCompetition([
             'tournament' => $event['tournament']['name'] ?? '',
@@ -1975,7 +2047,7 @@ class FootballSyncController extends Controller
             $getSportsImage('tournaments', is_array($payload['tournament'] ?? null) ? ($payload['tournament']['id'] ?? null) : null);
         }
 
-        return withRedisLock($cacheKey, function () use ($payloads, $cacheKey, $isLive, $ttlSeconds, $sportsImages): array {
+        return withRedisLock($cacheKey, function () use ($payloads, $cacheKey, $isLive, $ttlSeconds, $sportsImages, $restoreDatabase): array {
             $index = getInRedis($cacheKey, fixtureIndex: true);
             if ($index !== null) {
                 $ids = array_fill_keys(array_column($payloads['events'], 'id'), true);
@@ -1992,7 +2064,7 @@ class FootballSyncController extends Controller
             $existingMatches = $getExistingRecords;
             $databaseMatches = array_filter($getExistingRecords, static fn (array $match): bool => ($match['result_status'] ?? null) === 'Finished');
 
-            if (! $isLive) {
+            if (! $isLive && $restoreDatabase) {
                 $knownIds = array_filter(array_merge(array_column($index['matches'] ?? $getExistingRecords, 'sportsApiPro_match_id'), array_column($payloads['events'] ?? [], 'id')), static fn (mixed $id): bool => is_scalar($id) && ctype_digit((string) $id) && (int) $id > 0);
                 $storedMatches = FootballMatch::query()->with('markets')
                     ->where('result_status', 'Prematch')->where('start_timestamp', '>=', time())

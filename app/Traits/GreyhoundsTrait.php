@@ -32,12 +32,17 @@ trait GreyhoundsTrait
         $timezone = getCurrentUserTimezone();
         $today = Carbon::now($timezone)->toDateString();
         $type = request()->input('type', 'all');
+        $index = getInRedis('Greyhounds:matches', fixtureIndex: true);
+        $raceMetadata = $index === null ? getVisibleSportsMatches('Greyhounds:matches')
+            : array_map(static fn (array $race): array => $race + ['markets' => $race['_sort_markets'] ?? []],
+                array_filter($index['matches'], static fn (array $race): bool => ! MatchBackup::isHidden($race, 'greyhounds')));
+
         $matches = array_map(function (array $race): array {
             $race['country'] = $this->getGreyhoundsCountry($race);
             $race['details_available'] = now()->timestamp >= (int) $race['timestamp'] - 300;
 
             return $race;
-        }, getVisibleSportsMatches('Greyhounds:matches') ?? []);
+        }, $raceMetadata ?? []);
         $boundaries = [];
         foreach ($matches as $race) {
             if (($race['result_status'] ?? '') === 'Finished') {
@@ -75,6 +80,11 @@ trait GreyhoundsTrait
         $this->greyhoundsHasMore = $offset + $perPage < count($matches);
         $this->greyhoundsNextPage = $this->greyhoundsHasMore ? $page + 1 : null;
         $matches = array_slice($matches, $offset, $perPage);
+        if ($index !== null) {
+            $pageMatches = getInRedis('Greyhounds:matches', readOnly: true, matchKeys: array_column($matches, 'unique_key'), snapshot: $index);
+            $matches = array_values(array_filter(array_map(static fn (array $entry): ?array => isset($pageMatches[$entry['unique_key']])
+                ? prepareMatchOddsMonitoring(array_replace($pageMatches[$entry['unique_key']], array_intersect_key($entry, ['details_available' => true, 'country' => true])), true) : null, $matches)));
+        }
         $ids = array_column($matches, 'betfair_match_id');
         $votes = $ids === [] ? collect() : PredictionVote::query()->where('sport', 'greyhounds')->whereIn('match_id', $ids)->where('poll', 'winner')->select('match_id', 'value')->selectRaw('COUNT(*) as total')->groupBy('match_id', 'value')->get()->groupBy('match_id');
         $customerVotes = $customerId === null || $ids === [] ? [] : PredictionVote::query()->where('sport', 'greyhounds')->where('customer_id', $customerId)->whereIn('match_id', $ids)->where('poll', 'winner')->pluck('value', 'match_id')->all();
@@ -141,7 +151,7 @@ trait GreyhoundsTrait
     public function getGreyhoundsMatchDetail(string $matchId): ?array
     {
         // $match = array_find(getVisibleSportsMatches('Greyhounds:matches') ?? [], static fn (array $race): bool => (string) $race['betfair_match_id'] === $matchId);
-        $match = array_find(getInRedis('Greyhounds:matches') ?? [], static fn (array $candidate): bool => (string) ($candidate['betfair_match_id'] ?? '') === $matchId && ! MatchBackup::isHidden($candidate, 'greyhounds'));
+        $match = array_find(sportsMatchesByBetfairId('Greyhounds:matches', $matchId), static fn (array $candidate): bool => (string) ($candidate['betfair_match_id'] ?? '') === $matchId && ! MatchBackup::isHidden($candidate, 'greyhounds'));
         if ($match === null) {
             $stored = GreyhoundsMatch::query()->with('markets')->where('betfair_match_id', $matchId)->first();
             if ($stored === null) {

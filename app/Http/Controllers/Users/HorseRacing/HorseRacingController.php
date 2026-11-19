@@ -103,7 +103,7 @@ class HorseRacingController extends Controller
 
             if ($matchId !== null && isset($allowedValues[$poll]) && in_array($value, $allowedValues[$poll], true) && ! request()->session()->has($sessionKey)) {
                 withRedisLock('HorseRacing:matches', function () use ($customerId, $matchId, $poll, $sessionKey, $value): void {
-                    $matches = getInRedis('HorseRacing:matches') ?? [];
+                    $matches = sportsMatchesByBetfairId('HorseRacing:matches', (string) $matchId);
                     $matchKey = null;
 
                     foreach ($matches as $key => $match) {

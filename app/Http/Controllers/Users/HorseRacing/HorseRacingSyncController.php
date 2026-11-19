@@ -14,7 +14,7 @@ use Throwable;
 
 class HorseRacingSyncController extends Controller
 {
-    public function syncBetFairPrematchData(): array
+    public function syncBetFairPrematchData(bool $includeMatches = true): array
     {
         $response = ApiCall('https://betfair-odds.com/betfair/v1/livemap', ['x-portal-apikey' => GetBetfairKey()], [
             'query' => ['feed' => 'horse_prematch'],
@@ -37,20 +37,58 @@ class HorseRacingSyncController extends Controller
             }
         }
 
-        return getInRedis('HorseRacing:matches') ?? [];
+        return $includeMatches ? (getInRedis('HorseRacing:matches') ?? []) : [];
     }
 
     public function mergeBetfairWebSocketData(array $events, bool $isLive = false, bool $isSnapshot = false, bool $deferIfBusy = false): ?bool
     {
+
+        $recordCache = sportsMatchRecordCache('HorseRacing:matches');
+        if ($recordCache !== null && ($isSnapshot || count($events) > 25)) {
+            $index = $recordCache->index();
+            if ($isSnapshot && $index['matches'] === []) {
+                foreach (HorseRacingMatch::query()->with('markets')->where(fn ($query) => $query->where('result_status', '!=', 'Finished')->orWhereIn('betfair_match_id', array_keys($events)))->lazyById(10) as $stored) {
+                    $race = $stored->payload;
+                    $race['markets'] = [];
+                    foreach ($stored->markets as $selection) {
+                        $runner = $selection->payload;
+                        $race['markets'][$runner['marketId'].'_'.$runner['marketType']][$runner['runnerId'].'|'.($runner['handicap'] ?? 0)] = $runner;
+                    }
+                    $recordCache->store([$stored->unique_key => $race], 60, false, []);
+                }
+                $index = $recordCache->index();
+            }
+            if ($isSnapshot) {
+                foreach ($index['matches'] as $race) {
+                    if (($race['result_status'] ?? '') !== 'Finished' && ! array_key_exists((string) $race['betfair_match_id'], $events)) {
+                        $events[(string) $race['betfair_match_id']] = ['removed' => true];
+                    }
+                }
+            }
+            $changed = false;
+            foreach (array_chunk($events, 25, preserve_keys: true) as $batch) {
+                $result = $this->mergeBetfairWebSocketData($batch, $isLive, false, $deferIfBusy);
+                if ($result === null) {
+                    return null;
+                }
+                $changed = $result || $changed;
+            }
+
+            return $changed;
+        }
+
         return withRedisLock('HorseRacing:matches', function () use ($events, $isSnapshot): bool {
-            $matches = getInRedis('HorseRacing:matches') ?? [];
+            $index = getInRedis('HorseRacing:matches', fixtureIndex: true);
+            $keys = $index === null ? null : array_values(array_intersect_key(array_column($index['matches'], '_fixture_cache_key', 'betfair_match_id'), $events));
+            $matches = getInRedis('HorseRacing:matches', readOnly: true, matchKeys: $keys, snapshot: $index) ?? [];
+            $cachedSnapshot = $matches;
             $known = array_column($matches, 'betfair_match_id');
             $missing = array_diff(array_keys($events), $known);
             $query = HorseRacingMatch::query()->with('markets');
             if ($matches === [] && $isSnapshot) {
                 $stored = $query->where('result_status', '!=', 'Finished')->orWhereIn('betfair_match_id', array_keys($events))->get();
             } else {
-                $stored = $missing === [] ? collect() : $query->whereIn('betfair_match_id', $missing)->get();
+                $stored = $missing === [] ? collect() : $query->whereIn('betfair_match_id', $missing)->lazyById(10);
             }
             foreach ($stored as $record) {
                 $race = $record->payload;
@@ -199,19 +237,19 @@ class HorseRacingSyncController extends Controller
                 $this->storeMatchesInDatabase($changed);
             }
             if ($changed !== [] || $stored->isNotEmpty()) {
-                storeInRedis('HorseRacing:matches', $matches, 60);
+                storeInRedis('HorseRacing:matches', $matches, 60, existingData: $cachedSnapshot);
             }
 
             return $changed !== [];
         }, $deferIfBusy ? 0 : 5);
     }
 
-    public function syncSportsApiProPrematchData(): array
+    public function syncSportsApiProPrematchData(bool $includeMatches = true): array
     {
-        return $this->syncSportsApiProLiveData(Carbon::now(getCurrentUserTimezone())->toDateString() === gmdate('Y-m-d') ? 'today' : 'tomorrow');
+        return $this->syncSportsApiProLiveData(Carbon::now(getCurrentUserTimezone())->toDateString() === gmdate('Y-m-d') ? 'today' : 'tomorrow', $includeMatches);
     }
 
-    public function syncSportsApiProLiveData(string $period = 'live'): array
+    public function syncSportsApiProLiveData(string $period = 'live', bool $includeMatches = true): array
     {
         if (! in_array($period, ['live', 'today', 'tomorrow'], true)) {
             return [];
@@ -228,6 +266,20 @@ class HorseRacingSyncController extends Controller
 
             return [];
         }
+        $changed = $this->mergeSportsRaceMetadata($data);
+        if ($changed) {
+            try {
+                Event::dispatch(new HorseRacingSportsScoreUpdated);
+            } catch (Throwable $e) {
+                Log::warning('Horse Racing metadata refresh broadcast failed', ['exception' => $e::class]);
+            }
+        }
+
+        return $includeMatches ? (getInRedis('HorseRacing:matches') ?? []) : [];
+    }
+
+    private function mergeSportsRaceMetadata(array $data): bool
+    {
         $leagues = $data['leagues'];
         $normalize = static fn (string $name): string => preg_replace('/[^a-z0-9]/', '', strtolower(preg_replace('/\([^)]*\)|^\d+\.\s*/', '', $name)));
         $index = [];
@@ -244,70 +296,80 @@ class HorseRacingSyncController extends Controller
                 $index[$course][] = ['timestamp' => $timestamp, 'horses' => $horses, 'league' => $league['league']];
             }
         }
-        $changed = withRedisLock('HorseRacing:matches', function () use ($index, $normalize): bool {
-            $matches = getInRedis('HorseRacing:matches') ?? [];
-            $updated = [];
-            foreach ($matches as $key => &$race) {
-                if (($race['result_status'] ?? '') === 'Finished') {
-                    continue;
-                }
-                $marketKey = $race['betfair_match_id'].'_WIN';
-                $runners = $race['markets'][$marketKey] ?? [];
-                $names = array_unique(array_map(static fn (array $runner): string => $normalize($runner['runner']), $runners));
-                $candidates = array_values(array_filter($index[$normalize($race['team1'])] ?? [], static fn (array $candidate): bool => abs($candidate['timestamp'] - $race['timestamp']) <= 900 && count(array_intersect($names, array_keys($candidate['horses']))) >= 2));
-                if (count($candidates) !== 1) {
-                    continue;
-                }
-                $before = $race;
-                $candidate = $candidates[0];
-                $race['sportsApiPro_match_id'] = $candidate['league']['leagueId'].'|'.$candidate['timestamp'];
-                $race['country'] = $candidate['league']['country'] ?? $race['country'] ?? null;
-                $race['race_name'] = $candidate['league']['name'] ?? $race['team2'];
-                foreach ($race['markets'] as &$selections) {
-                    foreach ($selections as &$runner) {
-                        $horse = $candidate['horses'][$normalize($runner['runner'])] ?? null;
-                        if ($horse === null) {
-                            continue;
-                        }
-                        $runner['sports_api_pro_runner_id'] = $horse['id'];
-                        if (ctype_digit((string) ($horse['homeTeam']['shortName'] ?? ''))) {
-                            $runner['number'] = (int) $horse['homeTeam']['shortName'];
-                        }
+
+        return withRedisLock('HorseRacing:matches', function () use ($index, $normalize): bool {
+            $cache = sportsMatchRecordCache('HorseRacing:matches');
+            $catalog = $cache?->index();
+            $batches = $catalog === null ? [null] : array_chunk(array_keys($catalog['matches']), 10);
+            $hasChanges = false;
+            foreach ($batches as $keys) {
+                $matches = getInRedis('HorseRacing:matches', readOnly: true, matchKeys: $keys, snapshot: $catalog) ?? [];
+                $cachedSnapshot = $matches;
+                $updated = [];
+                foreach ($matches as $key => &$race) {
+                    if (($race['result_status'] ?? '') === 'Finished') {
+                        continue;
                     }
-                    unset($runner);
+                    $marketKey = $race['betfair_match_id'].'_WIN';
+                    $runners = $race['markets'][$marketKey] ?? [];
+                    $names = array_unique(array_map(static fn (array $runner): string => $normalize($runner['runner']), $runners));
+                    $candidates = array_values(array_filter($index[$normalize($race['team1'])] ?? [], static fn (array $candidate): bool => abs($candidate['timestamp'] - $race['timestamp']) <= 900 && count(array_intersect($names, array_keys($candidate['horses']))) >= 2));
+                    if (count($candidates) !== 1) {
+                        continue;
+                    }
+                    $before = $race;
+                    $candidate = $candidates[0];
+                    $race['sportsApiPro_match_id'] = $candidate['league']['leagueId'].'|'.$candidate['timestamp'];
+                    $race['country'] = $candidate['league']['country'] ?? $race['country'] ?? null;
+                    $race['race_name'] = $candidate['league']['name'] ?? $race['team2'];
+                    foreach ($race['markets'] as &$selections) {
+                        foreach ($selections as &$runner) {
+                            $horse = $candidate['horses'][$normalize($runner['runner'])] ?? null;
+                            if ($horse === null) {
+                                continue;
+                            }
+                            $runner['sports_api_pro_runner_id'] = $horse['id'];
+                            if (ctype_digit((string) ($horse['homeTeam']['shortName'] ?? ''))) {
+                                $runner['number'] = (int) $horse['homeTeam']['shortName'];
+                            }
+                        }
+                        unset($runner);
+                    }
+                    unset($selections);
+                    $race['sports_status'] = array_values(array_unique(array_column($candidate['horses'], 'status')));
+                    if ($candidate['timestamp'] <= time() && array_all($candidate['horses'], static fn (array $horse): bool => ($horse['status'] ?? '') === 'finished')) {
+                        $race['result_status'] = 'Finished';
+                        $race['minutes_status'] = 'Finished';
+                        $race['feed_available'] = false;
+                    }
+                    if ($race !== $before) {
+                        $updated[$key] = $race;
+                    }
                 }
-                unset($selections);
-                $race['sports_status'] = array_values(array_unique(array_column($candidate['horses'], 'status')));
-                if ($candidate['timestamp'] <= time() && array_all($candidate['horses'], static fn (array $horse): bool => ($horse['status'] ?? '') === 'finished')) {
-                    $race['result_status'] = 'Finished';
-                    $race['minutes_status'] = 'Finished';
-                    $race['feed_available'] = false;
+                unset($race);
+                if ($updated !== []) {
+                    $this->storeMatchesInDatabase($updated);
+                    storeInRedis('HorseRacing:matches', $matches, 60, existingData: $cachedSnapshot);
                 }
-                if ($race !== $before) {
-                    $updated[$key] = $race;
-                }
-            }
-            unset($race);
-            if ($updated !== []) {
-                $this->storeMatchesInDatabase($updated);
-                storeInRedis('HorseRacing:matches', $matches, 60);
+
+                $hasChanges = $updated !== [] || $hasChanges;
+                unset($matches, $cachedSnapshot, $updated);
             }
 
-            return $updated !== [];
+            return $hasChanges;
         });
-        if ($changed) {
-            try {
-                Event::dispatch(new HorseRacingSportsScoreUpdated);
-            } catch (Throwable $e) {
-                Log::warning('Horse Racing metadata refresh broadcast failed', ['exception' => $e::class]);
-            }
-        }
-
-        return getInRedis('HorseRacing:matches') ?? [];
     }
 
     private function storeMatchesInDatabase(array $matches): void
     {
+
+        if (count($matches) > 10) {
+            foreach (array_chunk($matches, 10, preserve_keys: true) as $batch) {
+                $this->storeMatchesInDatabase($batch);
+            }
+
+            return;
+        }
         $cleaned = array_fill_keys(Redis::zrangebyscore('HorseRacing:matches:cleaned', time(), '+inf'), true);
         if ($cleaned !== []) {
             $matches = array_filter($matches, static fn (array $match): bool => ! isset($cleaned[$match['unique_key']]));

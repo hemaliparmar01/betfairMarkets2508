@@ -73,7 +73,7 @@ class AmericanFootballController extends Controller
 
             if ($matchId !== null && isset($allowedValues[$poll]) && in_array($value, $allowedValues[$poll], true) && ! request()->session()->has($sessionKey)) {
                 withRedisLock('AmericanFootball:matches', function () use ($customerId, $matchId, $poll, $sessionKey, $value): void {
-                    $matches = getInRedis('AmericanFootball:matches') ?? [];
+                    $matches = getInRedis('AmericanFootball:matches', matchIds: [$matchId]) ?? [];
                     $matchKey = null;
 
                     foreach ($matches as $key => $match) {

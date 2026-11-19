@@ -29,13 +29,15 @@ trait IceHockeyTrait
             abort_unless($checkAuthAndSubscription['display_odds'], 403, __('An active 7-day free trial or paid subscription is required to use smart filters.'));
         }
 
-        $visibleMatches = getVisibleSportsMatches('IceHockey:matches');
+        $index = getInRedis('IceHockey:matches', fixtureIndex: true);
+        $visibleMatches = $index === null ? getVisibleSportsMatches('IceHockey:matches')
+            : array_filter($index['matches'], static fn (array $match): bool => ! MatchBackup::isHidden($match, 'icehockey'));
         $customerId = request()->user('customers')?->getAuthIdentifier();
         $favoriteKeys = $customerId === null ? [] : array_fill_keys(Favorite::query()->where('sport', 'icehockey')->where('customer_id', $customerId)->pluck('event_key')->all(), true);
         $timezone = getCurrentUserTimezone();
         $today = Carbon::now($timezone)->toDateString();
         $type = request()->input('type', 'all');
-        $matches = array_filter($visibleMatches, static function (array $match) use ($today, $timezone, $type, $favoriteKeys, $prematchOnly): bool {
+        $matches = array_filter($visibleMatches, static function (array $match) use ($today, $timezone, $type, $favoriteKeys, $index, $prematchOnly): bool {
             if ($prematchOnly && (($match['result_status'] ?? '') !== 'Prematch' || (int) ($match['timestamp'] ?? 0) <= time())) {
                 return false;
             }
@@ -64,7 +66,7 @@ trait IceHockeyTrait
                         'away' => $type === 'fav_losing' ? $match['away_score'] < $match['home_score'] : $match['away_score'] <= $match['home_score'],
                         default => false,
                     },
-                'prematch_drops', 'market_shock' => $status === 'Prematch' && array_any($match['markets'] ?? [], static fn (array $runners): bool => array_any($runners, static fn (array $runner): bool => hasMeaningfulOpeningOdds($runner) && ($type === 'prematch_drops' ? ($runner['prematch_drop_triggered'] ?? false) === true : (int) ($runner['market_shock_detected_at'] ?? 0) >= time() - 1200))),
+                'prematch_drops', 'market_shock' => $status === 'Prematch' && ($index !== null ? ($type === 'prematch_drops' ? ($match['_market_activity'][2] ?? false) : (int) ($match['_market_activity'][3] ?? 0) >= time() - 1200) : array_any($match['markets'] ?? [], static fn (array $runners): bool => array_any($runners, static fn (array $runner): bool => hasMeaningfulOpeningOdds($runner) && ($type === 'prematch_drops' ? ($runner['prematch_drop_triggered'] ?? false) === true : (int) ($runner['market_shock_detected_at'] ?? 0) >= time() - 1200)))),
                 default => true,
             };
         });
@@ -82,6 +84,11 @@ trait IceHockeyTrait
         $this->icehockeyHasMore = $offset + $perPage < count($matches);
         $this->icehockeyNextPage = $this->icehockeyHasMore ? $page + 1 : null;
         $matches = array_slice($matches, $offset, $perPage);
+        if ($index !== null) {
+            $pageMatches = getInRedis('IceHockey:matches', readOnly: true, matchKeys: array_column($matches, 'unique_key'), snapshot: $index);
+            $matches = array_values(array_filter(array_map(static fn (array $entry): ?array => $pageMatches[$entry['unique_key']] ?? null, $matches)));
+            $visibleMatches = $pageMatches;
+        }
         if ($matchesById !== null) {
             $matchesById = array_intersect_key($visibleMatches, array_fill_keys(array_column($matches, 'unique_key'), true));
         }
@@ -188,6 +195,16 @@ trait IceHockeyTrait
     public function getAllMarkets(): array
     {
         $options = ['RT_MATCH_ODDS' => ['value' => 'RT_MATCH_ODDS', 'label' => '60 Minute Match Odds', 'oddsCount' => 3]];
+        $index = getInRedis('IceHockey:matches', fixtureIndex: true);
+        if ($index !== null) {
+            foreach ($index['matches'] as $match) {
+                if (! MatchBackup::isHidden($match, 'icehockey')) {
+                    $options += $match['_market_options'] ?? [];
+                }
+            }
+
+            return ['default' => 'RT_MATCH_ODDS', 'options' => array_values($options)];
+        }
         foreach (getVisibleSportsMatches('IceHockey:matches') ?? [] as $match) {
             foreach ($match['markets'] ?? [] as $runners) {
                 $runner = $runners[array_key_first($runners)] ?? [];
@@ -204,7 +221,7 @@ trait IceHockeyTrait
     public function getIceHockeyMatchDetail(string $matchId): ?array
     {
         // $match = array_find(getVisibleSportsMatches('IceHockey:matches') ?? [], static fn (array $match): bool => (string) ($match['sportsApiPro_match_id'] ?? '') === $matchId && ($match['data_sync_complete'] ?? false) === true);
-        $match = array_find(getInRedis('IceHockey:matches') ?? [], static fn (array $candidate): bool => (string) ($candidate['sportsApiPro_match_id'] ?? '') === $matchId && ! MatchBackup::isHidden($candidate, 'icehockey'));
+        $match = array_find(getInRedis('IceHockey:matches', matchIds: [$matchId]) ?? [], static fn (array $candidate): bool => (string) ($candidate['sportsApiPro_match_id'] ?? '') === $matchId && ! MatchBackup::isHidden($candidate, 'icehockey'));
         if ($match === null) {
             $stored = IceHockeyMatch::query()->with('markets')->where('sports_api_pro_match_id', $matchId)
                 // ->where('data_sync_complete', true)
@@ -290,7 +307,7 @@ trait IceHockeyTrait
                         continue;
                     }
                     $first = $runners[array_key_first($runners)] ?? [];
-                    $rows[] = ['timestamp' => $match['timestamp'] ?? null, 'id' => $key, 'match_id' => $match['sportsApiPro_match_id'], 'team1' => $match['team1'], 'team2' => $match['team2'], 'tournament' => $group['tournament_name'], 'status' => $match['status'], 'minutes' => $match['minutes'], 'score' => $match['score'], 'marketName' => $first['name'] ?? $first['marketType'] ?? 'Market', 'marketType' => $first['marketType'] ?? '', 'runners' => array_values($runners), 'favorite' => $favorite, 'indicators' => $raw['market_indicators'][$key] ?? []];
+                    $rows[] = ['streamMatchKey' => (string) $match['unique_key'], 'streamMarketKey' => (string) $key, 'timestamp' => $match['timestamp'] ?? null, 'id' => $key, 'match_id' => $match['sportsApiPro_match_id'], 'team1' => $match['team1'], 'team2' => $match['team2'], 'tournament' => $group['tournament_name'], 'status' => $match['status'], 'minutes' => $match['minutes'], 'score' => $match['score'], 'marketName' => $first['name'] ?? $first['marketType'] ?? 'Market', 'marketType' => $first['marketType'] ?? '', 'runners' => array_values($runners), 'favorite' => $favorite, 'indicators' => $raw['market_indicators'][$key] ?? []];
                 }
             }
         }

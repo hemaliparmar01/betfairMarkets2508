@@ -790,6 +790,7 @@
             $favorite = $raceActivity ? ($row['favorite_runner'] ?? []) : ($row['favorite'] ?? []);
             $favoriteIndex = array_find_key($selections, static fn (array $runner): bool => (string) ($runner['runnerId'] ?? '') === (string) ($favorite['runnerId'] ?? '')) ?? 0;
             $runners = array_map(static fn (array $runner): array => [
+                'id' => $runner['runnerId'] ?? null,
                 'name' => $runner['runner'] ?? '—',
                 'back' => $locked ? 0 : (float) ($runner['currentBackOdds'] ?? $runner['backOdds'] ?? 0),
                 'lay' => $locked ? 0 : (float) ($runner['layOdds'] ?? 0),
@@ -798,6 +799,8 @@
             ], $selections);
             $indicator = $row['indicators'] ?? [];
             return [
+                'streamMatchKey' => (string) ($row['streamMatchKey'] ?? $row['unique_key'] ?? ''),
+                'streamMarketKey' => (string) ($row['streamMarketKey'] ?? ($row['id'].'_WIN')),
                 'id' => (string) $row['id'], 'sport' => $marketActivitySport, 'sportIcon' => $icons[$marketActivitySport],
                 'comp' => $row['tournament'] ?? '', 'country' => $row['country'] ?? null,
                 'match' => $row['team1'].($raceActivity ? ' · ' : ' vs ').$row['team2'],
@@ -1174,6 +1177,9 @@
 
                 let marketRefreshInterval = 3000;
                 let marketRefreshLoop = null;
+                let marketStream = null;
+                let streamConnected = false;
+                let lastFullRefresh = -Infinity;
 
                 function fmtSize(n) {
                     return n >= 1000
@@ -1250,6 +1256,12 @@
 
                 // ===== RENDER TABLE =====
                 const eventsBody = document.getElementById('eventsBody');
+                let streamEventIndexes = new Map();
+                let streamTableRows = new Map();
+                function trackMarketEvents() {
+                    streamEventIndexes = new Map(events.map((event, index) => [window.marketStreamKey(event), index]));
+                    streamTableRows = new Map(Array.from(eventsBody.querySelectorAll('tr[data-id]'), row => [String(row.dataset.id), row]));
+                }
 
                 const marketLazyLoader = document.querySelector('[data-market-lazy-loader]');
                 const terminal = document.getElementById('terminal');
@@ -1267,6 +1279,7 @@
                 const serverNow = () => (Date.now() + serverClockOffset) / 1000;
 
                 function matchesStartWindow(event, now) {
+                    if (event.streamRemoved) return false;
                     if (!activeStartSeconds) return true;
                     if (event.internal_backup || event.hidden || event.status === 'FINISHED') return false;
                     const remaining = Number(event.timestamp) - now;
@@ -1353,7 +1366,8 @@
                     embeddedOrder?.remove();
                     embeddedVersions?.remove();
                     serverClockOffset = Number(payload.server_time ?? serverTime?.textContent) * 1000 - Date.now();
-                    const data = embeddedEvents ? JSON.parse(embeddedEvents.textContent) : payload.data;
+                    let data = embeddedEvents ? JSON.parse(embeddedEvents.textContent) : payload.data;
+                    data = marketStream?.reconcile(data) ?? data;
                     serverTime?.remove();
                     embeddedEvents?.remove();
                     if (versions) {
@@ -1371,6 +1385,9 @@
                     } else {
                         replaceMarketActivityRows(data, body, flashChanges, order);
                     }
+                    marketStream?.retain(events);
+                    trackMarketEvents();
+                    paintMarketQuotes(data);
                     applyStartFilter();
                     scheduleAvailability();
                 }
@@ -1478,6 +1495,8 @@
                     if (document.hidden) { refreshPending = true; resetPending ||= reset; return; }
 
                     marketLoading = 'refresh';
+                    let requestTimeout = null;
+                    let timedOut = false;
                     try {
                         const loadedRowCount = reset ? 20 : Math.max(20, marketLoadedPages * 20);
                         const url = marketActivityUrl(1, loadedRowCount);
@@ -1485,6 +1504,8 @@
                             url.searchParams.set('_market_versions', JSON.stringify(marketRowVersions));
                         }
                         marketRequest = new AbortController();
+                        const controller = marketRequest;
+                        requestTimeout = window.setTimeout(() => { timedOut = true; controller.abort(); }, 10000);
                         const requestedAt = performance.now();
                         const response = await fetch(url, {
                             cache: 'no-store',
@@ -1501,10 +1522,11 @@
                         if (reset) marketLoadedPages = 1;
                         updateMarketLoader(payload.has_more, marketLoadedPages + 1);
                     } catch (error) {
-                        if (error.name === 'AbortError') return;
+                        if (error.name === 'AbortError' && !timedOut) return;
                         racingFeedMonitor?.failed();
                         console.error((globalThis.bfTranslations?.["Market activity filter request failed:"] ?? "Market activity filter request failed:"), error);
                     } finally {
+                        window.clearTimeout(requestTimeout);
                         marketRequest = null;
                         marketLoading = false;
                         const pendingBounds = marketLoadPending && marketHasMore && !resetPending && !document.hidden
@@ -1585,10 +1607,123 @@
                         event.target.classList.remove('flash-yellow', 'flash-yellow-alt');
                     }
                 });
+                function paintMarketQuotes(changed) {
+                    const rows = streamTableRows;
+                    const write = (element, value, flash = false) => {
+                        if (!element || element.textContent.trim() === String(value)) return;
+                        const before = element.textContent;
+                        element.textContent = value;
+                        if (flash) globalThis.flashMarketValue?.(element, before, value);
+                    };
+                    const indicator = (element, text, style) => {
+                        if (!element) return;
+                        for (const name of [...element.classList]) {
+                            if (/^ind-(?:back-heavy|lay-heavy|balanced|mom-|delta-|vol-)/.test(name)) element.classList.remove(name);
+                        }
+                        element.classList.add(style);
+                        write(element, text);
+                    };
+                    for (const event of changed) {
+                        const row = rows.get(String(event.id));
+                        if (!row || event.locked || event.available === false) continue;
+                        if (event.streamRemoved) { row.hidden = true; continue; }
+                        const favorite = event.runners[event.favIdx];
+                        write(row.querySelector('.odds-cell-back'), favorite.back.toFixed(2), true);
+                        write(row.querySelector('.size-cell-back'), fmtSize(event.totalBackSize), true);
+                        write(row.querySelector('.odds-cell-lay'), favorite.lay.toFixed(2), true);
+                        write(row.querySelector('.size-cell-lay'), fmtSize(event.totalLaySize), true);
+                        if (event.market !== 'correct_score') {
+                            const cell = row.querySelector('.col-fav .compact-name');
+                            if (cell) { write(cell, favorite.name); cell.title = favorite.name; }
+                        }
+                        const indicators = row.querySelectorAll('td > .ind');
+                        indicator(indicators[0], balanceText(event.balance), balanceClass(event.balance));
+                        indicator(indicators[1], momentumText(event.momentum), momentumClass(event.momentum));
+                        indicator(indicators[2], event.delta, deltaClass(event.delta));
+                        indicator(indicators[3], volText(event.volatility), volClass(event.volatility));
+                    }
+                    if (currentEventId !== null && changed.some(event => String(event.id) === String(currentEventId))) {
+                        const selected = events.find(event => String(event.id) === String(currentEventId));
+                        if (selected?.streamRemoved) window.closeDetail();
+                        else if (selected) paintMarketDetail(selected);
+                    }
+                }
+                function paintMarketDetail(event) {
+                    const rows = detailContent.querySelectorAll('.runner-row');
+                    if (rows.length !== event.runners.length || [...rows].some((row, index) => row.dataset.runnerId !== String(event.runners[index].id ?? event.runners[index].name))) {
+                        openDetail(event.id);
+                        return;
+                    }
+                    const write = (element, text) => { if (element && element.textContent !== String(text)) element.textContent = text; };
+                    rows.forEach((row, index) => {
+                        const runner = event.runners[index];
+                        const name = row.querySelector('.runner-name');
+                        if (name.dataset.favorite !== String(index === event.favIdx)) {
+                            name.dataset.favorite = String(index === event.favIdx);
+                            name.innerHTML = escapeHtml(runner.name) + (index === event.favIdx ? ' <span class="fav-star">⭐</span>' : '');
+                        }
+                        for (const [side, price, size] of [['back', runner.back, runner.backSize], ['lay', runner.lay, runner.laySize]]) {
+                            const box = row.querySelector('.runner-' + side);
+                            const before = box.textContent;
+                            write(box.querySelector('[data-runner-price]'), price.toFixed(2));
+                            write(box.querySelector('.runner-size'), fmtSize(size));
+                            globalThis.flashMarketValue?.(box, before, box.textContent);
+                        }
+                    });
+                    const stale = event.stale || !event.lastMarketUpdate || serverNow() >= event.freshUntil;
+                    write(detailContent.querySelector('.market-book-status'), @json(__('Unmatched interest at the best available prices; not matched trading volume.'))
+                        + (stale ? ' ' + @json(__('Stale — showing last received values.')) : '')
+                        + (event.lastMarketUpdate ? ' ' + @json(__('Last update:')) + ' ' + new Date(event.lastMarketUpdate * 1000).toLocaleTimeString() : ''));
+                    const back = event.backPercent;
+                    const lay = event.layPercent;
+                    const favorite = event.runners[event.favIdx].name;
+                    write(detailContent.querySelector('.liquidity-favorite'), @json(__('Favorite')) + ': ' + favorite);
+                    for (const [side, value] of [['back', back], ['lay', lay]]) {
+                        const bar = detailContent.querySelector('.liq-' + side);
+                        const width = `${value ?? 0}%`;
+                        if (bar.style.width !== width) bar.style.width = width;
+                    }
+                    const labels = detailContent.querySelectorAll('.liquidity-bar span');
+                    const backLabel = (globalThis.bfTranslations?.Back ?? 'Back') + ' ' + (back === null ? '—' : back.toFixed(0) + '%');
+                    const layLabel = (globalThis.bfTranslations?.Lay ?? 'Lay') + ' ' + (lay === null ? '—' : lay.toFixed(0) + '%');
+                    write(labels[0], backLabel); write(labels[1], layLabel);
+                    detailContent.querySelector('.liquidity-bar').setAttribute('aria-label', `${favorite}: ${backLabel}, ${layLabel}`);
+                    const values = detailContent.querySelectorAll('.ind-value');
+                    const fields = [[balanceText(stale ? 'unknown' : event.balance), event.balance === 'back' ? 'back-heavy' : event.balance === 'lay' ? 'lay-heavy' : 'balanced'],
+                        [momentumText(stale ? 'unknown' : event.momentum), event.momentum.includes('back') ? 'back-heavy' : event.momentum.includes('lay') ? 'lay-heavy' : 'balanced'],
+                        [stale ? '—' : event.delta, event.delta.startsWith('+') ? 'back-heavy' : event.delta.startsWith('-') ? 'lay-heavy' : 'balanced'],
+                        [volText(event.volatility), `vol-${event.volatility === 'low' ? 'low' : event.volatility === 'high' ? 'high' : 'med'}`]];
+                    values.forEach((element, index) => { write(element, fields[index][0]); const style = 'ind-value ' + fields[index][1]; if (element.className !== style) element.className = style; });
+                    if (values[2]) values[2].title = [60, 300, 900].map(seconds => `${seconds / 60}m: ${!stale && event.deltaWindows?.[seconds] != null ? (event.deltaWindows[seconds] > 0 ? '+' : '') + Number(event.deltaWindows[seconds]).toFixed(1) + ' pp' : '—'}`).join(' · ');
+                }
+                function applyMarketQuotes(quotes) {
+                    const updated = [];
+                    for (const quote of quotes) {
+                        const index = streamEventIndexes.get(window.marketStreamKey(quote));
+                        if (index === undefined) continue;
+                        const event = events[index];
+                        const next = window.mergeMarketQuote(event, quote);
+                        if (next !== event) { events[index] = next; updated.push(next); }
+                    }
+                    paintMarketQuotes(updated);
+                    applyStartFilter();
+                    scheduleAvailability();
+                }
                 function refreshLiveMarketActivity() {
+                    // HTTP repairs membership/permissions after reconnect; quotes travel over WS.
+                    const elapsed = performance.now() - lastFullRefresh;
+                    if (elapsed < (streamConnected ? 15000 : Math.max(1000, marketRefreshInterval))) return;
+                    lastFullRefresh = performance.now();
                     return reloadMarketActivity(false, true);
                 }
                 document.addEventListener('DOMContentLoaded', function() {
+                    trackMarketEvents();
+                    marketStream = window.createMarketQuoteStream(applyMarketQuotes, {
+                        interval: marketRefreshInterval,
+                        accepts: quote => displayOdds && streamEventIndexes.has(window.marketStreamKey(quote))
+                            && !events[streamEventIndexes.get(window.marketStreamKey(quote))].locked,
+                    });
+                    marketStream.start();
                     marketRefreshLoop = window.createMarketRefreshLoop(refreshLiveMarketActivity, { interval: marketRefreshInterval });
                     marketRefreshLoop.start();
                     @if ($raceActivity)
@@ -1598,14 +1733,28 @@
                     window.Echo?.channel(@json('sports.'.$marketActivitySport.'.live'))
                         .listen('.score.updated', () => marketRefreshLoop.request());
                     @endif
+                    if (displayOdds) {
+                        window.Echo?.private(@json('sports.'.$marketActivitySport.'.market-activity'))
+                            .subscribed(() => { streamConnected = true; lastFullRefresh = -Infinity; marketRefreshLoop.request(); })
+                            .error(() => { streamConnected = false; lastFullRefresh = -Infinity; marketRefreshLoop.request(); })
+                            .listen('.market.updated', payload => {
+                                marketStream.receive(payload);
+                                const latency = document.getElementById('latencyDisplay');
+                                if (latency && Number.isFinite(payload.sent_at)) latency.textContent = Math.max(0, Math.round(serverNow() * 1000 - payload.sent_at * 1000));
+                            });
+                        window.Echo?.connector.pusher.connection.bind('state_change', ({ current }) => {
+                            if (current !== 'connected') streamConnected = false;
+                        });
+                    }
                 }, { once: true });
                 window.addEventListener('pagehide', () => {
                     marketRefreshLoop?.stop();
+                    marketStream?.stop();
                     marketRequest?.abort();
                     window.clearTimeout(availabilityTimer);
                 });
                 window.addEventListener('pageshow', event => {
-                    if (event.persisted) marketRefreshLoop?.start();
+                    if (event.persisted) { marketRefreshLoop?.start(); marketStream?.start(); }
                 });
 
                 let availabilityTimer = null;
@@ -1652,12 +1801,13 @@
 
                 }
                 scheduleAvailability();
-                document.addEventListener('visibilitychange', () => marketRefreshLoop?.request());
+                document.addEventListener('visibilitychange', () => { marketRefreshLoop?.request(); marketStream?.request(); });
                 document.getElementById('speedBar').addEventListener('click', event => {
                     const button = event.target.closest('[data-speed]');
                     if (!button) return;
                     marketRefreshInterval = Number(button.dataset.speed);
                     marketRefreshLoop?.setSpeed(marketRefreshInterval);
+                    marketStream?.setSpeed(marketRefreshInterval);
                     document.querySelectorAll('#speedBar [data-speed]').forEach(item => {
                         item.classList.toggle('active', item === button);
                         item.setAttribute('aria-pressed', String(item === button));
@@ -1701,10 +1851,10 @@
                     ev.runners.forEach(function(r, idx) {
                         const isFav = idx === ev.favIdx;
                         runnersHtml += `
-                    <div class="runner-row grid [grid-template-columns:1fr_auto_auto] [gap:10px] items-center [padding:10px_12px] bg-[rgb(var(--surface))] [border:1px_solid_var(--border-neutral-5)] [border-radius:10px] [font-size:12.5px] [transition:0.3s] dark:[background:rgb(var(--surface))] dark:[border-color:rgb(var(--border))]">
-                        <div class="runner-name font-bold [color:rgb(var(--text-main))] flex items-center [gap:5px] dark:[color:var(--text-on-primary)] [&_.fav-star]:[color:var(--text-warning)] [&_.fav-star]:[font-size:13px]">${escapeHtml(r.name)}${isFav ? ' <span class="fav-star [color:var(--text-brand-15-2)] [font-size:15px] cursor-pointer [background:none] border-0 [width:24px] [transition:0.2s] text-center dark:[color:rgb(var(--primary))] dark:[&.active-fav]:[color:rgb(var(--warning))] [&.active-fav]:[color:var(--text-warning-5-2)]">⭐</span>' : ''}</div>
-                        <div class="runner-back [background:var(--surface-back)] [color:rgb(var(--text-main))] [border:1px_solid_var(--border-brand-15-3)] [border-radius:4px] [padding:5px_10px] font-extrabold text-center [min-width:70px] [font-variant-numeric:tabular-nums]">@if ($checkAuthAndSubscription['display_odds'])${r.back.toFixed(2)}@else @include('lock_icon') @endif<span class="runner-size [font-size:10px] [opacity:0.75] font-semibold block [margin-top:2px]">@if ($checkAuthAndSubscription['display_odds'])${fmtSize(r.backSize)}@else @include('lock_icon') @endif</span></div>
-                        <div class="runner-lay [background:var(--surface-lay)] [color:var(--text-danger-70)] [border:1px_solid_var(--border-danger-10-2)] [border-radius:4px] [padding:5px_10px] font-extrabold text-center [min-width:70px] [font-variant-numeric:tabular-nums]">@if ($checkAuthAndSubscription['display_odds'])${r.lay.toFixed(2)}@else @include('lock_icon') @endif<span class="runner-size [font-size:10px] [opacity:0.75] font-semibold block [margin-top:2px]">@if ($checkAuthAndSubscription['display_odds'])${fmtSize(r.laySize)}@else @include('lock_icon') @endif</span></div>
+                    <div data-runner-id="${escapeHtml(r.id ?? r.name)}" class="runner-row grid [grid-template-columns:1fr_auto_auto] [gap:10px] items-center [padding:10px_12px] bg-[rgb(var(--surface))] [border:1px_solid_var(--border-neutral-5)] [border-radius:10px] [font-size:12.5px] [transition:0.3s] dark:[background:rgb(var(--surface))] dark:[border-color:rgb(var(--border))]">
+                        <div data-favorite="${String(isFav)}" class="runner-name font-bold [color:rgb(var(--text-main))] flex items-center [gap:5px] dark:[color:var(--text-on-primary)] [&_.fav-star]:[color:var(--text-warning)] [&_.fav-star]:[font-size:13px]">${escapeHtml(r.name)}${isFav ? ' <span class="fav-star [color:var(--text-brand-15-2)] [font-size:15px] cursor-pointer [background:none] border-0 [width:24px] [transition:0.2s] text-center dark:[color:rgb(var(--primary))] dark:[&.active-fav]:[color:rgb(var(--warning))] [&.active-fav]:[color:var(--text-warning-5-2)]">⭐</span>' : ''}</div>
+                        <div class="runner-back [background:var(--surface-back)] [color:rgb(var(--text-main))] [border:1px_solid_var(--border-brand-15-3)] [border-radius:4px] [padding:5px_10px] font-extrabold text-center [min-width:70px] [font-variant-numeric:tabular-nums]">@if ($checkAuthAndSubscription['display_odds'])<span data-runner-price>${r.back.toFixed(2)}</span>@else @include('lock_icon') @endif<span class="runner-size [font-size:10px] [opacity:0.75] font-semibold block [margin-top:2px]">@if ($checkAuthAndSubscription['display_odds'])${fmtSize(r.backSize)}@else @include('lock_icon') @endif</span></div>
+                        <div class="runner-lay [background:var(--surface-lay)] [color:var(--text-danger-70)] [border:1px_solid_var(--border-danger-10-2)] [border-radius:4px] [padding:5px_10px] font-extrabold text-center [min-width:70px] [font-variant-numeric:tabular-nums]">@if ($checkAuthAndSubscription['display_odds'])<span data-runner-price>${r.lay.toFixed(2)}</span>@else @include('lock_icon') @endif<span class="runner-size [font-size:10px] [opacity:0.75] font-semibold block [margin-top:2px]">@if ($checkAuthAndSubscription['display_odds'])${fmtSize(r.laySize)}@else @include('lock_icon') @endif</span></div>
                     </div>
                 `;
                     });

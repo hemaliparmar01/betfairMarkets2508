@@ -31,9 +31,10 @@ class TennisMatchCache extends MatchRecordCache
     protected function entry(string $key, array $match, string $encoded, int $expires): array
     {
         $entry = array_intersect_key($match, array_flip([
+            'team1', 'team2', 'home_team_short_name', 'away_team_short_name', 'is_virtual',
             'unique_key', 'sportsApiPro_match_id', 'betfair_match_id', 'timestamp', 'result_status', 'minutes_status',
             'tournament', 'tournament_country', 'tournament_tour', 'data_sync_complete', 'tennis_competition', 'internal_backup', 'provider_lifecycle',
-            'home_score', 'away_score', 'current_set', 'tennis_score_version',
+            'home_score', 'away_score', 'home_score_data', 'away_score_data', 'current_set', 'tennis_score_version', 'prematch_favorite_odds', 'prematch_favorite_side',
         ]));
         $version = hash('xxh3', $encoded);
         $entry['_fixture_cache_key'] = $key;
@@ -42,6 +43,7 @@ class TennisMatchCache extends MatchRecordCache
         $entry['_expires_at'] = $expires;
         $entry['_payload_bytes'] = strlen($encoded);
         $entry['_cache_updated_at'] = microtime(true);
+        $entry['_market_activity'] = prepareMatchOddsMonitoring($match, marketActivitySummary: true);
 
         return $entry;
     }

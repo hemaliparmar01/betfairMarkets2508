@@ -40,16 +40,14 @@ trait TennisTrait
         }
 
         $type = request()->input('type', 'all');
-        $index = in_array($type, ['all', 'live', 'upcoming', 'finished', 'favorites', 'by_time'], true)
-            ? getInRedis('Tennis:matches', fixtureIndex: true)
-            : null;
+        $index = getInRedis('Tennis:matches', fixtureIndex: true);
         $visibleMatches = array_filter($index['matches'] ?? getVisibleSportsMatches('Tennis:matches'), static fn (array $match): bool => TennisSyncController::tennisCompetition($match) !== null && ! MatchBackup::isHidden($match, 'tennis'));
 
         $customerId = request()->user('customers')?->getAuthIdentifier();
         $favoriteKeys = $customerId === null ? [] : array_fill_keys(Favorite::query()->where('sport', 'tennis')->where('customer_id', $customerId)->pluck('event_key')->all(), true);
         $timezone = getCurrentUserTimezone();
         $today = Carbon::now($timezone)->toDateString();
-        $matches = array_filter($visibleMatches, static function (array $match) use ($today, $timezone, $type, $favoriteKeys, $prematchOnly): bool {
+        $matches = array_filter($visibleMatches, static function (array $match) use ($today, $timezone, $type, $favoriteKeys, $index, $prematchOnly): bool {
             if ($prematchOnly && (($match['result_status'] ?? '') !== 'Prematch' || (int) ($match['timestamp'] ?? 0) <= time())) {
                 return false;
             }
@@ -77,7 +75,7 @@ trait TennisTrait
                         'away' => $type === 'fav_losing' ? [$match['away_score'], $match['away_score_data']['period'.($match['current_set'] ?? 1)] ?? 0] < [$match['home_score'], $match['home_score_data']['period'.($match['current_set'] ?? 1)] ?? 0] : [$match['away_score'], $match['away_score_data']['period'.($match['current_set'] ?? 1)] ?? 0] <= [$match['home_score'], $match['home_score_data']['period'.($match['current_set'] ?? 1)] ?? 0],
                         default => false,
                     },
-                'prematch_drops', 'market_shock' => $status === 'Prematch' && array_any($match['markets'] ?? [], static fn (array $runners): bool => array_any($runners, static fn (array $runner): bool => hasMeaningfulOpeningOdds($runner) && ($type === 'prematch_drops' ? ($runner['prematch_drop_triggered'] ?? false) === true : (int) ($runner['market_shock_detected_at'] ?? 0) >= time() - 1200))),
+                'prematch_drops', 'market_shock' => $status === 'Prematch' && ($index !== null ? ($type === 'prematch_drops' ? ($match['_market_activity'][2] ?? false) : (int) ($match['_market_activity'][3] ?? 0) >= time() - 1200) : array_any($match['markets'] ?? [], static fn (array $runners): bool => array_any($runners, static fn (array $runner): bool => hasMeaningfulOpeningOdds($runner) && ($type === 'prematch_drops' ? ($runner['prematch_drop_triggered'] ?? false) === true : (int) ($runner['market_shock_detected_at'] ?? 0) >= time() - 1200)))),
                 default => true,
             };
         });
@@ -229,7 +227,8 @@ trait TennisTrait
         if (! ctype_digit($betfairId ?? $matchId)) {
             return null;
         }
-        $match = array_find(getInRedis('Tennis:matches', matchIds: $betfairId === null ? [$matchId] : null) ?? [], static fn (array $candidate): bool => self::tennisFixtureId($candidate) === $matchId && ! MatchBackup::isHidden($candidate, 'tennis'));
+        $candidates = $betfairId === null ? getInRedis('Tennis:matches', matchIds: [$matchId]) : sportsMatchesByBetfairId('Tennis:matches', $betfairId);
+        $match = array_find($candidates ?? [], static fn (array $candidate): bool => self::tennisFixtureId($candidate) === $matchId && ! MatchBackup::isHidden($candidate, 'tennis'));
         if ($match === null) {
             $stored = TennisMatch::query()->with('markets')
                 ->where($betfairId === null ? 'sports_api_pro_match_id' : 'betfair_match_id', $betfairId ?? $matchId)
@@ -315,7 +314,7 @@ trait TennisTrait
                         continue;
                     }
                     $first = $runners[array_key_first($runners)] ?? [];
-                    $rows[] = ['timestamp' => $match['timestamp'] ?? null, 'id' => $key, 'match_id' => self::tennisFixtureId($match), 'team1' => $match['team1'], 'team2' => $match['team2'], 'tournament' => $group['tournament_name'], 'status' => $match['status'], 'minutes' => $match['minutes'], 'score' => $match['score'], 'marketName' => $first['name'] ?? $first['marketType'] ?? 'Market', 'marketType' => $first['marketType'] ?? '', 'runners' => array_values($runners), 'favorite' => $favorite, 'indicators' => $raw['market_indicators'][$key] ?? []];
+                    $rows[] = ['streamMatchKey' => (string) $match['unique_key'], 'streamMarketKey' => (string) $key, 'timestamp' => $match['timestamp'] ?? null, 'id' => $key, 'match_id' => self::tennisFixtureId($match), 'team1' => $match['team1'], 'team2' => $match['team2'], 'tournament' => $group['tournament_name'], 'status' => $match['status'], 'minutes' => $match['minutes'], 'score' => $match['score'], 'marketName' => $first['name'] ?? $first['marketType'] ?? 'Market', 'marketType' => $first['marketType'] ?? '', 'runners' => array_values($runners), 'favorite' => $favorite, 'indicators' => $raw['market_indicators'][$key] ?? []];
                 }
             }
         }

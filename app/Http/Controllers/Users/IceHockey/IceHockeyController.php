@@ -73,7 +73,7 @@ class IceHockeyController extends Controller
 
             if ($matchId !== null && isset($allowedValues[$poll]) && in_array($value, $allowedValues[$poll], true) && ! request()->session()->has($sessionKey)) {
                 withRedisLock('IceHockey:matches', function () use ($customerId, $matchId, $poll, $sessionKey, $value): void {
-                    $matches = getInRedis('IceHockey:matches') ?? [];
+                    $matches = getInRedis('IceHockey:matches', matchIds: [$matchId]) ?? [];
                     $matchKey = null;
 
                     foreach ($matches as $key => $match) {

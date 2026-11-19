@@ -23,6 +23,8 @@ use App\Http\Controllers\Users\IceHockey\IceHockeySyncController;
 use App\Http\Controllers\Users\Tennis\TennisSyncController;
 use App\Models\FootballMarket;
 use App\Models\FootballMatch;
+use App\Services\MarketActivityStream;
+use App\Services\SportsMatchCache;
 use Illuminate\Console\Command;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Facades\Cache;
@@ -509,6 +511,7 @@ class ListenBetfairOdds extends Command
                     if ($changed) {
                         try {
                             Event::dispatch(new $eventClass);
+                            $this->publishMarketActivity($feed === 'greyhounds' ? 'Greyhounds' : 'HorseRacing', $events);
                         } catch (Throwable $e) {
                             Log::warning('Racing odds refresh broadcast failed', ['feed' => $feed, 'exception' => $e::class]);
                         }
@@ -547,6 +550,9 @@ class ListenBetfairOdds extends Command
                     if ($changed) {
                         try {
                             Event::dispatch(new $eventClass);
+                            if (! $isLive) {
+                                $this->publishMarketActivity(array_search(str_replace(' ', '', $sport), MarketActivityStream::SPORTS, true), $eventsBySport[$sport]);
+                            }
                         } catch (Throwable $e) {
                             Log::warning('Sports odds refresh broadcast failed', ['sport' => $sport, 'exception' => $e::class]);
                         }
@@ -563,8 +569,14 @@ class ListenBetfairOdds extends Command
                 if ($feedUpdated === null) {
                     continue;
                 }
+                if ($feedUpdated && ! $isLive) {
+                    $this->publishMarketActivity('Football', $footballEvents);
+                }
             } finally {
                 unset($events, $eventsBySport, $footballEvents, $deferred, $event, $runner, $updates);
+                foreach (['Football', 'Tennis', 'Basketball', ...array_keys(SportsMatchCache::SPORTS)] as $prefix) {
+                    sportsMatchRecordCache($prefix.':matches', activeOnly: false)?->releaseReadSnapshot();
+                }
             }
 
             $pendingChanges[$feed] = $remaining;
@@ -573,6 +585,16 @@ class ListenBetfairOdds extends Command
         }
 
         return $updated;
+    }
+
+    /** @param array<string|int, array<string, mixed>> $events */
+    private function publishMarketActivity(string $prefix, array $events): void
+    {
+        try {
+            app(MarketActivityStream::class)->publish($prefix, $events);
+        } catch (Throwable $error) {
+            Log::warning('Market activity stream publish failed; refresh recovery remains available.', ['sport' => $prefix, 'exception' => $error::class]);
+        }
     }
 
     /**

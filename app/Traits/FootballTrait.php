@@ -1534,6 +1534,7 @@ trait FootballTrait
 
                 $mainArray[] = [
                     'id' => (int) sprintf('%u', crc32(($data['unique_key'] ?? '').'_'.($marketId ?? $marketKey))),
+                    'streamMatchKey' => (string) $key, 'streamMarketKey' => (string) $marketKey,
                     'sport' => 'football',
                     'sportIcon' => '⚽',
                     'status' => $isLive ? 'LIVE' : 'UP',

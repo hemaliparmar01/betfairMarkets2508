@@ -6,6 +6,8 @@ use App\Http\Controllers\Users\Tennis\TennisSyncController;
 use App\Services\BasketballMatchCache;
 use App\Services\FootballMatchCache;
 use App\Services\MatchBackup;
+use App\Services\MatchRecordCache;
+use App\Services\SportsMatchCache;
 use App\Services\TennisMatchCache;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Queue\CallQueuedClosure;
@@ -790,12 +792,21 @@ if (! function_exists('queueSportsSynchronization')) {
                 memory_reset_peak_usage();
                 $startedAt = hrtime(true);
                 try {
-                    app($controller)->{$method}();
+                    $synchronizer = app($controller);
+                    $parameters = (new ReflectionMethod($synchronizer, $method))->getParameters();
+                    if (array_any($parameters, static fn (ReflectionParameter $parameter): bool => $parameter->getName() === 'includeMatches')) {
+                        $synchronizer->{$method}(includeMatches: false);
+                    } else {
+                        $synchronizer->{$method}();
+                    }
                 } catch (LockTimeoutException) {
                     $retrying = releaseSportsJobAfterLockContention($job);
                 } finally {
                     if (! $retrying) {
                         Cache::store('redis')->restoreLock($key, $owner)->release();
+                    }
+                    foreach (['Football', 'Tennis', 'Basketball', ...array_keys(SportsMatchCache::SPORTS)] as $prefix) {
+                        sportsMatchRecordCache($prefix.':matches', activeOnly: false)?->releaseReadSnapshot();
                     }
                     $peak = memory_get_peak_usage(true);
                     $released = gc_mem_caches();
@@ -942,6 +953,34 @@ if (! function_exists('getSportsApiProImage')) {
     }
 }
 
+if (! function_exists('sportsMatchRecordCache')) {
+    function sportsMatchRecordCache(string $cacheKey, bool $activeOnly = true): ?MatchRecordCache
+    {
+        $prefix = str_ends_with($cacheKey, ':matches') ? substr($cacheKey, 0, -8) : '';
+        $cache = match ($prefix) {
+            'Football' => app(FootballMatchCache::class),
+            'Tennis' => app(TennisMatchCache::class),
+            'Basketball' => app(BasketballMatchCache::class),
+            default => isset(SportsMatchCache::SPORTS[$prefix]) ? SportsMatchCache::for($prefix) : null,
+        };
+
+        return $cache !== null && (! $activeOnly || $cache->active()) ? $cache : null;
+    }
+}
+
+if (! function_exists('sportsMatchesByBetfairId')) {
+    function sportsMatchesByBetfairId(string $cacheKey, string $matchId): array
+    {
+        $index = getInRedis($cacheKey, fixtureIndex: true);
+        if ($index === null) {
+            return getInRedis($cacheKey) ?? [];
+        }
+        $keys = array_keys(array_filter($index['matches'], static fn (array $entry): bool => (string) ($entry['betfair_match_id'] ?? '') === $matchId));
+
+        return getInRedis($cacheKey, readOnly: true, matchKeys: $keys, snapshot: $index) ?? [];
+    }
+}
+
 if (! function_exists('storeInRedis')) {
     /**
      * Reuse decoded rows only while their JSON still matches the current cache.
@@ -953,6 +992,13 @@ if (! function_exists('storeInRedis')) {
      */
     function storeInRedis(string $cacheKey, array $data, int $ttlMinutes = 10, bool $mergeLifecycle = true, ?array $existingData = null, bool $replace = false, ?array $fixtureSnapshot = null, ?string $expectedSnapshot = null): void
     {
+        $genericPrefix = explode(':', $cacheKey, 2)[0];
+        $recordCache = isset(SportsMatchCache::SPORTS[$genericPrefix]) ? sportsMatchRecordCache($cacheKey) : null;
+        if ($recordCache instanceof SportsMatchCache) {
+            $recordCache->store($data, $ttlMinutes, $mergeLifecycle, $existingData);
+
+            return;
+        }
         if ($cacheKey === 'Basketball:matches' && app(BasketballMatchCache::class)->active()) {
             app(BasketballMatchCache::class)->store($data, $ttlMinutes, $mergeLifecycle, $existingData);
 
@@ -1262,6 +1308,14 @@ if (! function_exists('getInRedis')) {
      */
     function getInRedis(string $cacheKey, bool $restoreVisibleFootballTimelines = false, bool $readOnly = false, ?array $matchIds = null, bool $fixtureIndex = false, ?array $snapshot = null, ?array $matchKeys = null, bool $marketActivityIndex = false): mixed
     {
+        $genericPrefix = explode(':', $cacheKey, 2)[0];
+        $recordCache = isset(SportsMatchCache::SPORTS[$genericPrefix]) ? sportsMatchRecordCache($cacheKey) : null;
+        if ($recordCache instanceof SportsMatchCache) {
+            return $fixtureIndex ? $recordCache->index(ordered: false) : $recordCache->read($matchIds, $matchKeys, $snapshot);
+        }
+        if ($fixtureIndex && isset(SportsMatchCache::SPORTS[substr($cacheKey, 0, -8)])) {
+            return null;
+        }
         if ($cacheKey === 'Basketball:matches' && app(BasketballMatchCache::class)->active()) {
             return $fixtureIndex
                 ? app(BasketballMatchCache::class)->index()
@@ -1274,6 +1328,9 @@ if (! function_exists('getInRedis')) {
             return $fixtureIndex
                 ? app(TennisMatchCache::class)->index()
                 : app(TennisMatchCache::class)->read($matchIds, $matchKeys, $snapshot);
+        }
+        if ($cacheKey === 'Tennis:matches' && $fixtureIndex) {
+            return null;
         }
         if ($cacheKey === 'Football:matches' && app(FootballMatchCache::class)->active()) {
             $records = app(FootballMatchCache::class);

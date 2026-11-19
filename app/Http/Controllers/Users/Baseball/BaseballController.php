@@ -73,7 +73,7 @@ class BaseballController extends Controller
 
             if ($matchId !== null && isset($allowedValues[$poll]) && in_array($value, $allowedValues[$poll], true) && ! request()->session()->has($sessionKey)) {
                 withRedisLock('Baseball:matches', function () use ($customerId, $matchId, $poll, $sessionKey, $value): void {
-                    $matches = getInRedis('Baseball:matches') ?? [];
+                    $matches = getInRedis('Baseball:matches', matchIds: [$matchId]) ?? [];
                     $matchKey = null;
 
                     foreach ($matches as $key => $match) {

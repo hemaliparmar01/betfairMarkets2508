@@ -322,7 +322,7 @@ trait BasketballTrait
                         continue;
                     }
                     $first = $runners[array_key_first($runners)] ?? [];
-                    $rows[] = ['timestamp' => $match['timestamp'] ?? null, 'id' => $key, 'match_id' => $match['sportsApiPro_match_id'], 'team1' => $match['team1'], 'team2' => $match['team2'], 'tournament' => $group['tournament_name'], 'status' => $match['status'], 'minutes' => $match['minutes'], 'score' => $match['score'], 'marketName' => $first['name'] ?? $first['marketType'] ?? 'Market', 'marketType' => $first['marketType'] ?? '', 'runners' => array_values($runners), 'favorite' => $favorite, 'indicators' => $raw['market_indicators'][$key] ?? []];
+                    $rows[] = ['streamMatchKey' => (string) $match['unique_key'], 'streamMarketKey' => (string) $key, 'timestamp' => $match['timestamp'] ?? null, 'id' => $key, 'match_id' => $match['sportsApiPro_match_id'], 'team1' => $match['team1'], 'team2' => $match['team2'], 'tournament' => $group['tournament_name'], 'status' => $match['status'], 'minutes' => $match['minutes'], 'score' => $match['score'], 'marketName' => $first['name'] ?? $first['marketType'] ?? 'Market', 'marketType' => $first['marketType'] ?? '', 'runners' => array_values($runners), 'favorite' => $favorite, 'indicators' => $raw['market_indicators'][$key] ?? []];
                 }
             }
         }

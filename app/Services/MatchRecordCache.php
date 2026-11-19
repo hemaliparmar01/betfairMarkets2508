@@ -21,6 +21,8 @@ abstract class MatchRecordCache
 
     protected const READY = 'Football:matches:individual';
 
+    protected bool $preserveNewerProviderState = true;
+
     /** @var array<string, array<string, mixed>> */
     private array $mainReads = [];
 
@@ -32,21 +34,56 @@ abstract class MatchRecordCache
         $this->fiberReads = new WeakMap;
     }
 
+    protected function prefix(): string
+    {
+        return static::PREFIX;
+    }
+
+    protected function sport(): string
+    {
+        return static::SPORT;
+    }
+
+    protected function catalogKey(): string
+    {
+        return static::CATALOG;
+    }
+
+    protected function idsKey(): string
+    {
+        return static::IDS;
+    }
+
+    protected function readyKey(): string
+    {
+        return static::READY;
+    }
+
+    public function releaseReadSnapshot(): void
+    {
+        $fiber = Fiber::getCurrent();
+        if ($fiber === null) {
+            $this->mainReads = [];
+        } else {
+            unset($this->fiberReads[$fiber]);
+        }
+    }
+
     public function active(): bool
     {
-        return (bool) config('services.'.static::SPORT.'_match_cache')
-            && Redis::get(static::READY) === '1';
+        return (bool) config('services.'.$this->sport().'_match_cache')
+            && Redis::get($this->readyKey()) === '1';
     }
 
     public function recordKey(string $key): string
     {
-        return static::PREFIX.':match:'.hash('sha256', $key);
+        return $this->prefix().':match:'.hash('sha256', $key);
     }
 
     /** @return array<string, array<string, mixed>> */
     private function catalog(): array
     {
-        $rows = Redis::hgetall(static::CATALOG);
+        $rows = Redis::hgetall($this->catalogKey());
         $catalog = [];
         $expired = [];
         foreach ($rows as $key => $json) {
@@ -60,19 +97,38 @@ abstract class MatchRecordCache
         }
         foreach ($expired as [$key, $json]) {
             $entry = json_decode($json, true) ?? [];
-            Redis::eval('if redis.call("HGET", KEYS[1], ARGV[1]) == ARGV[2] then redis.call("HDEL", KEYS[1], ARGV[1]); if redis.call("HGET", KEYS[2], ARGV[3]) == ARGV[1] then redis.call("HDEL", KEYS[2], ARGV[3]) end end; return 1',
-                2, static::CATALOG, static::IDS, $key, $json, (string) ($entry['sportsApiPro_match_id'] ?? ''));
+            Redis::eval('if redis.call("HGET", KEYS[1], ARGV[1]) == ARGV[2] then redis.call("HDEL", KEYS[1], ARGV[1]); redis.call("HDEL", KEYS[3], ARGV[1]); if redis.call("HGET", KEYS[2], ARGV[3]) == ARGV[1] then redis.call("HDEL", KEYS[2], ARGV[3]) end end; return 1',
+                3, $this->catalogKey(), $this->idsKey(), $this->prefix().':matches:order', $key, $json, (string) ($entry['sportsApiPro_match_id'] ?? ''));
         }
+
+        uasort($catalog, static fn (array $first, array $second): int => ($first['_cache_order'] ?? PHP_INT_MAX) <=> ($second['_cache_order'] ?? PHP_INT_MAX));
 
         return $catalog;
     }
 
+    /** @param list<string> $keys
+     * @return array<string, array<string, mixed>>
+     */
+    public function metadataForKeys(array $keys): array
+    {
+        $values = $keys === [] ? [] : Redis::hmget($this->catalogKey(), $keys);
+        $entries = [];
+        foreach ($keys as $position => $key) {
+            $entry = json_decode($values[$position] ?? '', true);
+            if (is_array($entry) && ($entry['_expires_at'] ?? 0) > time()) {
+                $entries[$key] = $entry;
+            }
+        }
+
+        return $entries;
+    }
+
     /** @return array<string, mixed> */
-    public function index(): array
+    public function index(bool $ordered = true): array
     {
         $matches = $this->catalog();
         $ids = [];
-        $football = static::SPORT === 'football' ? app(FootballController::class) : null;
+        $football = $this->sport() === 'football' ? app(FootballController::class) : null;
         foreach ($matches as $key => &$match) {
             if ($football !== null) {
                 $match['_fixture_priority'] = $football->footballLeaguePriority(
@@ -85,7 +141,7 @@ abstract class MatchRecordCache
         }
         unset($match);
         $orders = [];
-        foreach (['competition', 'default', 'time'] as $mode) {
+        foreach ($ordered ? ['competition', 'default', 'time'] : [] as $mode) {
             $ordered = $matches;
             uasort($ordered, static function (array $first, array $second) use ($mode, $football): int {
                 $priority = $first['_fixture_priority'] <=> $second['_fixture_priority'];
@@ -115,9 +171,9 @@ abstract class MatchRecordCache
         } elseif ($matchKeys !== null || $matchIds !== null) {
             $keys = $matchKeys;
             if ($keys === null) {
-                $keys = $matchIds === [] ? [] : array_values(array_filter(Redis::hmget(static::IDS, array_map('strval', $matchIds))));
+                $keys = $matchIds === [] ? [] : array_values(array_filter(Redis::hmget($this->idsKey(), array_map('strval', $matchIds))));
             }
-            $entries = $keys === [] ? [] : Redis::hmget(static::CATALOG, $keys);
+            $entries = $keys === [] ? [] : Redis::hmget($this->catalogKey(), $keys);
             $catalog = [];
             foreach ($keys as $position => $key) {
                 $entry = json_decode($entries[$position] ?? '', true);
@@ -142,8 +198,8 @@ abstract class MatchRecordCache
                 if (is_array($match) && $this->allowed($match)) {
                     $result[$key] = $match;
                 } elseif (! is_array($match)) {
-                    Redis::eval('if redis.call("EXISTS", KEYS[1]) == 0 then redis.call("HDEL", KEYS[2], ARGV[1]); if redis.call("HGET", KEYS[3], ARGV[2]) == ARGV[1] then redis.call("HDEL", KEYS[3], ARGV[2]) end end; return 1',
-                        3, $this->recordKey((string) $key), static::CATALOG, static::IDS, (string) $key, (string) ($catalog[$key]['sportsApiPro_match_id'] ?? ''));
+                    Redis::eval('if redis.call("EXISTS", KEYS[1]) == 0 then redis.call("HDEL", KEYS[2], ARGV[1]); redis.call("HDEL", KEYS[4], ARGV[1]); if redis.call("HGET", KEYS[3], ARGV[2]) == ARGV[1] then redis.call("HDEL", KEYS[3], ARGV[2]) end end; return 1',
+                        4, $this->recordKey((string) $key), $this->catalogKey(), $this->idsKey(), $this->prefix().':matches:order', (string) $key, (string) ($catalog[$key]['sportsApiPro_match_id'] ?? ''));
                 }
             }
         }
@@ -193,7 +249,7 @@ abstract class MatchRecordCache
     /** @return array<string, mixed> */
     protected function entry(string $key, array $match, string $encoded, int $expires): array
     {
-        $fields = ['unique_key', 'sportsApiPro_match_id', 'betfair_match_id', 'timestamp', 'result_status', 'minutes_status',
+        $fields = ['team1', 'team2', 'home_team_short_name', 'away_team_short_name', 'is_virtual', 'unique_key', 'sportsApiPro_match_id', 'betfair_match_id', 'timestamp', 'result_status', 'minutes_status',
             'current_period_start_timestamp', 'added_time', 'tournament', 'tournament_country', 'tournament_id',
             'tournament_logo', 'country_id', 'internal_backup', 'provider_lifecycle', 'pinnacle_drop_triggered',
             'pinnacle_market_shock_detected_at', 'home_score', 'away_score'];
@@ -210,6 +266,7 @@ abstract class MatchRecordCache
         $entry['markets'] = [];
         $entry['bet365_prematch'] = array_intersect_key($match['bet365_prematch'] ?? [], array_flip(['favorite_side', 'favorite_odds']));
         $entry['_market_activity'] = prepareMatchOddsMonitoring($match, marketActivitySummary: true);
+        [, , $entry['pinnacle_drop_triggered'], $entry['pinnacle_market_shock_detected_at']] = $entry['_market_activity'];
         if (! empty($match['statistics_requests'])) {
             $entry['_statistics_due_at'] = PHP_FLOAT_MAX;
             foreach (FootballSyncController::prematchStatisticsSections($match['result_status'] ?? null) as $section) {
@@ -242,7 +299,7 @@ metadata['_expires_at'] = tonumber(ARGV[2]) + tonumber(ARGV[3])
 redis.call('EXPIRE', KEYS[1], ARGV[3])
 redis.call('HSET', KEYS[2], ARGV[1], cjson.encode(metadata))
 return 1
-LUA, [$this->recordKey((string) $key), static::CATALOG, (string) $key, time(), $ttl], 2);
+LUA, [$this->recordKey((string) $key), $this->catalogKey(), (string) $key, time(), $ttl], 2);
                 }
             });
             foreach ($keys as $position => $key) {
@@ -267,10 +324,10 @@ LUA, [$this->recordKey((string) $key), static::CATALOG, (string) $key, time(), $
                     $match = $current;
                 }
                 $incomingSequence = (int) ($incoming['provider_lifecycle']['sequence'] ?? 0);
-                if (($incomingSequence > 0 && (int) ($current['provider_lifecycle']['sequence'] ?? 0) > $incomingSequence)
+                if ($this->preserveNewerProviderState && (($incomingSequence > 0 && (int) ($current['provider_lifecycle']['sequence'] ?? 0) > $incomingSequence)
                     || ((int) ($incoming['tennis_score_source_timestamp'] ?? 0) > 0
                         && (int) ($current['tennis_score_source_timestamp'] ?? 0) > (int) $incoming['tennis_score_source_timestamp'])
-                    || (($current['result_status'] ?? '') === 'Live' && ($match['result_status'] ?? '') === 'Prematch')) {
+                    || (($current['result_status'] ?? '') === 'Live' && ($match['result_status'] ?? '') === 'Prematch'))) {
                     foreach (['result_status', 'minutes_status', 'home_score', 'away_score', 'current_period_start_timestamp', 'last_period_end_timestamp', 'added_time', 'timeline', 'provider_lifecycle', 'home_score_data', 'away_score_data', 'current_set', 'serving', 'first_to_serve', 'tennis_score_version', 'tennis_score_source_timestamp', 'tennis_points_source', 'sports_change_timestamp', 'websocket_change_timestamps'] as $field) {
                         if (array_key_exists($field, $current)) {
                             $match[$field] = $current[$field];
@@ -278,7 +335,7 @@ LUA, [$this->recordKey((string) $key), static::CATALOG, (string) $key, time(), $
                     }
                 }
                 if ($mergeLifecycle) {
-                    $match = MatchBackup::merge($match, $current, static::SPORT);
+                    $match = MatchBackup::merge($match, $current, $this->sport());
                 }
                 if (($match['timeline'] ?? []) !== ($current['timeline'] ?? [])) {
                     $this->persistTimeline($match, $current);
@@ -291,10 +348,16 @@ if (ARGV[1] == '0' and current) or (ARGV[1] == '1' and current ~= ARGV[2]) then 
 local cleaned = redis.call('ZSCORE', KEYS[3], ARGV[4])
 if cleaned and tonumber(cleaned) >= tonumber(ARGV[7]) then return 2 end
 redis.call('SET', KEYS[1], ARGV[3], 'EX', ARGV[6])
-redis.call('HSET', KEYS[2], ARGV[4], ARGV[5])
+local ordinal = redis.call('HGET', KEYS[5], ARGV[4])
+if not ordinal then
+    ordinal = tostring(redis.call('INCR', KEYS[6]))
+    redis.call('HSET', KEYS[5], ARGV[4], ordinal)
+end
+local metadata = string.sub(ARGV[5], 1, -2)..',"_cache_order":'..ordinal..'}'
+redis.call('HSET', KEYS[2], ARGV[4], metadata)
 if ARGV[8] ~= '' then redis.call('HSET', KEYS[4], ARGV[8], ARGV[4]) end
 return 1
-LUA, 4, $recordKey, static::CATALOG, static::PREFIX.':matches:cleaned', static::IDS,
+LUA, 6, $recordKey, $this->catalogKey(), $this->prefix().':matches:cleaned', $this->idsKey(), $this->prefix().':matches:order', $this->prefix().':matches:order-sequence',
                     is_string($raw) ? '1' : '0', is_string($raw) ? $raw : '', $encoded, $key, $entry, $ttl, time(), (string) ($match['sportsApiPro_match_id'] ?? ''));
                 if ($stored) {
                     if ($fiber === null) {
@@ -313,7 +376,7 @@ LUA, 4, $recordKey, static::CATALOG, static::PREFIX.':matches:cleaned', static::
 
     public function removeCleaned(): void
     {
-        foreach (Redis::zrangebyscore(static::PREFIX.':matches:cleaned', time(), '+inf') as $key) {
+        foreach (Redis::zrangebyscore($this->prefix().':matches:cleaned', time(), '+inf') as $key) {
             $raw = Redis::get($this->recordKey((string) $key));
             $match = json_decode($raw ?? '[]', true) ?? [];
             Redis::eval(<<<'LUA'
@@ -321,9 +384,10 @@ local cleaned = redis.call('ZSCORE', KEYS[4], ARGV[1])
 if not cleaned or tonumber(cleaned) < tonumber(ARGV[3]) then return 0 end
 redis.call('DEL', KEYS[1])
 redis.call('HDEL', KEYS[2], ARGV[1])
+redis.call('HDEL', KEYS[5], ARGV[1])
 if redis.call('HGET', KEYS[3], ARGV[2]) == ARGV[1] then redis.call('HDEL', KEYS[3], ARGV[2]) end
 return 1
-LUA, 4, $this->recordKey((string) $key), static::CATALOG, static::IDS, static::PREFIX.':matches:cleaned',
+LUA, 5, $this->recordKey((string) $key), $this->catalogKey(), $this->idsKey(), $this->prefix().':matches:cleaned', $this->prefix().':matches:order',
                 (string) $key, (string) ($match['sportsApiPro_match_id'] ?? ''), time());
         }
     }
@@ -341,17 +405,49 @@ LUA, 4, $this->recordKey((string) $key), static::CATALOG, static::IDS, static::P
     }
 
     /** @return array<string, int> */
+    public function refreshMetadata(): int
+    {
+        $keys = array_keys($this->index(ordered: false)['matches']);
+        $count = 0;
+        foreach (array_chunk($keys, 25) as $batch) {
+            $rawRecords = Redis::mget(array_map(fn (string $key): string => $this->recordKey($key), $batch));
+            $metadata = $this->metadataForKeys($batch);
+            foreach ($batch as $position => $key) {
+                $raw = $rawRecords[$position];
+                if (! is_string($raw) || ! isset($metadata[$key])) {
+                    continue;
+                }
+                $match = json_decode($raw, true, flags: JSON_THROW_ON_ERROR);
+                $entry = $this->entry($key, $match, $raw, (int) $metadata[$key]['_expires_at']);
+                $entry['_cache_updated_at'] = $metadata[$key]['_cache_updated_at'] ?? $entry['_cache_updated_at'];
+                $count += (int) Redis::eval(<<<'LUA'
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
+local ordinal = redis.call('HGET', KEYS[3], ARGV[2])
+if not ordinal then
+    ordinal = tostring(redis.call('INCR', KEYS[4]))
+    redis.call('HSET', KEYS[3], ARGV[2], ordinal)
+end
+redis.call('HSET', KEYS[2], ARGV[2], string.sub(ARGV[3], 1, -2)..',"_cache_order":'..ordinal..'}')
+return 1
+LUA, 4, $this->recordKey($key), $this->catalogKey(), $this->prefix().':matches:order', $this->prefix().':matches:order-sequence', $raw, $key, json_encode($entry, JSON_THROW_ON_ERROR));
+            }
+            unset($rawRecords, $match, $raw, $entry);
+        }
+
+        return $count;
+    }
+
     public function migrate(): array
     {
         if ($this->active()) {
             return ['matches' => count($this->catalog()), 'legacy_bytes' => 0];
         }
-        $raw = Redis::get(static::PREFIX.':matches');
+        $raw = Redis::get($this->prefix().':matches');
         $matches = json_decode($raw ?? '[]', true, flags: JSON_THROW_ON_ERROR);
         $matches = $this->canonicalMatches($matches);
         $matches = array_filter($matches, fn (array $match): bool => $this->allowed($match));
         $this->store($matches, 60, false, []);
-        Redis::set(static::READY, '1');
+        Redis::set($this->readyKey(), '1');
 
         return ['matches' => count($matches), 'legacy_bytes' => strlen($raw ?? '')];
     }

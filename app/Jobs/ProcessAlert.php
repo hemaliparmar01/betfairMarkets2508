@@ -9,6 +9,7 @@ use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Throwable;
 
 class ProcessAlert implements ShouldBeUnique, ShouldQueue
@@ -125,7 +126,15 @@ class ProcessAlert implements ShouldBeUnique, ShouldQueue
                 }
             }
         } elseif ($this->task === 'source') {
-            $alerts->source($this->data);
+            $delay = max(0, now()->timestamp - (int) ($this->data['received_at'] ?? $this->data['sent_at'] ?? now()->timestamp));
+            Log::info('Telegram source post received by worker.', ['message_id' => $this->data['message_id'] ?? null, 'queue_delay_seconds' => $delay]);
+            if ($delay > 300) {
+                Log::warning('Telegram source post expired while waiting for its worker.', ['message_id' => $this->data['message_id'] ?? null, 'queue_delay_seconds' => $delay]);
+
+                return;
+            }
+            $alertId = $alerts->source($this->data);
+            Log::info('Telegram source worker completed.', ['message_id' => $this->data['message_id'] ?? null, 'alert_id' => $alertId]);
         } elseif ($this->task === 'fanout') {
             $retry = $alerts->fanout((int) $this->data['alert_id']);
             if ($retry > 0) {

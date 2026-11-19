@@ -26,12 +26,21 @@ class CricketSyncController extends Controller
         $this->sports = 'Cricket';
     }
 
-    public function syncBetFairLiveData(): array
+    public function syncBetFairLiveData(bool $includeMatches = true): array
     {
         $url = 'https://betfair-odds.com/betfair/v1/livemap?feed=live&sports=cricket';
         $key = 'x-portal-apikey: '.$this->getBetferKeys;
         $liveData = ApiCall($url, $key) ?? [];
         $cacheKey = $this->sports.':matches';
+
+        if (! $includeMatches && sportsMatchRecordCache('Cricket:matches') !== null) {
+            foreach (array_chunk($liveData['liveMap'] ?? [], 25, preserve_keys: true) as $batch) {
+                $rows = withRedisLock($cacheKey, fn (): array => $this->readBetFairData(['liveMap' => $batch], $cacheKey, true, 10, $this->betfairSnapshotMatches($batch)), 30);
+                unset($rows);
+            }
+
+            return [];
+        }
 
         $matches = withRedisLock(
             $cacheKey,
@@ -42,12 +51,21 @@ class CricketSyncController extends Controller
         return $matches;
     }
 
-    public function syncBetFairPrematchData(): array
+    public function syncBetFairPrematchData(bool $includeMatches = true): array
     {
         $url = 'https://betfair-odds.com/betfair/v1/livemap?feed=prematch&sports=cricket';
         $key = 'x-portal-apikey: '.$this->getBetferKeys;
         $liveData = ApiCall($url, $key) ?? [];
         $cacheKey = $this->sports.':matches';
+
+        if (! $includeMatches && sportsMatchRecordCache('Cricket:matches') !== null) {
+            foreach (array_chunk($liveData['liveMap'] ?? [], 25, preserve_keys: true) as $batch) {
+                $rows = withRedisLock($cacheKey, fn (): array => $this->readBetFairData(['liveMap' => $batch], $cacheKey, false, 30, $this->betfairSnapshotMatches($batch)), 30);
+                unset($rows);
+            }
+
+            return [];
+        }
 
         $matches = withRedisLock(
             $cacheKey,
@@ -58,7 +76,7 @@ class CricketSyncController extends Controller
         return $matches;
     }
 
-    public function syncSportsApiProLiveData(): array
+    public function syncSportsApiProLiveData(bool $includeMatches = true): array
     {
         $url = 'https://api.sportsapipro.com/v2/cricket/api/live';
         $key = 'x-api-key: '.$this->getsportsAPIProKeys;
@@ -66,12 +84,25 @@ class CricketSyncController extends Controller
         $liveData = is_array($liveData['data'] ?? null) ? $liveData['data'] : ($liveData ?? []);
         $cacheKey = $this->sports.':matches';
 
+        if (sportsMatchRecordCache('Cricket:matches') !== null) {
+            $result = [];
+            foreach (array_chunk($liveData['events'] ?? [], 25, preserve_keys: true) as $batch) {
+                $rows = $this->readsportApiData(['events' => $batch], $cacheKey, true, 10);
+                if ($includeMatches) {
+                    $result += $rows;
+                }
+                unset($rows);
+            }
+
+            return $result;
+        }
+
         $matches = $this->readsportApiData($liveData, $cacheKey, true, 10);
 
         return $matches;
     }
 
-    public function syncSportsApiProPrematchData(): array
+    public function syncSportsApiProPrematchData(bool $includeMatches = true): array
     {
         $cacheKey = $this->sports.':matches';
         $date = Carbon::now('UTC')->format('Y-m-d');
@@ -82,17 +113,55 @@ class CricketSyncController extends Controller
             return [];
         }
 
+        if (sportsMatchRecordCache('Cricket:matches') !== null) {
+            $result = [];
+            foreach (array_chunk($scheduleData['events'] ?? [], 25, preserve_keys: true) as $batch) {
+                $rows = $this->readsportApiData(['events' => $batch], $cacheKey, false, 30);
+                if ($includeMatches) {
+                    $result += $rows;
+                }
+                unset($rows);
+            }
+
+            return $result;
+        }
+
         $matches = $this->readsportApiData(['events' => $scheduleData['events']], $cacheKey, false, 30);
 
         return $matches;
     }
 
+    private function betfairSnapshotMatches(array $events): array
+    {
+        $index = getInRedis('Cricket:matches', fixtureIndex: true);
+        if ($index === null) {
+            return getInRedis('Cricket:matches') ?? [];
+        }
+        $byBetfair = array_column($index['matches'], '_fixture_cache_key', 'betfair_match_id');
+        $keys = [];
+        foreach ($events as $eventId => $event) {
+            $key = $byBetfair[$eventId] ?? null;
+            if ($key === null && isset($event['team1'], $event['team2'], $event['openTimestamp'])) {
+                $starts = Carbon::parse($event['openTimestamp'])->timestamp;
+                $key = $this->checkIfRecordExistsOnAnotherApi($this->generateUniqueKey($event['team1'], $event['team2'], $starts),
+                    $event['team1'], $event['team2'], $starts, $index['matches']);
+            }
+            if ($key !== null) {
+                $keys[$key] = true;
+            }
+        }
+        $keys = array_keys($keys);
+
+        return getInRedis('Cricket:matches', readOnly: true, matchKeys: $keys, snapshot: $index);
+    }
+
     private function readBetFairData(array $payloads, string $cacheKey, bool $isLiveApi, int $ttlSeconds, ?array $getExistingRecords = null): array
     {
         $getExistingRecords ??= getInRedis($cacheKey) ?? [];
+        $cachedSnapshot = $getExistingRecords;
         $missingIds = array_keys(array_filter($payloads['liveMap'] ?? [], static fn (array $event, string|int $id): bool => ! array_any($getExistingRecords, static fn (array $match): bool => (string) ($match['betfair_match_id'] ?? '') === (string) $id), ARRAY_FILTER_USE_BOTH));
         if ($missingIds !== []) {
-            foreach (CricketMatch::query()->with('markets:id,cricket_match_unique_key,payload')->whereIn('betfair_match_id', $missingIds)->get(['id', 'unique_key', 'betfair_match_id', 'payload']) as $stored) {
+            foreach (CricketMatch::query()->with('markets:id,cricket_match_unique_key,payload')->whereIn('betfair_match_id', $missingIds)->select(['id', 'unique_key', 'betfair_match_id', 'payload'])->lazyById(10) as $stored) {
                 $restored = $stored->payload ?? [];
                 $restored['markets'] = [];
                 foreach ($stored->markets as $runner) {
@@ -355,7 +424,7 @@ class CricketSyncController extends Controller
         }
         $changedMatches = array_filter($mainArray, static fn (array $match, string $key): bool => $match != ($getExistingRecords[$key] ?? null), ARRAY_FILTER_USE_BOTH);
         $this->storeMatchesInDatabase($changedMatches);
-        storeInRedis($cacheKey, $mainArray, $ttlSeconds);
+        storeInRedis($cacheKey, $mainArray, $ttlSeconds, existingData: $cachedSnapshot);
 
         return $mainArray;
     }
@@ -366,7 +435,8 @@ class CricketSyncController extends Controller
         if (! is_array($events) || $events === []) {
             return [];
         }
-        $existingMatches = getInRedis($cacheKey) ?? [];
+        $index = getInRedis($cacheKey, fixtureIndex: true);
+        $existingMatches = $index['matches'] ?? getInRedis($cacheKey) ?? [];
         $firstMatchById = [];
         foreach ($existingMatches as $key => $match) {
             $providerId = (string) ($match['sportsApiPro_match_id'] ?? '');
@@ -412,11 +482,32 @@ class CricketSyncController extends Controller
         }
 
         return withRedisLock($cacheKey, function () use ($events, $cacheKey, $isLive, $ttlSeconds, $sportsImages): array {
-            $matches = getInRedis($cacheKey) ?? [];
-            $knownIds = array_column($matches, 'sportsApiPro_match_id');
+            $index = getInRedis($cacheKey, fixtureIndex: true);
+            if ($index === null) {
+                $matches = getInRedis($cacheKey) ?? [];
+            } else {
+                $keys = [];
+                foreach ($events as $event) {
+                    $key = $index['ids'][(string) ($event['id'] ?? '')] ?? null;
+                    if ($key === null) {
+                        $home = $event['homeTeam']['name'];
+                        $away = $event['awayTeam']['name'];
+                        $key = $this->checkIfRecordExistsOnAnotherApi($this->generateUniqueKey($home, $away, (int) $event['startTimestamp']),
+                            $home, $away, (int) $event['startTimestamp'], $index['matches'], ['is_virtual' => ($event['is_virtual'] ?? false),
+                                'home' => [$home, $event['homeTeam']['shortName'] ?? ''], 'away' => [$away, $event['awayTeam']['shortName'] ?? '']]);
+                    }
+                    if ($key !== null) {
+                        $keys[$key] = true;
+                    }
+                }
+                $matches = getInRedis($cacheKey, readOnly: true, matchKeys: array_keys($keys), snapshot: $index);
+            }
+            $cachedSnapshot = $matches;
+            $knownIds = array_column($index['matches'] ?? $matches, 'sportsApiPro_match_id');
+
             $missingIds = array_diff(array_column($events, 'id'), $knownIds);
             if ($missingIds !== []) {
-                foreach (CricketMatch::query()->with('markets:id,cricket_match_unique_key,payload')->whereIn('sports_api_pro_match_id', $missingIds)->get(['id', 'unique_key', 'payload']) as $stored) {
+                foreach (CricketMatch::query()->with('markets:id,cricket_match_unique_key,payload')->whereIn('sports_api_pro_match_id', $missingIds)->select(['id', 'unique_key', 'payload'])->lazyById(10) as $stored) {
                     $restored = $stored->payload ?? [];
                     $restored['markets'] = [];
                     foreach ($stored->markets as $runner) {
@@ -463,7 +554,7 @@ class CricketSyncController extends Controller
             }
             $this->storeMatchesInDatabase($changedMatches);
             if ($matches !== []) {
-                storeInRedis($cacheKey, $matches, $ttlSeconds);
+                storeInRedis($cacheKey, $matches, $ttlSeconds, existingData: $cachedSnapshot);
             }
 
             return $changedMatches;
@@ -475,14 +566,18 @@ class CricketSyncController extends Controller
         if ($events === []) {
             return false;
         }
-        $matches = withRedisLock('Cricket:matches', function () use ($events, $isLive): array {
-            $before = getInRedis('Cricket:matches') ?? [];
-            $after = $this->readBetFairData(['liveMap' => $events], 'Cricket:matches', $isLive, 30, $before);
 
-            return array_filter($after, static fn (array $match, string $key): bool => $match != ($before[$key] ?? null), ARRAY_FILTER_USE_BOTH);
+        return withRedisLock('Cricket:matches', function () use ($events, $isLive): bool {
+            $updated = false;
+            $batches = sportsMatchRecordCache('Cricket:matches') !== null ? array_chunk($events, 25, preserve_keys: true) : [$events];
+            foreach ($batches as $batch) {
+                $before = $this->betfairSnapshotMatches($batch);
+                $after = $this->readBetFairData(['liveMap' => $batch], 'Cricket:matches', $isLive, 30, $before);
+                $updated = array_any($after, static fn (array $match, string|int $key): bool => $match != ($before[$key] ?? null)) || $updated;
+            }
+
+            return $updated;
         }, $deferIfBusy ? 0 : 5);
-
-        return $matches === null ? null : $matches !== [];
     }
 
     public function applySportsApiEvent(array &$match, array $event, string $channel): bool
@@ -610,12 +705,22 @@ class CricketSyncController extends Controller
 
     public function mergeSportsWebSocketData(string $channel, array $frameData, ?array $cachedMatches = null): bool
     {
-        $matches = $cachedMatches ?? getInRedis('Cricket:matches') ?? [];
-        unset($cachedMatches);
         $events = str_starts_with($channel, 'live-scores')
             ? (isset($frameData['id']) || isset($frameData['eventId']) ? [$frameData] : ($frameData['events'] ?? (array_is_list($frameData) ? $frameData : [])))
             : [$frameData];
+        if ($cachedMatches === null && count($events) > 25 && sportsMatchRecordCache('Cricket:matches') !== null) {
+            $updated = false;
+            foreach (array_chunk($events, 25) as $batch) {
+                $updated = $this->mergeSportsWebSocketData($channel, ['events' => $batch]) || $updated;
+            }
+
+            return $updated;
+        }
         preg_match('/^match:(\d+)/', $channel, $channelMatch);
+        $ids = isset($channelMatch[1]) ? [$channelMatch[1]] : array_values(array_filter(array_map(static fn (array $event): mixed => $event['id'] ?? $event['eventId'] ?? null, $events)));
+        $matches = $cachedMatches ?? getInRedis('Cricket:matches', matchIds: sportsMatchRecordCache('Cricket:matches') !== null ? $ids : null) ?? [];
+        $cachedSnapshot = $matches;
+        unset($cachedMatches);
         $useEventIndex = count($events) > 1;
         $keysByEvent = [];
         if ($useEventIndex) {
@@ -685,7 +790,7 @@ class CricketSyncController extends Controller
             unset($match);
         }
         if ($changed !== []) {
-            storeInRedis('Cricket:matches', $matches, 30, false);
+            storeInRedis('Cricket:matches', $matches, 30, false, $cachedSnapshot);
             $this->storeMatchesInDatabase($changed);
         }
 
@@ -705,6 +810,14 @@ class CricketSyncController extends Controller
     private function storeMatchesInDatabase(array $matches): void
     {
         if ($matches === []) {
+            return;
+        }
+
+        if (count($matches) > 10) {
+            foreach (array_chunk($matches, 10, preserve_keys: true) as $batch) {
+                $this->storeMatchesInDatabase($batch);
+            }
+
             return;
         }
 

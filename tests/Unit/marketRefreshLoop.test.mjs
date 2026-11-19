@@ -152,7 +152,7 @@ test('every real SPEED button controls the shared live loop and updates its acti
     const selected = [];
     let click;
     vm.runInNewContext(source.slice(start, end), { marketRefreshInterval: 3000,
-        marketRefreshLoop: { setSpeed: speed => selected.push(speed) },
+        marketRefreshLoop: { setSpeed: speed => selected.push(speed) }, marketStream: { setSpeed() {} },
         document: { getElementById: () => ({ addEventListener(name, callback) { click = callback; } }), querySelectorAll: () => buttons } });
     for (const button of buttons) {
         click({ target: { closest: () => button } });

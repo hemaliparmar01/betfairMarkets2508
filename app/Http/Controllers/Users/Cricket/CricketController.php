@@ -73,7 +73,7 @@ class CricketController extends Controller
 
             if ($matchId !== null && isset($allowedValues[$poll]) && in_array($value, $allowedValues[$poll], true) && ! request()->session()->has($sessionKey)) {
                 withRedisLock('Cricket:matches', function () use ($customerId, $matchId, $poll, $sessionKey, $value): void {
-                    $matches = getInRedis('Cricket:matches') ?? [];
+                    $matches = getInRedis('Cricket:matches', matchIds: [$matchId]) ?? [];
                     $matchKey = null;
 
                     foreach ($matches as $key => $match) {
