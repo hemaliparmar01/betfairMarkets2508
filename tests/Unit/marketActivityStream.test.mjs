@@ -138,3 +138,37 @@ test('the real open-panel renderer updates runner boxes, favorite pressure, and 
     assert.equal(values[2].textContent, '+1.3 pp');
     assert.equal(values[3].textContent, 'low');
 });
+
+for (const onPage of [true, false]) test(`an open market keeps updating ${onPage ? 'with its table row visible' : 'after pagination removes its row'}, with recalculated favorite pressure`, async () => {
+    const { readFileSync } = await import('node:fs');
+    const vm = await import('node:vm');
+    const source = readFileSync(new URL('../../resources/views/users/sports/Football/marketActivity.blade.php', import.meta.url), 'utf8');
+    const apply = source.slice(source.indexOf('function applyMarketQuotes(quotes)'), source.indexOf('async function refreshSelectedMarket()'));
+    const sync = source.slice(source.indexOf('function refreshOpenMarketDetail()'), source.indexOf('function paintMarketDetail(event)'));
+    const acceptStart = source.indexOf('accepts: quote => ') + 'accepts: '.length;
+    const acceptEnd = source.indexOf(',\n                    });', acceptStart);
+    const drawn = [];
+    const selected = event();
+    const context = { selectedMarket: selected, events: onPage ? [selected] : [], currentEventId: 7, streamEventIndexes: new Map(), displayOdds: true,
+        detailPanel: { classList: { contains: () => true } },
+        window: { marketStreamKey: (await import('../../resources/users/js/marketActivityStream.js')).marketStreamKey, mergeMarketQuote, closeDetail() { throw new Error('An off-page market must stay open'); } },
+        paintMarketDetail: market => drawn.push(market), applyStartFilter() {}, scheduleAvailability() {} };
+    if (onPage) context.streamEventIndexes.set(context.window.marketStreamKey(selected), 0);
+    vm.createContext(context); vm.runInContext(sync + apply, context);
+    context.paintMarketQuotes = () => context.refreshOpenMarketDetail();
+    const accepts = vm.runInContext('(' + source.slice(acceptStart, acceptEnd) + ')', context);
+    const timer = clock();
+    const stream = createMarketQuoteStream(context.applyMarketQuotes, { ...timer, visible: () => true, accepts, interval: 1000 });
+    stream.start(); stream.retain([context.selectedMarket]);
+    const first = quote(); first.runners[0].backSize = 400; first.runners[0].laySize = 100;
+    stream.receive({ sent_at: 2, markets: [first] }); timer.advance(0);
+    assert.equal(drawn.at(-1).runners[0].backSize, 400);
+    assert.equal(drawn.at(-1).backPercent, 20);
+    assert.equal(drawn.at(-1).layPercent, 80);
+    const second = quote(3); second.runners[0].backSize = 100; second.runners[0].laySize = 400;
+    stream.receive({ sent_at: 3, markets: [second] }); timer.advance(1000);
+    assert.equal(drawn.at(-1).runners[0].backSize, 100);
+    assert.equal(drawn.at(-1).backPercent, 80);
+    assert.equal(drawn.at(-1).layPercent, 20);
+    assert.equal(context.events.length, onPage ? 1 : 0);
+});

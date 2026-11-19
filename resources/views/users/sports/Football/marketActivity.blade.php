@@ -1271,6 +1271,8 @@
                 const marketContainer = document.getElementById('marketContainer');
                 const marketSelect = document.getElementById('marketSelect');
                 let currentEventId = null;
+                let selectedMarket = null;
+                let selectedQuoteRequest = null;
                 let activeMarketFilter = marketSelect?.value ?? 'active';
                 let activeFootballFilter = document.querySelector('.filter-pill.active')?.dataset.filter || 'all';
 
@@ -1385,7 +1387,7 @@
                     } else {
                         replaceMarketActivityRows(data, body, flashChanges, order);
                     }
-                    marketStream?.retain(events);
+                    marketStream?.retain(selectedMarket ? [...events, selectedMarket] : events);
                     trackMarketEvents();
                     paintMarketQuotes(data);
                     applyStartFilter();
@@ -1395,7 +1397,6 @@
                 function replaceMarketActivityRows(data, body, flashChanges, order) {
                     const selectedEventId = currentEventId;
                     const detailWasOpen = detailPanel.classList.contains('open');
-                    const detailWasExpanded = terminal.classList.contains('panel-expanded');
 
                     const previousEvents = new Map(events.map(event => [String(event.id), event]));
                     const previousRows = new Map(Array.from(eventsBody.querySelectorAll('tr[data-id]'), row => [row.dataset.id, row]));
@@ -1448,25 +1449,12 @@
                     Array.from(eventsBody.children).slice(rows.length).forEach(row => row.remove());
                     document.getElementById('eventsWrap').scrollLeft = scrollLeft;
 
-                    if (detailWasOpen && events.some(function(ev) { return String(ev.id) === String(selectedEventId) && !ev.locked; })) {
-                        const scrollContainer = detailWasExpanded ? detailContent : detailPanel;
-                        const scrollTop = scrollContainer.scrollTop;
-                        const termsOpen = !document.getElementById('termsSection')?.classList.contains('collapsed');
-                        if (!order || (incomingEvents.has(String(selectedEventId)) && JSON.stringify(previousEvents.get(String(selectedEventId))) !== JSON.stringify(incomingEvents.get(String(selectedEventId))))) openDetail(selectedEventId);
-                        if (detailWasExpanded && !terminal.classList.contains('panel-expanded')) toggleExpand();
-                        if (termsOpen) document.getElementById('termsSection')?.classList.remove('collapsed');
-                        scrollContainer.scrollTop = scrollTop;
-                    } else if (!detailWasOpen || @json($marketActivitySport !== 'football') || incomingEvents.get(String(selectedEventId))?.locked) {
-                        currentEventId = null;
-                        detailPanel.classList.remove('open');
-                        terminal.classList.remove('with-panel', 'panel-expanded');
-                        if (!document.querySelector('dialog[open], #subscriptionModal, [aria-modal="true"]:not(.hidden), .panel-expanded')) {
-                            document.body.classList.remove('!overflow-hidden');
-                            document.documentElement.classList.remove('!overflow-hidden');
-                        }
-                        detailContent.style.display = 'none';
-                        emptyPanel.style.display = 'flex';
+                    if (detailWasOpen) {
+                        const selected = events.find(event => String(event.id) === String(selectedEventId));
+                        if (selected) selectedMarket = selected;
+                        if (selectedMarket?.locked || selectedMarket?.streamRemoved) window.closeDetail();
                     }
+
                 }
 
                 function marketActivityUrl(page, perPage = 20) {
@@ -1642,11 +1630,13 @@
                         indicator(indicators[2], event.delta, deltaClass(event.delta));
                         indicator(indicators[3], volText(event.volatility), volClass(event.volatility));
                     }
-                    if (currentEventId !== null && changed.some(event => String(event.id) === String(currentEventId))) {
-                        const selected = events.find(event => String(event.id) === String(currentEventId));
-                        if (selected?.streamRemoved) window.closeDetail();
-                        else if (selected) paintMarketDetail(selected);
-                    }
+                    refreshOpenMarketDetail();
+                }
+                function refreshOpenMarketDetail() {
+                    if (currentEventId === null || !detailPanel.classList.contains('open')) return;
+                    selectedMarket = events.find(event => String(event.id) === String(currentEventId)) ?? selectedMarket;
+                    if (!selectedMarket || selectedMarket.locked || selectedMarket.streamRemoved) { window.closeDetail(); return; }
+                    paintMarketDetail(selectedMarket);
                 }
                 function paintMarketDetail(event) {
                     const rows = detailContent.querySelectorAll('.runner-row');
@@ -1700,7 +1690,12 @@
                     const updated = [];
                     for (const quote of quotes) {
                         const index = streamEventIndexes.get(window.marketStreamKey(quote));
-                        if (index === undefined) continue;
+                        if (index === undefined) {
+                            if (selectedMarket && window.marketStreamKey(selectedMarket) === window.marketStreamKey(quote)) {
+                                selectedMarket = window.mergeMarketQuote(selectedMarket, quote);
+                            }
+                            continue;
+                        }
                         const event = events[index];
                         const next = window.mergeMarketQuote(event, quote);
                         if (next !== event) { events[index] = next; updated.push(next); }
@@ -1709,19 +1704,44 @@
                     applyStartFilter();
                     scheduleAvailability();
                 }
-                function refreshLiveMarketActivity() {
+                async function refreshSelectedMarket() {
+                    if (!selectedMarket || selectedMarket.locked || currentEventId === null || selectedQuoteRequest) return;
+                    const key = window.marketStreamKey(selectedMarket);
+                    const url = new URL(@json(route('market-activity.quote')), window.location.origin);
+                    url.searchParams.set('sport', @json($marketActivitySport));
+                    url.searchParams.set('match_key', selectedMarket.streamMatchKey);
+                    url.searchParams.set('market_key', selectedMarket.streamMarketKey);
+                    const controller = new AbortController();
+                    selectedQuoteRequest = controller;
+                    const timeout = window.setTimeout(() => controller.abort(), 10000);
+                    try {
+                        const response = await fetch(url, { cache: 'no-store', headers: { Accept: 'application/json' }, signal: controller.signal });
+                        if (currentEventId === null || !selectedMarket || window.marketStreamKey(selectedMarket) !== key) return;
+                        if (response.status === 401 || response.status === 403) { window.closeDetail(); return; }
+                        if (!response.ok) throw new Error(`HTTP error: ${response.status}`);
+                        const payload = await response.json();
+                        if (!controller.signal.aborted && selectedMarket && window.marketStreamKey(selectedMarket) === key) marketStream?.receive(payload);
+                    } catch (error) {
+                        if (error.name !== 'AbortError') console.error('Selected market quote request failed:', error);
+                    } finally {
+                        window.clearTimeout(timeout);
+                        if (selectedQuoteRequest === controller) selectedQuoteRequest = null;
+                    }
+                }
+                async function refreshLiveMarketActivity() {
                     // HTTP repairs membership/permissions after reconnect; quotes travel over WS.
                     const elapsed = performance.now() - lastFullRefresh;
                     if (elapsed < (streamConnected ? 15000 : Math.max(1000, marketRefreshInterval))) return;
                     lastFullRefresh = performance.now();
-                    return reloadMarketActivity(false, true);
+                    await Promise.all([reloadMarketActivity(false, true), refreshSelectedMarket()]);
                 }
                 document.addEventListener('DOMContentLoaded', function() {
                     trackMarketEvents();
                     marketStream = window.createMarketQuoteStream(applyMarketQuotes, {
                         interval: marketRefreshInterval,
-                        accepts: quote => displayOdds && streamEventIndexes.has(window.marketStreamKey(quote))
-                            && !events[streamEventIndexes.get(window.marketStreamKey(quote))].locked,
+                        accepts: quote => displayOdds && ((streamEventIndexes.has(window.marketStreamKey(quote))
+                            && !events[streamEventIndexes.get(window.marketStreamKey(quote))].locked)
+                            || (selectedMarket && !selectedMarket.locked && window.marketStreamKey(selectedMarket) === window.marketStreamKey(quote))),
                     });
                     marketStream.start();
                     marketRefreshLoop = window.createMarketRefreshLoop(refreshLiveMarketActivity, { interval: marketRefreshInterval });
@@ -1750,6 +1770,7 @@
                 window.addEventListener('pagehide', () => {
                     marketRefreshLoop?.stop();
                     marketStream?.stop();
+                    selectedQuoteRequest?.abort();
                     marketRequest?.abort();
                     window.clearTimeout(availabilityTimer);
                 });
@@ -1833,10 +1854,12 @@
 
                     const ev = events.find(function(e) {
                         return String(e.id) === String(id);
-                    });
+                    }) ?? (String(selectedMarket?.id) === String(id) ? selectedMarket : null);
                     if (!ev || ev.locked) return;
                     const updating = String(currentEventId) === String(id) && detailPanel.classList.contains('open');
+                    if (!updating) { selectedQuoteRequest?.abort(); selectedQuoteRequest = null; }
                     currentEventId = id;
+                    selectedMarket = ev;
 
                     document.querySelectorAll('.events-table tbody tr').forEach(function(r) {
                         r.classList.toggle('selected', String(r.dataset.id) === String(id));
@@ -1928,6 +1951,10 @@
                             if (globalThis.updateFixtureRows) globalThis.updateFixtureRows(detailContent.querySelector('.runners-list'), template.content.querySelector('.runners-list'));
                             else detailContent.querySelector('.runners-list').replaceChildren(...template.content.querySelector('.runners-list').childNodes);
                         }
+                        const runnerRows = detailContent.querySelectorAll('.runner-row');
+                        template.content.querySelectorAll('.runner-row').forEach((next, index) => {
+                            if (runnerRows[index]) runnerRows[index].dataset.runnerId = next.dataset.runnerId;
+                        });
                         const fields = detailContent.querySelectorAll('.detail-title, .detail-meta, .market-book-status, .runner-name, .runner-back, .runner-lay, .ind-label, .ind-value, .liquidity-favorite, .liq-back, .liq-lay, .liquidity-bar span');
                         template.content.querySelectorAll('.detail-title, .detail-meta, .market-book-status, .runner-name, .runner-back, .runner-lay, .ind-label, .ind-value, .liquidity-favorite, .liq-back, .liq-lay, .liquidity-bar span').forEach((next, index) => {
                             const field = fields[index];
@@ -1948,6 +1975,7 @@
                     detailPanel.classList.add('open');
                     terminal.classList.add('with-panel');
                     terminal.classList.remove('panel-expanded');
+                    refreshSelectedMarket();
 
                     const expandBtn = document.getElementById('expandBtn');
                     if (expandBtn) expandBtn.addEventListener('click', toggleExpand);
@@ -2002,6 +2030,10 @@
                     detailContent.style.display = 'none';
                     emptyPanel.style.display = 'flex';
                     currentEventId = null;
+                    selectedMarket = null;
+                    selectedQuoteRequest?.abort();
+                    selectedQuoteRequest = null;
+                    marketStream?.retain(events);
                     document.querySelectorAll('.events-table tbody tr').forEach(function(r) {
                         r.classList.remove('selected');
                     });

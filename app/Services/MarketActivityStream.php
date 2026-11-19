@@ -62,6 +62,22 @@ class MarketActivityStream
         }
     }
 
+    /** @return array<string, mixed> */
+    public function quote(string $prefix, string $matchKey, string $marketKey): array
+    {
+        $matches = getInRedis($prefix.':matches', readOnly: true, matchKeys: [$matchKey]) ?? [];
+        $match = $matches[$matchKey] ?? null;
+        if ($match !== null && isset($match['markets'][$marketKey])) {
+            $match['markets'] = [$marketKey => $match['markets'][$marketKey]];
+            $quotes = $this->markets($prefix, $matchKey, $match);
+            if ($quotes !== []) {
+                return $quotes[0];
+            }
+        }
+
+        return ['matchKey' => $matchKey, 'marketKey' => $marketKey, 'removed' => true, 'runners' => [], 'lastMarketUpdate' => microtime(true)];
+    }
+
     /**
      * Keep exchange books below Reverb's default 10 KB request limit, including JSON escaping.
      *

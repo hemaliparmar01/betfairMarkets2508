@@ -351,6 +351,35 @@ class SportsCacheOptimizationTest extends TestCase
         }
     }
 
+    #[DataProvider('sports')]
+    public function test_selected_market_recovery_reads_one_record_and_returns_its_latest_book(string $sport): void
+    {
+        $rows = $this->rows($sport);
+        $cache = $this->install($sport, $rows);
+        $key = array_key_first($rows);
+        $market = array_key_first($rows[$key]['markets']);
+        $runnerKey = array_key_first($rows[$key]['markets'][$market]);
+        $reads = $this->watchReads();
+        $service = app(MarketActivityStream::class);
+
+        $quote = $service->quote($sport, $key, $market);
+
+        $this->assertSame($key, $quote['matchKey']);
+        $this->assertSame(100.0, $quote['runners'][0]['backSize']);
+        $this->assertSame([], $reads->whole);
+        $this->assertSame([1], $reads->batch_sizes);
+        $updated = $rows[$key];
+        $updated['markets'][$market][$runnerKey] = array_replace($updated['markets'][$market][$runnerKey], [
+            'backSize' => 400, 'laySize' => 100, 'liquidity_updated_at' => microtime(true)]);
+        $cache->store([$key => $updated], 60, false);
+        $latest = $service->quote($sport, $key, $market);
+        $this->assertSame(400.0, $latest['runners'][0]['backSize']);
+        $this->assertSame(100.0, $latest['runners'][0]['laySize']);
+        $missing = $service->quote($sport, $key, 'missing-market');
+        $this->assertTrue($missing['removed']);
+        $this->assertSame([], $missing['runners']);
+    }
+
     private function watchReads(): object
     {
         $reads = (object) ['whole' => [], 'batch_sizes' => [], 'catalog_reads' => 0];

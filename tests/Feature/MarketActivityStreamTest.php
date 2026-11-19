@@ -112,6 +112,23 @@ class MarketActivityStreamTest extends TestCase
         (new ProcessAlert('source', $data))->handle($alerts);
     }
 
+    public function test_selected_quote_endpoint_checks_access_and_returns_a_private_current_snapshot(): void
+    {
+        $this->withoutMiddleware(CustomerAuthService::class);
+        $customer = CustomerFactory::new()->create(['trial_ends_at' => now()->addDay()]);
+        $this->actingAs($customer, 'customers');
+        $quote = ['matchKey' => 'off-page', 'marketKey' => '123_WIN', 'runners' => [['backSize' => 400]]];
+        $this->mock(MarketActivityStream::class)->shouldReceive('quote')->once()->with('Football', 'off-page', '123_WIN')->andReturn($quote);
+        $query = ['sport' => 'football', 'match_key' => 'off-page', 'market_key' => '123_WIN'];
+
+        $response = $this->getJson('/market-activity/quote?'.http_build_query($query));
+
+        $response->assertJsonPath('markets.0', $quote)->assertHeader('Cache-Control', 'no-store, private');
+        $this->getJson('/market-activity/quote?'.http_build_query(array_replace($query, ['sport' => 'invalid'])))->assertUnprocessable();
+        $customer->update(['trial_ends_at' => now()->subDay()]);
+        $this->getJson('/market-activity/quote?'.http_build_query($query))->assertForbidden();
+    }
+
     private function match(): array
     {
         return ['unique_key' => 'match-a', 'betfair_match_id' => 123, 'result_status' => 'Prematch', 'timestamp' => time() + 120,

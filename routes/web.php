@@ -12,6 +12,7 @@ use App\Http\Controllers\Users\Football\FootballController;
 use App\Http\Controllers\Users\Greyhounds\GreyhoundsController;
 use App\Http\Controllers\Users\HorseRacing\HorseRacingController;
 use App\Http\Controllers\Users\IceHockey\IceHockeyController;
+use App\Http\Controllers\Users\MarketActivityQuoteController;
 use App\Http\Controllers\Users\NotificationController;
 use App\Http\Controllers\Users\StaticPageController;
 use App\Http\Controllers\Users\SubscriptionController;
@@ -75,6 +76,7 @@ Route::put('my-profile', [AuthController::class, 'updateProfile'])->middleware('
 Route::get('my-profile/avatar', [AuthController::class, 'avatar'])->middleware('auth:customers')->name('customers.avatar');
 
 Route::get('/', [FootballController::class, 'football'])->name('football.home');
+Route::get('market-activity/quote', MarketActivityQuoteController::class)->middleware('auth:customers')->name('market-activity.quote');
 Route::post('favorites/toggle', [FavoriteController::class, 'toggle'])->middleware('auth:customers')->name('favorites.toggle');
 Route::prefix('football')->name('football.')->group(function () {
     Route::get('/matches/{matchId}/predictions', [FootballController::class, 'predictions'])->whereNumber('matchId')->name('matches.predictions');
