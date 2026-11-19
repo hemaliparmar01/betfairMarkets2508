@@ -8,9 +8,12 @@ use App\Services\AlertService;
 use App\Services\CustomerAuthService;
 use App\Services\MarketActivityStream;
 use Database\Factories\CustomerFactory;
+use Illuminate\Filesystem\Filesystem;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Redis;
+use Illuminate\View\FileViewFinder;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
@@ -127,6 +130,32 @@ class MarketActivityStreamTest extends TestCase
         $this->getJson('/market-activity/quote?'.http_build_query(array_replace($query, ['sport' => 'invalid'])))->assertUnprocessable();
         $customer->update(['trial_ends_at' => now()->subDay()]);
         $this->getJson('/market-activity/quote?'.http_build_query($query))->assertForbidden();
+    }
+
+    #[DataProvider('sports')]
+    public function test_all_market_pages_and_refresh_fragments_use_the_current_case_sensitive_shared_template(string $prefix): void
+    {
+        $this->withoutMiddleware(CustomerAuthService::class);
+        $this->withoutVite();
+        $customer = CustomerFactory::new()->create(['trial_ends_at' => now()->addDay()]);
+        $this->actingAs($customer, 'customers');
+        $files = new Filesystem;
+        $strictFiles = \Mockery::mock(Filesystem::class)->makePartial();
+        $strictFiles->shouldReceive('exists')->andReturnUsing(static fn (string $path): bool => ! preg_match('~/users/sports/(football|cricket|icehockey|americanfootball)/marketActivity\.blade\.php$~', $path) && $files->exists($path));
+        app('view')->setFinder(new FileViewFinder($strictFiles, [resource_path('views')]));
+        config(['cache.stores.redis.driver' => 'array']);
+        Cache::purge('redis');
+        Redis::shouldReceive('get')->andReturn(null);
+        $controller = 'App\\Http\\Controllers\\Users\\'.$prefix.'\\'.$prefix.'Controller';
+        $this->partialMock($controller, function ($mock): void {
+            $mock->shouldReceive('getMarketActivites')->andReturn([]);
+            $mock->shouldReceive('getAllMarkets')->andReturn(['options' => []]);
+        });
+        $sport = MarketActivityStream::SPORTS[$prefix];
+
+        $url = route($sport.'.market-activity', [], false);
+        $this->get($url)->assertOk()->assertSee('data-market-ui="selected-market-v2"', false)->assertSee('function refreshSelectedMarket()', false)->assertSee('function paintMarketDetail(event)', false);
+        $this->getJson($url.'?_market_rows=1')->assertOk()->assertJsonStructure(['html', 'has_more', 'next_page']);
     }
 
     private function match(): array

@@ -14,6 +14,15 @@ def worker_command(value, service, container, app):
     if len(matches) != 1:
         raise ValueError('Expected one direct ExecStart command for ' + service)
     args = shlex.split(matches[0])
+    shell = next((index for index, arg in enumerate(args) if arg in ('sh', '/bin/sh')), None)
+    if shell is not None:
+        if args[shell + 1:shell + 2] != ['-lc']:
+            raise ValueError('Unsupported worker shell for ' + service)
+        script = args[shell + 2:]
+        script = shlex.split(script[0]) if len(script) == 1 else script
+        if script[:6] != ['cd', app, '&&', 'exec', 'php', 'artisan'] or any(re.search(r'[;&|`$<>\n\r]', arg) for arg in script[6:]):
+            raise ValueError('Unexpected worker shell command for ' + service)
+        args = args[:2] + ['-w', app] + args[2:shell] + script[4:]
     if not args or Path(args[0]).name != 'docker' or args[1:2] != ['exec'] or container not in args or app not in args:
         raise ValueError('Unexpected Docker container/project for ' + service)
     if 'artisan' not in args or args[args.index('artisan') + 1:args.index('artisan') + 2] != ['queue:work']:

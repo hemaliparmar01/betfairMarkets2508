@@ -1135,6 +1135,37 @@ class AlertSystemTest extends TestCase
         Http::assertNothingSent();
     }
 
+    #[TestWith([false])]
+    #[TestWith([true])]
+    public function test_pinnacle_initial_page_selects_main_markets_in_controls_and_live_state(bool $archive): void
+    {
+        config(['services.telegram.enabled' => false]);
+        $this->actingAs($this->customer(), 'customers');
+        Redis::shouldReceive('get')->andReturn(null);
+
+        $this->get(route('football.pinnacle-odds', $archive ? ['archive' => 1] : []))
+            ->assertOk()->assertSee('data-market-filter="main" aria-pressed="true"', false)
+            ->assertSee('data-market-filter="all" aria-pressed="false"', false)
+            ->assertSee('marketFilter: "main"', false);
+    }
+
+    public function test_pinnacle_archive_defaults_to_main_and_keeps_explicit_handicap_and_all_choices(): void
+    {
+        config(['services.telegram.enabled' => false]);
+        $this->actingAs($this->customer(), 'customers');
+        $base = ['sport' => 'soccer', 'home' => 'Home', 'away' => 'Away', 'sect' => 'Moneyline', 'outcome' => 'Home',
+            'from_price' => 2, 'to_price' => 1.8, 'alerted' => now()->timestamp - 600, 'starts' => now()->addHour()->timestamp];
+        $main = $base + ['id' => 321, 'alert_key' => hash('sha256', 'default-main')];
+        $handicap = array_replace($base, ['id' => 322, 'alert_key' => hash('sha256', 'default-handicap'), 'sect' => 'spread', 'point' => -1]);
+        (new ProcessAlert('pinnacle', ['alerts' => [$main, $handicap]]))->handle(app(AlertService::class));
+
+        $this->getJson(route('football.pinnacle-odds', ['archive' => 1]))->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', 321);
+        $this->getJson(route('football.pinnacle-odds', ['archive' => 1, 'market_filter' => 'all']))->assertOk()->assertJsonCount(2, 'data');
+        $this->getJson(route('football.pinnacle-odds', ['archive' => 1, 'market_filter' => 'handicap']))->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', 322);
+        $this->get(route('football.pinnacle-odds', ['archive' => 1, 'market_filter' => 'all']))->assertOk()
+            ->assertSee('data-market-filter="all" aria-pressed="true"', false)->assertSee('marketFilter: "all"', false);
+    }
+
     public function test_pinnacle_archive_filters_whole_history_and_restores_parent_names_without_live_cache(): void
     {
         $this->travelTo(new \DateTimeImmutable('2026-11-07 12:00:00 UTC'));

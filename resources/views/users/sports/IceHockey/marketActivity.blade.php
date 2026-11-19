@@ -1,2 +1,2 @@
 @php $marketActivitySport = 'icehockey'; @endphp
-@extends('users.sports.football.marketActivity')
+@extends('users.sports.Football.marketActivity')

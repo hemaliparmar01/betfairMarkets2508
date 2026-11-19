@@ -35,7 +35,7 @@ class CricketController extends Controller
                 ], 403);
             }
 
-            return view('users.sports.cricket.marketActivity', compact('checkAuthAndSubscription'));
+            return view('users.sports.Cricket.marketActivity', compact('checkAuthAndSubscription'));
         }
 
         $marketActivites = $this->getMarketActivites();
@@ -43,10 +43,10 @@ class CricketController extends Controller
         $hasMore = $this->marketActivityHasMore;
         $nextPage = $this->marketActivityNextPage;
         if (request()->expectsJson()) {
-            return response()->json(['html' => view('users.sports.cricket.marketActivity', compact('marketActivites', 'getAllMarkets', 'hasMore', 'nextPage'))->fragment('cricketMarketRows'), 'has_more' => $hasMore, 'next_page' => $nextPage]);
+            return response()->json(['html' => view('users.sports.Cricket.marketActivity', compact('marketActivites', 'getAllMarkets', 'hasMore', 'nextPage'))->fragment('cricketMarketRows'), 'has_more' => $hasMore, 'next_page' => $nextPage]);
         }
 
-        return view('users.sports.cricket.marketActivity', compact('marketActivites', 'getAllMarkets', 'hasMore', 'nextPage'));
+        return view('users.sports.Cricket.marketActivity', compact('marketActivites', 'getAllMarkets', 'hasMore', 'nextPage'));
     }
 
     public function matchDetail(string $matchId): View

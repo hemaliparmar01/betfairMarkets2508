@@ -47,7 +47,7 @@ class FootballController extends Controller
                 ], 403);
             }
 
-            return view('users.sports.football.marketActivity', compact('checkAuthAndSubscription'));
+            return view('users.sports.Football.marketActivity', compact('checkAuthAndSubscription'));
         }
 
         if ($capture || request()->routeIs('football.pinnacle-odds')) {
@@ -94,9 +94,9 @@ class FootballController extends Controller
                     $pinnacleArchiveStats = app(PinnacleArchive::class)->summary($pinnacleArchiveStart->timestamp);
                 }
                 $query->where('sport', $pinnacleSport);
-                if (($filters['market_filter'] ?? 'all') === 'main') {
+                if (($filters['market_filter'] ?? 'main') === 'main') {
                     $query->where('market_group', '<', 3);
-                } elseif (($filters['market_filter'] ?? 'all') === 'handicap') {
+                } elseif (($filters['market_filter'] ?? 'main') === 'handicap') {
                     $query->where('market_group', 3);
                 }
                 $timeFilter = $filters['time_filter'] ?? 'all';
@@ -742,7 +742,7 @@ class FootballController extends Controller
             }
             $response = response()->json([
                 'data' => $marketActivites,
-                'html' => view('users.sports.football.marketActivity', compact('marketActivites', 'hasMore', 'nextPage', 'checkAuthAndSubscription', 'marketRowsOnly', 'compactMarketRows', 'marketRowOrder'))->fragment('footballMarketRows'),
+                'html' => view('users.sports.Football.marketActivity', compact('marketActivites', 'hasMore', 'nextPage', 'checkAuthAndSubscription', 'marketRowsOnly', 'compactMarketRows', 'marketRowOrder'))->fragment('footballMarketRows'),
                 'has_more' => $hasMore,
                 'next_page' => $nextPage,
             ] + ($compactMarketRows ? ['order' => $marketRowOrder, 'versions' => (object) $marketRowVersions, 'server_time' => time()] : []));
@@ -751,7 +751,7 @@ class FootballController extends Controller
             }
             $response->headers->set('Cache-Control', 'private, no-store');
         } else {
-            $response = response()->view('users.sports.football.marketActivity', compact('marketActivites', 'hasMore', 'nextPage', 'checkAuthAndSubscription', 'marketRowVersions'));
+            $response = response()->view('users.sports.Football.marketActivity', compact('marketActivites', 'hasMore', 'nextPage', 'checkAuthAndSubscription', 'marketRowVersions'));
         }
 
         $response->setVary('Accept-Encoding', false);

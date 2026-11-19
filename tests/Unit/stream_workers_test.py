@@ -28,6 +28,22 @@ class StreamWorkerTest(unittest.TestCase):
         self.assertIn('--timeout=15', command)
         self.assertIn('sports-realtime', command)
 
+    def test_shell_wrapped_workers_become_direct_docker_commands(self):
+        script = 'cd ' + self.app + ' && exec php artisan queue:work --queue=alerts-telegram --sleep=1'
+        for shown in [script, "'" + script + "'"]:
+            with self.subTest(shown=shown):
+                value = '{ argv[]=/usr/bin/docker exec -i --user www aapanel sh -lc ' + shown + ' ; ignore_errors=no ; }'
+
+                command = module.worker_command(value, 'queue-alerts-telegram', 'aapanel', self.app)
+
+                self.assertEqual(['/usr/bin/docker', 'exec', '-w', self.app, '-i', '--user', 'www', 'aapanel', 'php', 'artisan', 'queue:work', '--queue=alerts-ltd,alerts-telegram', '--sleep=1'], command)
+
+    def test_shell_commands_for_another_project_or_with_extra_actions_are_rejected(self):
+        for script in ['cd /other && exec php artisan queue:work --queue=alerts-telegram',
+                       'cd ' + self.app + ' && exec php artisan queue:work --queue=alerts-telegram && touch /tmp/unexpected']:
+            with self.subTest(script=script), self.assertRaises(ValueError):
+                module.worker_command('{ argv[]=/usr/bin/docker exec aapanel sh -lc ' + script + ' ; }', 'queue-alerts-telegram', 'aapanel', self.app)
+
     def test_unrelated_units_and_wrong_containers_are_rejected_before_changes(self):
         for value in [self.command('--queue=default'), self.command('--queue=alerts-telegram').replace('aapanel', 'other'), '{ argv[]=/bin/sh -c worker ; }']:
             with self.assertRaises(ValueError):
