@@ -7,6 +7,7 @@ use App\Events\FootballSportsScoreUpdated;
 use App\Http\Controllers\Controller;
 use App\Models\FootballMarket;
 use App\Models\FootballMatch;
+use App\Services\FootballMatchCache;
 use App\Services\FootballV6Stats;
 use App\Services\MatchBackup;
 use Carbon\Carbon;

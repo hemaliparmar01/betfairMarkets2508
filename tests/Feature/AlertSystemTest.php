@@ -381,6 +381,68 @@ class AlertSystemTest extends TestCase
         $this->assertStringNotContainsString('HNV3', json_encode($payload));
     }
 
+    #[TestWith(['Arsenal L.F.C. (Women) 0:0 Lyon (Women)'])]
+    #[TestWith(["Arsenal L.F.C.\n(Women) 0:0 Lyon (Women)"])]
+    public function test_ltd_parses_wrapped_womens_teams_and_preserves_the_full_competition(string $teams): void
+    {
+        $this->fixture(['team1' => 'Arsenal L.F.C. (Women)', 'team2' => 'Lyon (Women)', 'tournament' => 'UEFA Champions League Women']);
+        $text = "Football. UEFA Champions League. Women\n19 Nov 2026 (21:45)\n".$teams."\n0:0\nTotal. Over (0.5). 1st half 1.512\nLIVE\ntime elapsed: 21:07\nStatus: Accepted\n👉 A goal in the first half";
+
+        $id = app(AlertService::class)->source($this->source($text));
+
+        $this->assertNotNull($id);
+        $payload = json_decode(DB::table('alerts')->find($id)->payload, true);
+        $this->assertSame('Arsenal L.F.C. (Women) vs Lyon (Women)', $payload['match']);
+        $this->assertSame('UEFA Champions League Women', $payload['league']);
+        $this->assertSame('0 - 0', $payload['score']);
+        $this->assertTrue($payload['context']['signal']['is_ltd']);
+    }
+
+    public function test_source_womens_card_resolves_provider_aliases_and_its_goal_reply(): void
+    {
+        $customer = $this->customer(['popup_enabled' => false]);
+        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 80]])]);
+        $sports = $this->fixture(['unique_key' => 'arsenal-lyonnes-sports', 'sportsApiPro_match_id' => 17018549,
+            'team1' => 'Arsenal', 'team2' => 'OL Lyonnes', 'tournament' => 'UEFA Champions League, Women']);
+        $betfair = FootballMatch::query()->create(['unique_key' => 'arsenal-lyon-betfair', 'betfair_match_id' => '36325159',
+            'team1' => 'Arsenal (W)', 'team2' => 'Lyon (W)', 'tournament' => "UEFA Women's Champions League", 'result_status' => 'Live',
+            'start_timestamp' => $sports->start_timestamp, 'payload' => ['team1' => 'Arsenal (W)', 'team2' => 'Lyon (W)', 'markets' => []]]);
+        $text = "Football. UEFA Champions League. Women\n19 Nov 2026 (21:45)\nArsenal L.F.C.\n(Women) 0:0 Lyon (Women)\nTotal. Over (0.5). 1st half 1.512\ntime elapsed: 21:07\nA goal in the first half";
+
+        $parent = app(AlertService::class)->source([...$this->source($text), 'message_id' => 4562]);
+
+        $this->assertNotNull($parent);
+        $parentPayload = json_decode(DB::table('alerts')->find($parent)->payload, true);
+        $this->assertSame('17018549', DB::table('alerts')->find($parent)->match_id);
+        $this->assertSame($betfair->betfair_match_id, $parentPayload['context']['betfair_match_id']);
+        app(AlertService::class)->deliver($this->delivery($parent, $customer));
+        $this->travel(2)->seconds();
+
+        $goal = app(AlertService::class)->source([...$this->source("EUROPE: UEFA CHAMPIONS LEAGUE WOMEN\n19.11.2026 22:00\n0-1\n1st Half - 25:28\nArsenal W\nOL Lyonnes W\n🚀GOOOOOAAAAAALLLLLL ⚽"),
+            'message_id' => 4563, 'reply_message_id' => 4562, 'reply_text' => $text]);
+
+        $this->assertNotNull($goal);
+        $payload = json_decode(DB::table('alerts')->find($goal)->payload, true);
+        $this->assertSame($parent, DB::table('alerts')->find($goal)->parent_alert_id);
+        $this->assertSame('0 - 1', $payload['score']);
+        app(AlertService::class)->deliver($this->delivery($goal, $customer));
+        $this->assertDatabaseHas('alert_deliveries', ['alert_id' => $parent, 'customer_id' => $customer->id, 'channel' => 'telegram', 'status' => 'sent']);
+        $this->assertDatabaseHas('alert_deliveries', ['alert_id' => $goal, 'customer_id' => $customer->id, 'channel' => 'telegram', 'status' => 'sent']);
+        Http::assertSentCount(2);
+        $this->assertSame($goal, app(AlertService::class)->source([...$this->source("GOAL!\nScore: 0 - 1\nTime: 25'"),
+            'message_id' => 4563, 'reply_message_id' => 4562]));
+    }
+
+    public function test_source_womens_signal_does_not_match_a_mens_fixture_with_the_same_team_names(): void
+    {
+        $this->fixture(['team1' => 'Arsenal', 'team2' => 'Lyon', 'tournament' => 'UEFA Champions League']);
+
+        $id = app(AlertService::class)->source($this->source("Match: Arsenal (Women) vs Lyon (Women)\nLeague: UEFA Champions League Women\n1st Half Over 0.5"));
+
+        $this->assertNull($id);
+        $this->assertDatabaseCount('alerts', 0);
+    }
+
     public function test_ltd_parses_image_card_text_and_drops_the_promotional_footer(): void
     {
         $this->fixture(['team1' => 'Leeds', 'team2' => 'Tottenham', 'tournament' => 'English Premier League']);
@@ -421,6 +483,7 @@ class AlertSystemTest extends TestCase
         $this->assertDatabaseCount('alerts', 1);
     }
 
+    #[TestWith(["🚀 GOOOOOAAAAAAALLLLL ⚽\nMatch: Torino vs Monza 1912\nLeague: Coppa Italia\nScore: 0 - 1\n1st Half - 33:38"])]
     #[TestWith(["🚀🥳 GOOOOOAAAAAAALLLLL!\nMatch: Torino vs Monza 1912\nLeague: Coppa Italia\nScore: 0 - 1\n1st Half - 33:38"])]
     #[TestWith(["Match: Torino vs Monza 1912\nLeague: Coppa Italia\nScore: 0 - 1\n1st Half - 33:38\n✅ Won"])]
     #[TestWith(["Match: Torino vs Monza 1912\nLeague: Coppa Italia\nScore: 0 - 1\nTime: 45+2'\nStatus: SIGNAL WON ✅️"])]

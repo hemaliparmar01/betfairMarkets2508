@@ -1,5 +1,7 @@
 import importlib.util
 from pathlib import Path
+import re
+import shlex
 import unittest
 
 spec = importlib.util.spec_from_file_location('stream_workers', Path(__file__).resolve().parents[2] / 'server/configure-stream-workers.py')
@@ -43,6 +45,16 @@ class StreamWorkerTest(unittest.TestCase):
                        'cd ' + self.app + ' && exec php artisan queue:work --queue=alerts-telegram && touch /tmp/unexpected']:
             with self.subTest(script=script), self.assertRaises(ValueError):
                 module.worker_command('{ argv[]=/usr/bin/docker exec aapanel sh -lc ' + script + ' ; }', 'queue-alerts-telegram', 'aapanel', self.app)
+
+    def test_stop_targets_the_updated_worker_without_matching_other_queues(self):
+        command = module.worker_command(self.command('--queue=alerts-telegram --sleep=1'), 'queue-alerts-telegram', 'aapanel', self.app)
+
+        stop = module.worker_stop_command(command)
+        pattern = shlex.split(stop[-1])[3]
+
+        self.assertIsNotNone(re.fullmatch(pattern, 'php artisan queue:work --queue=alerts-ltd,alerts-telegram --sleep=1'))
+        self.assertIsNone(re.fullmatch(pattern, 'php artisan queue:work --queue=alerts-platform --sleep=1'))
+        self.assertEqual(['sh', '-lc'], stop[-3:-1])
 
     def test_unrelated_units_and_wrong_containers_are_rejected_before_changes(self):
         for value in [self.command('--queue=default'), self.command('--queue=alerts-telegram').replace('aapanel', 'other'), '{ argv[]=/bin/sh -c worker ; }']:

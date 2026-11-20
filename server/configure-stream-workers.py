@@ -48,6 +48,13 @@ def systemd_quote(value):
     return '"' + value.replace('\\', '\\\\').replace('"', '\\"').replace('%', '%%').replace('$', '$$') + '"'
 
 
+def worker_stop_command(command):
+    php = command.index('artisan') - 1
+    prefix = [arg for arg in command[:php] if arg != '-i']
+    pattern = '^' + re.escape(' '.join(command[php:])) + '$'
+    return prefix + ['sh', '-lc', 'pkill -TERM -f ' + shlex.quote(pattern) + ' || true']
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', default='/opt/bfmarkets-service-manager/server/services-manager.json')
@@ -83,7 +90,8 @@ def main():
             if target.exists() and not backup.exists():
                 backup.write_bytes(target.read_bytes())
             temporary = target.with_suffix('.conf.tmp')
-            temporary.write_text('[Service]\nExecStart=\nExecStart=' + ' '.join(map(systemd_quote, command)) + '\n')
+            temporary.write_text('[Service]\nExecStart=\nExecStart=' + ' '.join(map(systemd_quote, command))
+                                 + '\nExecStop=\nExecStop=' + ' '.join(map(systemd_quote, worker_stop_command(command))) + '\n')
             temporary.chmod(0o644)
             temporary.replace(target)
             definition = spec.get('overrides', {}).get('production', spec)

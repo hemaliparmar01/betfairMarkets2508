@@ -394,11 +394,11 @@ class AlertService
         };
         $text = $clean((string) ($message['text'] ?? ''));
         $context = trim($text."\n".$clean((string) ($message['reply_text'] ?? '')));
-        $goal = preg_match('/(?:^|\n)\s*(?:⚽\s*)?go+a+l+(?:\h+alert)?(?:!+(?=\s|$)|(?=\h+(?:Score:|[^\n]+\h+\d{1,2}\h*[-:]\h*\d{1,2})))/iu', $text) === 1;
+        $goal = preg_match('/(?:^|\n)\s*(?:⚽\s*)?go+a+l+(?:\h+alert)?(?:!+(?=\s|$)|(?=\h*(?:\n|$))|(?=\h+(?:Score:|[^\n]+\h+\d{1,2}\h*[-:]\h*\d{1,2})))/iu', $text) === 1;
         $goal = $goal || preg_match('/^\h*(?:Status\s*:\s*)?(?:Signal\h+)?(?:Won|Paid\s*out)[\h\p{So}\p{Sk}\x{FE0F}\x{200D}!]*$/imu', $text) === 1;
         $hasMinute = preg_match('/\b(\d{1,3}(?:\+\d{1,2})?)\s*[\x{0027}\x{2019}\x{2032}]/u', $text, $minute)
             || preg_match('/\b(?:1st\s*half\s*[-–:]|time\s+elapsed\s*:)\s*(\d{1,2}):[0-5]\d\b/iu', $text, $minute);
-        $hasScore = preg_match('~(?<![\d:/-])(\d{1,2})\h*[-:–]\h*(\d{1,2})(?![\d:/-])~u', preg_replace('/^.*(?:1st\s*half\s*[-–:]|time\s+elapsed\s*:|\b\d{1,2}\h+[\p{L}.]+\h+20\d{2}\h*\(\d{1,2}:\d{2}\)).*$/imu', '', $text), $score);
+        $hasScore = preg_match('~(?<![\d:/-])(\d{1,2})\h*[-:–]\h*(\d{1,2})(?![\d:/-])~u', preg_replace('/^.*(?:1st\s*half\s*[-–:]|time\s+elapsed\s*:|\b\d{1,2}\h+[\p{L}.]+\h+20\d{2}\h*\(\d{1,2}:\d{2}\)|\b\d{1,2}[.\/-]\d{1,2}[.\/-]20\d{2}\h+\d{1,2}:\d{2}).*$/imu', '', $text), $score);
         $settlement = null;
         if (preg_match('/^\h*(?:(?:Status|Signal)\h*:\h*)?(Won|Paid\h*out|Lost|Void|Refunded|Cancelled)[\h!]*$/imu', $text, $result)) {
             $settlement = match (strtolower(preg_replace('/\s+/', '', $result[1]))) {
@@ -414,17 +414,21 @@ class AlertService
         }
         $hasTeams = preg_match('/(?:^|\n)\s*(?:⚽\s*)?(?:Match\s*:\s*)?([^\n:]+?)\s+(?:vs\.?|v\.?|—)\s+([^\n]+?)(?=\s+[|@]|\s+-\s+(?:Over|Under)|\n|$)/iu', $context, $teams);
         if (! $hasTeams && $goal) {
-            $hasTeams = preg_match('/\bgo+a+l+!?\s*([^\n]+?)\s+\d{1,2}\s*[-:]\s*\d{1,2}\s+([^\n]+?)(?=\s+@|\n|$)/iu', $text, $teams);
+            $hasTeams = preg_match('/\bgo+a+l+!?\h+([^\n]+?)\h+\d{1,2}\h*[-:]\h*\d{1,2}\h+([^\n]+?)(?=\h+@|\n|$)/iu', $text, $teams);
         }
         $hasLeague = preg_match('/(?:League|Competition|Tournament)\s*:\s*([^\n|]+)/iu', $context, $league);
         if (! $hasTeams) {
-            $hasTeams = preg_match('/^\h*([\p{L}][^\n:]+?)\h+\d{1,2}\h*[:–-]\h*\d{1,2}\h+([\p{L}][^\n:]+?)(?:\n([\p{L}][\p{L} .-]+)(?=\n\h*\d))?\h*$/mu', $text, $teams);
+            $cardText = preg_replace('/^(\h*[\p{L}][^\n]*?)\n\h*(\((?:Women|W|Men|M)\))(?=\h|\n|$)/imu', '$1 $2', $text);
+            $hasTeams = preg_match('/^\h*([\p{L}][^\n:]+?)\h+\d{1,2}\h*[:–-]\h*\d{1,2}\h+([\p{L}][^\n:]+?)(?:\n([\p{L}][\p{L} .-]+)(?=\n\h*\d))?\h*$/mu', $cardText, $teams);
             if ($hasTeams && isset($teams[3])) {
                 $teams[2] .= ' '.$teams[3];
             }
         }
         if (! $hasLeague) {
             $hasLeague = preg_match('/^\h*Football[.\h]+(?:[^\n.]+\.\h+)?([^\n]+)$/mi', $text, $league);
+            if ($hasLeague && preg_match('/^(?:Women|Men)\h*\.?$/iu', trim($league[1]))) {
+                $hasLeague = preg_match('/^\h*Football[.\h]+([^\n]+)$/mi', $text, $league);
+            }
         }
         if (! $hasTeams && $goal && ! empty($message['reply_message_id'])) {
             $replyParents = DB::table('alerts')->where('type', 'ltd')->where('created_at', '>=', now()->subHours(54))
@@ -445,7 +449,8 @@ class AlertService
             }
         }
         if (! $hasTeams || (! $goal && ! $hasLeague)) {
-            Log::info('Telegram source match details could not be parsed.', ['message_id' => $message['message_id']]);
+            Log::info('Telegram source match details could not be parsed.', ['message_id' => $message['message_id'],
+                'teams_parsed' => (bool) $hasTeams, 'league_parsed' => (bool) $hasLeague]);
 
             return null;
         }
@@ -453,23 +458,46 @@ class AlertService
         $away = trim($teams[2]);
         $competition = $hasLeague ? trim($league[1]) : null;
         $resolver = app(FootballSyncController::class);
-        $normalizeTeam = static fn (string $name): string => match (strtolower(trim($name))) {
-            'leeds' => 'Leeds United',
-            'tottenham' => 'Tottenham Hotspur',
-            default => $name,
+        $womenCompetition = preg_match('/\bwomen\b/iu', $competition ?? '') === 1;
+        $normalizeTeam = static function (string $name) use ($womenCompetition): string {
+            if ($womenCompetition) {
+                $name = preg_replace('/\bl\.\h*f\.\h*c\.?(?=\h|$)/iu', '', $name);
+                $name = trim(preg_replace('/(?:\(\h*(?:women|w)\h*\)|\b(?:women|w)\b)\h*$/iu', '', $name));
+                if (mb_strtolower($name) === 'ol lyonnes') {
+                    $name = 'Lyon';
+                }
+            }
+
+            return match (strtolower(trim($name))) {
+                'leeds' => 'Leeds United',
+                'tottenham' => 'Tottenham Hotspur',
+                default => $name,
+            };
         };
-        $normalizeLeague = static fn (string $name): string => match (strtolower(trim($name))) {
-            'english premier league', 'england premier league' => 'Premier League',
-            default => trim(preg_replace('/^[^-]+ - /u', '', $name)),
+        $normalizeLeague = static function (string $name) use ($womenCompetition): string {
+            $name = match (strtolower(trim($name))) {
+                'english premier league', 'england premier league' => 'Premier League',
+                default => trim(preg_replace('/^[^-]+ - /u', '', $name)),
+            };
+            if ($womenCompetition) {
+                $name = preg_replace('/\bwomen[\x{0027}\x{2019}]s\b/iu', 'women', mb_strtolower($name));
+                $words = preg_split('/\s+/u', trim(preg_replace('/[^\p{L}\p{N}]+/u', ' ', $name)));
+                sort($words);
+                $name = implode(' ', $words);
+            }
+
+            return $name;
         };
         $candidates = FootballMatch::query()->whereIn('result_status', $goal ? ['Live', 'Prematch', 'Finished'] : ['Live', 'Prematch'])
             ->whereBetween('start_timestamp', [time() - 6 * 3600, time() + 48 * 3600])
             ->get(['id', 'sports_api_pro_match_id', 'betfair_match_id', 'team1', 'team2', 'tournament', 'unique_key', 'start_timestamp'])
-            ->filter(fn (FootballMatch $match): bool => $resolver->teamSimilarity($normalizeTeam($match->team1), $normalizeTeam($home)) >= 80
+            ->filter(fn (FootballMatch $match): bool => (! $womenCompetition || preg_match('/\bwomen\b/iu', $match->tournament ?? '') === 1)
+                && $resolver->teamSimilarity($normalizeTeam($match->team1), $normalizeTeam($home)) >= 80
                 && $resolver->teamSimilarity($normalizeTeam($match->team2), $normalizeTeam($away)) >= 80
                 && ($competition === null || $resolver->teamSimilarity($normalizeLeague($match->tournament ?? ''), $normalizeLeague($competition)) >= 80));
         if ($candidates->isEmpty() || $candidates->max('start_timestamp') - $candidates->min('start_timestamp') > 900) {
-            Log::info('Telegram source fixture could not be resolved uniquely.', ['message_id' => $message['message_id'], 'matches' => $candidates->count()]);
+            Log::info('Telegram source fixture could not be resolved uniquely.', ['message_id' => $message['message_id'], 'matches' => $candidates->count(),
+                'home' => $home, 'away' => $away, 'competition' => $competition]);
 
             return null;
         }
@@ -505,7 +533,7 @@ class AlertService
                     return $parentSignal['is_ltd'];
                 });
             if ($parents->count() !== 1) {
-                Log::info('Telegram source result parent could not be resolved uniquely.', ['message_id' => $message['message_id']]);
+                Log::info('Telegram source result parent could not be resolved uniquely.', ['message_id' => $message['message_id'], 'matching_parents' => $parents->count()]);
 
                 return null;
             }
