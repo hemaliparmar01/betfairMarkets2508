@@ -306,6 +306,233 @@ class AlertSystemTest extends TestCase
         $this->assertDatabaseHas('alerts', ['id' => $followUp, 'parent_alert_id' => $id]);
     }
 
+    #[TestWith(['Total 1. (0.5) Over. 1st half 1.5'])]
+    #[TestWith(['Total 1 (0,5) Over 1st-half 1.50'])]
+    #[TestWith(['Total 1. 0.5 Over. 1st half 1.5'])]
+    public function test_source_prematch_team_total_with_unreadable_league_sends_for_one_exact_fixture(string $market): void
+    {
+        $this->freezeTime();
+        $fixture = $this->fixture(['team1' => 'Monaco', 'team2' => 'Auxerre', 'tournament' => 'French Ligue 1',
+            'result_status' => 'Prematch', 'minutes_status' => 'Prematch', 'timestamp' => now()->addHour()->timestamp]);
+        $this->fixture(['unique_key' => 'betfair-monaco', 'sportsApiPro_match_id' => 98765, 'team1' => 'AS Monaco', 'team2' => 'AJ Auxerre',
+            'tournament' => 'Ligue 1', 'result_status' => 'Prematch', 'timestamp' => now()->addHour()->timestamp]);
+        $customer = $this->customer(['popup_enabled' => false]);
+        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 42]])]);
+        $text = "Footba11. France. Ligue 1\n21 Nov 2026 (21:45)\nAS Monaco VS Auxerre\n".$market."\nStatus: Accepted";
+
+        $id = app(AlertService::class)->source($this->source($text));
+
+        $this->assertNotNull($id);
+        app(AlertService::class)->deliver($this->delivery($id, $customer));
+        $payload = json_decode(DB::table('alerts')->find($id)->payload, true);
+        $this->assertSame('team_total_goals', $payload['context']['signal']['family']);
+        $this->assertSame(1, $payload['context']['signal']['team']);
+        $this->assertFalse($payload['context']['signal']['is_ltd']);
+        $this->assertNull($payload['minute']);
+        $this->assertSame($fixture->tournament, $payload['league']);
+        Http::assertSent(fn ($request): bool => str_contains($request['text'], 'Status: Prematch') && str_contains($request['text'], 'Team 1'));
+    }
+
+    #[TestWith(['Auxerre United', 'Ligue 1', 0, false])]
+    #[TestWith(['Auxerre', 'Ligue 2', 0, true])]
+    #[TestWith(['Auxerre', 'Ligue 1', 7200, true])]
+    public function test_source_without_a_readable_league_rejects_fuzzy_or_ambiguous_fixtures(string $away, string $league, int $offset, bool $secondFixture): void
+    {
+        $this->freezeTime();
+        $this->fixture(['team1' => 'Monaco', 'team2' => $away, 'tournament' => $league,
+            'result_status' => 'Prematch', 'timestamp' => now()->addHour()->timestamp + $offset]);
+        if ($secondFixture) {
+            $this->fixture(['unique_key' => 'other-monaco', 'sportsApiPro_match_id' => 98765, 'team1' => 'Monaco', 'team2' => 'Auxerre',
+                'tournament' => 'Ligue 1', 'result_status' => 'Prematch', 'timestamp' => now()->addHour()->timestamp]);
+        }
+        $text = "AS Monaco VS Auxerre\nTotal 1. (0.5) Over. 1st half 1.5";
+
+        $this->assertNull(app(AlertService::class)->source($this->source($text)));
+        $this->assertDatabaseCount('alerts', 0);
+        Http::assertNothingSent();
+    }
+
+    public function test_source_never_ignores_a_readable_conflicting_league(): void
+    {
+        $this->fixture(['team1' => 'Monaco', 'team2' => 'Auxerre', 'tournament' => 'Ligue 1', 'result_status' => 'Prematch', 'timestamp' => time() + 3600]);
+
+        $id = app(AlertService::class)->source($this->source("League: Ligue 2\nAS Monaco VS Auxerre\nTotal 1. (0.5) Over. 1st half 1.5"));
+
+        $this->assertNull($id);
+        $this->assertDatabaseCount('alerts', 0);
+        Http::assertNothingSent();
+    }
+
+    #[TestWith(['Venezia', 'Serie A', 'Football. Italy. Serie A'])]
+    #[TestWith(['Venezia', 'Italian Serie A', 'Football. Italy. Serie A'])]
+    #[TestWith(['Unione Venezia', 'Serie A', 'Football. Italy. Serie A'])]
+    #[TestWith(['Venezia', 'Serie A', 'Footba11. Italy. Serie A'])]
+    public function test_source_juventus_venezia_prematch_card_delivers_without_live_data(string $away, string $league, string $header): void
+    {
+        $this->freezeTime();
+        $this->fixture(['team1' => 'Juventus', 'team2' => $away, 'tournament' => $league, 'timestamp' => now()->addHour()->timestamp,
+            'result_status' => 'Prematch', 'minutes_status' => 'Prematch']);
+        $customer = $this->customer(['popup_enabled' => false]);
+        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 82]])]);
+        $text = $header."\n22 Nov 2026 (13:30)\nJuventus VS Unione Venezia\nTotal 1. (0.5) Over. 1st half 1.5\nStatus: Accepted";
+
+        $id = app(AlertService::class)->source($this->source($text));
+
+        $this->assertNotNull($id);
+        app(AlertService::class)->deliver($this->delivery($id, $customer));
+        $this->assertDatabaseHas('alert_deliveries', ['alert_id' => $id, 'customer_id' => $customer->id, 'status' => 'sent']);
+        $payload = json_decode(DB::table('alerts')->find($id)->payload, true);
+        $this->assertSame('team_total_goals', $payload['context']['signal']['family']);
+        $this->assertSame(1, $payload['context']['signal']['team']);
+        $this->assertNull($payload['minute']);
+        Http::assertSent(fn ($request): bool => str_contains($request['text'], 'Status: Prematch') && str_contains($request['text'], 'Team 1'));
+        Http::assertSentCount(1);
+    }
+
+    #[TestWith(['v'])]
+    #[TestWith(['vs'])]
+    #[TestWith(['VS'])]
+    public function test_source_alert_uses_the_same_club_normalization_as_pinnacle(string $separator): void
+    {
+        $this->fixture(['team1' => 'Liverpool FC', 'team2' => 'Manchester United', 'tournament' => 'English Premier League',
+            'result_status' => 'Prematch', 'timestamp' => time() + 3600]);
+        $customer = $this->customer(['popup_enabled' => false]);
+        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 83]])]);
+
+        $id = app(AlertService::class)->source($this->source('Liverpool '.$separator." Man Utd\nLeague: Premier League\n1st Half Over 0.5"));
+
+        $this->assertNotNull($id);
+        app(AlertService::class)->deliver($this->delivery($id, $customer));
+        $this->assertDatabaseHas('alert_deliveries', ['alert_id' => $id, 'customer_id' => $customer->id, 'status' => 'sent']);
+        Http::assertSentCount(1);
+    }
+
+    #[TestWith(['Sassuolo', 'Genoa', 'Italian Serie A', "Footba11 Italy Serie A\nSassuolo Calcio a VS I Genoa\nTotal. Over (0.5). 1st half 1.52\nLIVE time elapsed: 04:47"])]
+    #[TestWith(['Hull', 'Brighton', 'English Premier League', "Footba11 England Premier League\nHull City\n0:0\nBrighton &\nHove Albion\n0:0\nTotal. Over (0.5). 1st half 1.512\ntime elapsed: 13:36"])]
+    #[TestWith(['Paris Saint Germain', 'Angers', 'French Ligue 1', "Footba11 France Ligue 1\nParis\n0:0\nAngers SCO\n0:0\nTotal. Over (0.5). 1st half 1.52\ntime elapsed: 17:13"])]
+    public function test_source_recovers_fixture_names_from_noisy_or_multiline_card_text(string $home, string $away, string $league, string $text): void
+    {
+        $this->fixture(['team1' => $home, 'team2' => $away, 'tournament' => $league]);
+        $customer = $this->customer(['popup_enabled' => false]);
+        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 84]])]);
+
+        $id = app(AlertService::class)->source($this->source($text));
+
+        $this->assertNotNull($id);
+        app(AlertService::class)->deliver($this->delivery($id, $customer));
+        $this->assertDatabaseHas('alert_deliveries', ['alert_id' => $id, 'customer_id' => $customer->id, 'status' => 'sent']);
+        $payload = json_decode(DB::table('alerts')->find($id)->payload, true);
+        $this->assertSame($home.' vs '.$away, $payload['match']);
+        Http::assertSentCount(1);
+    }
+
+    public function test_source_does_not_guess_between_paris_clubs_when_the_card_only_says_paris(): void
+    {
+        $this->fixture(['team1' => 'Paris Saint Germain', 'team2' => 'Angers', 'tournament' => 'Ligue 1']);
+        $this->fixture(['unique_key' => 'paris-fc', 'sportsApiPro_match_id' => 777, 'team1' => 'Paris FC', 'team2' => 'Angers', 'tournament' => 'Ligue 1']);
+
+        $id = app(AlertService::class)->source($this->source("Paris\n0:0\nAngers SCO\nTotal. Over (0.5). 1st half"));
+
+        $this->assertNull($id);
+        $this->assertDatabaseCount('alerts', 0);
+        Http::assertNothingSent();
+    }
+
+    #[TestWith(['Stade Rennais', 'Lorient 0:0 Stade Rennais', 'Football. France. Ligue 1'])]
+    #[TestWith(['Rennes', 'Lorient 0:0 Stade Rennais', 'Football. France. Ligue 1'])]
+    #[TestWith(['Stade Rennais', 'Lorient @ 0:0 m Stade Rennais', 'Footba11 France Ligue 1'])]
+    #[TestWith(['Rennes', 'Lorient @ 0:0 m Stade Rennais', 'Footba11 France Ligue 1'])]
+    public function test_source_lorient_rennais_card_is_delivered_for_the_provider_club_name(string $away, string $teams, string $header): void
+    {
+        $this->fixture(['team1' => 'Lorient', 'team2' => $away, 'tournament' => 'French Ligue 1']);
+        $customer = $this->customer(['popup_enabled' => false]);
+        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 85]])]);
+        $text = $header."\n22 Nov 2026 (18:00)\n".$teams."\n0:0\nTotal. Over (0.5). 1st half 1.52\ntime elapsed: 04:09";
+
+        $id = app(AlertService::class)->source($this->source($text));
+
+        $this->assertNotNull($id);
+        app(AlertService::class)->deliver($this->delivery($id, $customer));
+        $this->assertDatabaseHas('alert_deliveries', ['alert_id' => $id, 'customer_id' => $customer->id, 'status' => 'sent']);
+        Http::assertSentCount(1);
+    }
+
+    public function test_temporary_source_mode_delivers_placeholders_without_a_fixture_and_deduplicates_edits(): void
+    {
+        config(['services.telegram.allow_unresolved_source' => true]);
+        $customer = $this->customer(['popup_enabled' => false]);
+        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 86]])]);
+        $message = $this->source("???\nTotal. Over (0.5). 1st half 1.52");
+
+        $id = app(AlertService::class)->source($message);
+
+        $this->assertNotNull($id);
+        app(AlertService::class)->deliver($this->delivery($id, $customer));
+        $payload = json_decode(DB::table('alerts')->find($id)->payload, true);
+        $this->assertTrue($payload['context']['unresolved_fixture']);
+        $this->assertSame('—', $payload['league']);
+        $this->assertNull($payload['score']);
+        $this->assertNull($payload['minute']);
+        $this->assertSame('—', $payload['templates']['en']['status_label']);
+        $this->assertDatabaseCount('football_matches', 0);
+        $this->assertSame($id, app(AlertService::class)->source([...$message, 'text' => $message['text']."\nStatus: Accepted"]));
+        app(AlertService::class)->deliver($this->delivery($id, $customer));
+        Http::assertSent(fn ($request): bool => str_contains($request['text'], 'League: —') && str_contains($request['text'], 'Status: —') && str_contains($request['text'], 'Betfair Back Odds: —'));
+        $this->fixture();
+        $this->assertSame($id, app(AlertService::class)->source([...$this->source(), 'message_id' => $message['message_id']]));
+        $this->assertDatabaseCount('alerts', 1);
+        Http::assertSentCount(1);
+    }
+
+    public function test_temporary_source_mode_sends_the_exact_lorient_ocr_failure_with_missing_fields_as_dashes(): void
+    {
+        config(['services.telegram.allow_unresolved_source' => true]);
+        $customer = $this->customer(['popup_enabled' => false]);
+        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 88]])]);
+
+        $id = app(AlertService::class)->source([...$this->source("Footba11 France Ligue 1\nLorient @ 0:0 m Stade Rennais\nTotal. Over (0.5). 1st half 1.52\ntime elapsed: 04:09"), 'message_id' => 4656]);
+
+        $this->assertNotNull($id);
+        app(AlertService::class)->deliver($this->delivery($id, $customer));
+        $payload = json_decode(DB::table('alerts')->find($id)->payload, true);
+        $this->assertTrue($payload['context']['unresolved_fixture']);
+        $this->assertSame('—', $payload['league']);
+        $this->assertSame('0 - 0', $payload['score']);
+        Http::assertSent(fn ($request): bool => str_contains($request['text'], 'League: —') && str_contains($request['text'], 'Betfair Back Odds: —'));
+        Http::assertSentCount(1);
+    }
+
+    public function test_temporary_source_mode_can_be_disabled_and_never_forwards_ads_or_stale_posts(): void
+    {
+        $message = $this->source("???\nTotal. Over (0.5). 1st half");
+        config(['services.telegram.allow_unresolved_source' => false]);
+        $this->assertNull(app(AlertService::class)->source($message));
+        config(['services.telegram.allow_unresolved_source' => true]);
+        $this->assertNull(app(AlertService::class)->source($this->source('Registration bonus deposit')));
+        $this->assertNull(app(AlertService::class)->source([...$message, 'source' => 'untrusted']));
+        $this->assertNull(app(AlertService::class)->source([...$message, 'sent_at' => time() - 3600]));
+        $this->assertDatabaseCount('alerts', 0);
+        Http::assertNothingSent();
+    }
+
+    public function test_temporary_source_mode_links_goal_replies_to_the_original_placeholder_alert(): void
+    {
+        config(['services.telegram.allow_unresolved_source' => true]);
+        $customer = $this->customer(['popup_enabled' => false]);
+        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 87]])]);
+        $service = app(AlertService::class);
+        $parent = $service->source($this->source("???\nTotal. Over (0.5). 1st half"));
+        $this->assertNotNull($parent);
+        $service->deliver($this->delivery($parent, $customer));
+        $this->travel(2)->seconds();
+        $goal = $service->source([...$this->source("GOAL!\nScore: 1 - 0\nTime: 20'"), 'message_id' => 11, 'reply_message_id' => 10]);
+
+        $this->assertNotNull($goal);
+        $service->deliver($this->delivery($goal, $customer));
+        $this->assertDatabaseHas('alerts', ['id' => $goal, 'parent_alert_id' => $parent]);
+        Http::assertSentCount(2);
+    }
+
     public function test_source_deduplicates_exact_market_period_and_selection_but_allows_other_markets_on_same_match(): void
     {
         $fixture = $this->fixture();
@@ -463,10 +690,73 @@ class AlertSystemTest extends TestCase
         $this->assertNotNull(app(AlertService::class)->source($this->source(str_replace('Over (0.5)', 'Over (1.5)', $text))));
     }
 
+    #[TestWith(["Newcastle\nUnited 0:0 Arsenal"])]
+    #[TestWith(["Newcastle 0:0 Arsenal\nUnited"])]
+    public function test_source_accepts_home_team_names_wrapped_above_or_below_the_score(string $teams): void
+    {
+        $this->fixture(['team1' => 'Newcastle United', 'team2' => 'Arsenal', 'tournament' => 'Premier League']);
+        $text = "Football. England. Premier League\n21 Nov 2026 (19:15)\n".$teams."\n0:0\nTotal. Over (0.5). 1st half 1.512\ntime elapsed: 13:58";
+
+        $id = app(AlertService::class)->source($this->source($text));
+
+        $this->assertNotNull($id);
+        $payload = json_decode(DB::table('alerts')->find($id)->payload, true);
+        $this->assertSame('Newcastle United vs Arsenal', $payload['match']);
+        $this->assertSame('0 - 0', $payload['score']);
+    }
+
+    #[TestWith(['Parma', 'Roma', 'Serie A', 'Parma 0:0 Roma', 'Italy. Serie A'])]
+    #[TestWith(['Parma', 'AS Roma', 'Serie A', 'Parma 0:0 Roma', 'Italy. Serie A'])]
+    #[TestWith(['Parma', 'Roma', 'Italian Serie A', 'Parma 0:0 Roma', 'Italy. Serie A'])]
+    #[TestWith(['Newcastle', 'Arsenal', 'English Premier League', 'Newcastle United 0:0 Arsenal', 'England. Premier League'])]
+    #[TestWith(['Schalke 04', 'Stuttgart', 'German Bundesliga', 'Schalke 04 0:0 VfB Stuttgart', 'Germany. Bundesliga'])]
+    public function test_source_matches_provider_club_and_country_league_variants(string $home, string $away, string $league, string $teams, string $sourceLeague): void
+    {
+        $this->fixture(['team1' => $home, 'team2' => $away, 'tournament' => $league]);
+
+        $id = app(AlertService::class)->source($this->source('Football. '.$sourceLeague."\n21 Nov 2026 (19:15)\n".$teams."\n0:0\nTotal. Over (0.5). 1st half 1.52\ntime elapsed: 19:16"));
+
+        $this->assertNotNull($id);
+        $payload = json_decode(DB::table('alerts')->find($id)->payload, true);
+        $this->assertSame($home.' vs '.$away, $payload['match']);
+    }
+
+    public function test_ambiguous_wrapped_names_do_not_select_a_different_match_at_the_same_kickoff(): void
+    {
+        $this->fixture(['team1' => 'Newcastle United', 'team2' => 'Arsenal', 'tournament' => 'Premier League']);
+        $this->fixture(['unique_key' => 'other-wrapped-match', 'sportsApiPro_match_id' => 12346,
+            'team1' => 'Newcastle', 'team2' => 'Arsenal United', 'tournament' => 'Premier League']);
+
+        $id = app(AlertService::class)->source($this->source("Football. England. Premier League\nNewcastle 0:0 Arsenal\nUnited\n0:0\nTotal. Over (0.5). 1st half"));
+
+        $this->assertNull($id);
+        $this->assertDatabaseCount('alerts', 0);
+    }
+
+    public function test_source_team_two_total_keeps_its_identity_separate_from_the_match_total(): void
+    {
+        $this->fixture(['team1' => 'Parma', 'team2' => 'AS Roma', 'tournament' => 'Serie A']);
+        $base = "Football. Italy. Serie A\n21 Nov 2026 (18:45)\nParma VS Roma\n";
+
+        $teamTotal = app(AlertService::class)->source([...$this->source($base."Total 2. (0.5) Over. 1st half\n1.49\ntime elapsed: 10:12"), 'message_id' => 101]);
+        $matchTotal = app(AlertService::class)->source([...$this->source($base."Total. Over (0.5). 1st half\n1.512\ntime elapsed: 21:01"), 'message_id' => 102]);
+
+        $this->assertNotNull($teamTotal);
+        $this->assertNotNull($matchTotal);
+        $this->assertNotSame($teamTotal, $matchTotal);
+        $payload = json_decode(DB::table('alerts')->find($teamTotal)->payload, true);
+        $this->assertSame('team_total_goals', $payload['context']['signal']['family']);
+        $this->assertSame(2, $payload['context']['signal']['team']);
+        $this->assertFalse($payload['context']['signal']['is_ltd']);
+        $this->assertNull($payload['context']['betfair_back']);
+        $this->assertSame($teamTotal, app(AlertService::class)->source([...$this->source($base.'Total 2. (0.5) Over. 1st half'), 'message_id' => 103]));
+        $this->assertDatabaseCount('alerts', 2);
+    }
+
     public function test_source_rejects_ads_and_unidentified_markets_and_accepts_missing_or_stale_odds(): void
     {
         $match = $this->fixture();
-        foreach (['Asian Handicap', '1st Half Over 0.5 bonus deposit', '1st Half Over 0.5 register'] as $market) {
+        foreach (['Asian Handicap', '1st Half Over 0.5 bonus deposit', '1st Half Over 0.5 register', 'Total 1.5 Over. 1st half', 'Total 2.5 Under. 1st half'] as $market) {
             $this->assertNull(app(AlertService::class)->source($this->source("Match: Torino vs Monza 1912\nLeague: Coppa Italia\n".$market)));
         }
         $this->assertNull(app(AlertService::class)->source($this->source('1st Half Over 0.5')));
@@ -545,6 +835,53 @@ class AlertSystemTest extends TestCase
         $text = app(AlertService::class)->text($payload);
 
         $this->assertStringStartsWith($header."\n⚽ Match: Home vs Away", $text);
+    }
+
+    public function test_source_signal_is_not_blocked_by_the_fixtures_page_backup_flag(): void
+    {
+        $this->fixture(['internal_backup' => ['since' => time() - 60]]);
+        $customer = $this->customer(['popup_enabled' => false]);
+        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 81]])]);
+
+        $id = app(AlertService::class)->source($this->source());
+
+        $this->assertNotNull($id);
+        app(AlertService::class)->deliver($this->delivery($id, $customer));
+        $this->assertDatabaseHas('alert_deliveries', ['alert_id' => $id, 'customer_id' => $customer->id, 'channel' => 'telegram', 'status' => 'sent']);
+        Http::assertSentCount(1);
+    }
+
+    public function test_goal_reaches_ready_recipients_without_waiting_for_another_users_initial_delivery(): void
+    {
+        $this->freezeTime();
+        $this->fixture();
+        $ready = $this->customer(['popup_enabled' => false]);
+        $waiting = $this->customer(['popup_enabled' => false]);
+        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 81]])]);
+        $service = app(AlertService::class);
+        $parent = $service->source($this->source());
+        $readyParent = $this->delivery($parent, $ready);
+        $waitingParent = $this->delivery($parent, $waiting);
+        $service->deliver($readyParent);
+        $this->travel(2)->seconds();
+        $goal = $service->source([...$this->source("GOAL!\nMatch: Torino vs Monza 1912\nLeague: Coppa Italia\nScore: 0 - 1\nTime: 33'"), 'message_id' => 11]);
+
+        $this->assertSame(5, $service->fanout($goal));
+        $readyGoal = DB::table('alert_deliveries')->where(['alert_id' => $goal, 'customer_id' => $ready->id, 'channel' => 'telegram'])->value('id');
+        $this->assertNotNull($readyGoal);
+        $service->deliver($readyGoal);
+        $this->assertDatabaseHas('alert_deliveries', ['id' => $readyGoal, 'status' => 'sent']);
+        $this->assertDatabaseMissing('alert_deliveries', ['alert_id' => $goal, 'customer_id' => $waiting->id]);
+        $this->assertNull(DB::table('alerts')->find($goal)->fanned_out_at);
+        $service->deliver($waitingParent);
+        $this->travel(2)->seconds();
+        $this->assertSame(0, $service->fanout($goal));
+        $waitingGoal = DB::table('alert_deliveries')->where(['alert_id' => $goal, 'customer_id' => $waiting->id, 'channel' => 'telegram'])->value('id');
+        $this->assertNotNull($waitingGoal);
+        $service->deliver($waitingGoal);
+        $service->deliver($readyGoal);
+        $this->assertDatabaseHas('alert_deliveries', ['id' => $waitingGoal, 'status' => 'sent']);
+        Http::assertSentCount(4);
     }
 
     public function test_goal_requires_valid_parent_and_only_reaches_parent_recipients(): void
@@ -628,6 +965,55 @@ class AlertSystemTest extends TestCase
 
         $this->assertDatabaseCount('alerts', 1);
         Http::assertNothingSent();
+    }
+
+    #[TestWith(['2026-11-21T14:00:00+00:00', 'Asia/Tbilisi', '21 Nov 18:00'])]
+    #[TestWith(['2026-11-21T14:00:00+00:00', 'Asia/Kolkata', '21 Nov 19:30'])]
+    #[TestWith(['2026-07-15T12:00:00+00:00', 'America/New_York', '15 Jul 08:00'])]
+    #[TestWith(['2026-11-21T14:00:00+00:00', 'America/New_York', '21 Nov 09:00'])]
+    #[TestWith(['2026-11-21T23:30:00+00:00', 'Asia/Tbilisi', '22 Nov 03:30'])]
+    #[TestWith(['2026-11-21T14:00:00+00:00', 'invalid/timezone', '21 Nov 14:00'])]
+    public function test_telegram_kickoff_uses_the_recipient_timezone_without_a_timezone_label(string $kickoff, string $timezone, string $expected): void
+    {
+        $payload = ['alert_type' => 'prematch_drops', 'match' => 'Como vs Cagliari', 'league' => 'Italy - Serie A', 'kickoff' => $kickoff,
+            'context' => ['movement' => ['market' => 'Moneyline', 'selection' => 'Away', 'from' => 10.75, 'to' => 10.0]]];
+
+        $text = app(AlertService::class)->text($payload, 12.0, $timezone);
+
+        $this->assertStringContainsString('Kickoff: '.$expected."\n", $text);
+    }
+
+    public function test_one_queued_alert_is_formatted_separately_for_each_recipient_timezone(): void
+    {
+        config(['services.sportsmeld.key' => null, 'services.football_fixture_index' => false]);
+        Redis::shouldReceive('get')->with('Football:matches')->andReturn(null);
+        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 99]])]);
+        $georgia = $this->customer(['timezone' => 'Asia/Tbilisi', 'tg_prematch_drops' => true, 'popup_enabled' => false]);
+        $india = $this->customer(['timezone' => 'Asia/Kolkata', 'tg_prematch_drops' => true, 'popup_enabled' => false]);
+        foreach ([$georgia, $india] as $customer) {
+            $this->actingAs($customer, 'customers')->patchJson('/notifications', ['pinnacle_filters' => ['higher' => true, 'leagues' => null]])->assertOk();
+        }
+        auth('customers')->logout();
+        $day = Carbon::now('UTC')->addDay()->format('Y-m-d');
+        $starts = Carbon::parse($day.'T14:00:00+00:00')->timestamp;
+        $date = Carbon::parse($day)->format('d M');
+        $fixture = $this->fixture(['result_status' => 'Prematch', 'timestamp' => $starts]);
+        $fixture->forceFill(['betfair_match_id' => '900', 'data_sync_complete' => true])->save();
+        FootballMarket::query()->create(['selection_key' => hash('sha256', 'timezone-pinnacle-quote'), 'football_match_unique_key' => $fixture->unique_key,
+            'market_id' => 'main', 'market_type' => 'MATCH_ODDS', 'runner' => 'Torino',
+            'payload' => ['marketType' => 'MATCH_ODDS', 'runner' => 'Torino', 'currentBackOdds' => 2.1, 'market_status' => 'OPEN']]);
+        $id = app(AlertService::class)->process('prematch_drops', [], ['pinnacle' => ['id' => 100, 'sport' => 'soccer', 'home' => 'Torino', 'away' => 'Monza 1912',
+            'league' => 'Italy - Coppa Italia', 'sect' => 'Moneyline', 'outcome' => 'Home', 'starts' => $starts,
+            'from_price' => 2.5, 'to_price' => 1.8, 'alerted' => time(), 'alert_key' => 'recipient-timezones']]);
+
+        foreach ([$georgia, $india] as $customer) {
+            app(AlertService::class)->deliver($this->delivery($id, $customer));
+        }
+
+        Http::assertSentCount(2);
+        Http::assertSent(fn ($request): bool => $request['chat_id'] === $georgia->telegram_chat_id && str_contains($request['text'], 'Kickoff: '.$date." 18:00\n"));
+        Http::assertSent(fn ($request): bool => $request['chat_id'] === $india->telegram_chat_id && str_contains($request['text'], 'Kickoff: '.$date." 19:30\n"));
+        $this->assertSame($starts, Carbon::parse(json_decode(DB::table('alerts')->find($id)->payload, true)['kickoff'])->timestamp);
     }
 
     public function test_pinnacle_telegram_filters_use_selected_league_and_current_back_odds(): void
@@ -1083,7 +1469,35 @@ class AlertSystemTest extends TestCase
         Http::assertNothingSent();
     }
 
-    public function test_pinnacle_reads_only_the_matched_fixture_from_the_compact_index_without_a_full_snapshot(): void
+    public function test_pinnacle_reads_a_current_betfair_fixture_before_it_has_been_persisted_to_the_database(): void
+    {
+        $this->freezeTime();
+        config(['services.sportsmeld.key' => '']);
+        $this->actingAs($this->customer(), 'customers');
+        $key = 'liverpool|man_united';
+        $entry = ['unique_key' => $key, 'team1' => 'Liverpool', 'team2' => 'Man Utd', 'tournament' => 'English Premier League',
+            'timestamp' => now()->addHour()->timestamp, 'result_status' => 'Prematch', 'betfair_match_id' => '36225147', '_payload_bytes' => 2000];
+        $index = ['ids' => [], 'matches' => [$key => $entry]];
+        $current = $entry + ['markets' => ['main' => [['marketType' => 'MATCH_ODDS', 'runner' => 'The Draw', 'currentBackOdds' => 4.4]]]];
+        $cache = \Mockery::mock(FootballMatchCache::class);
+        $cache->shouldReceive('active')->andReturnTrue();
+        $cache->shouldReceive('index')->once()->andReturn($index);
+        $cache->shouldReceive('read')->once()->with(null, [$key], $index)->andReturn([$key => $current]);
+        $this->app->instance(FootballMatchCache::class, $cache);
+        $drop = ['id' => 100, 'alert_key' => hash('sha256', 'cache-only-drop'), 'sport' => 'soccer', 'home' => 'Liverpool FC', 'away' => 'Manchester United',
+            'league' => 'Premier League', 'sect' => 'Moneyline', 'outcome' => 'Draw', 'period' => 0, 'from_price' => 4.34, 'to_price' => 4.28,
+            'alerted' => now()->timestamp, 'starts' => $entry['timestamp']];
+        Redis::shouldReceive('get')->byDefault()->andReturnUsing(static fn (string $cacheKey): ?string => $cacheKey === 'Pinnacle:drops' ? json_encode(['alerts' => [$drop]]) : null);
+        Redis::shouldReceive('get')->with('Football:matches')->never();
+
+        $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonPath('data.0.bf_back', 4.4);
+        $this->assertDatabaseCount('football_matches', 0);
+        Http::assertNothingSent();
+    }
+
+    #[TestWith([true])]
+    #[TestWith([false])]
+    public function test_pinnacle_reads_only_the_matched_fixture_from_the_compact_index_without_a_full_snapshot(bool $hasSportsApiIndex): void
     {
         config(['services.sportsmeld.key' => null]);
         $this->actingAs($this->customer(), 'customers');
@@ -1092,7 +1506,7 @@ class AlertSystemTest extends TestCase
         $fixture->update(['betfair_match_id' => '900']);
         $drop = ['id' => 100, 'alert_key' => hash('sha256', 'indexed-quote'), 'sport' => 'soccer', 'home' => 'Torino', 'away' => 'Monza 1912',
             'sect' => 'Moneyline', 'outcome' => 'Home', 'from_price' => 2.5, 'to_price' => 2.3, 'starts' => $start, 'alerted' => time()];
-        $index = ['ids' => ['12345' => $fixture->unique_key], 'matches' => [$fixture->unique_key => ['_payload_bytes' => 2000]]];
+        $index = ['ids' => $hasSportsApiIndex ? ['12345' => $fixture->unique_key] : [], 'matches' => [$fixture->unique_key => ['_payload_bytes' => 2000]]];
         $current = array_replace($fixture->payload, ['betfair_match_id' => '900', 'timeline' => ['unused' => str_repeat('x', 100000)],
             'markets' => ['main' => [['marketType' => 'MATCH_ODDS', 'runner' => 'Torino', 'currentBackOdds' => 2.35, 'layOdds' => 2.38,
                 'backSize' => 100, 'laySize' => 200, 'backOddsHistory' => [['timestamp' => time(), 'odds' => 2.35]], 'liquidity_history' => [['unused' => true]]]]]]);
@@ -1432,6 +1846,119 @@ class AlertSystemTest extends TestCase
         $this->assertDatabaseHas('pinnacle_betfair_events', ['sport' => 'tennis', 'pinnacle_event_id' => '101', 'betfair_event_id' => 'tennis-event']);
         $this->assertDatabaseHas('pinnacle_betfair_team_aliases', ['sport' => 'tennis', 'source_name' => 'Rafael Jodar', 'betfair_name' => $away]);
         $this->assertFalse($fixture->fresh()->data_sync_complete);
+        Http::assertNothingSent();
+    }
+
+    #[TestWith(['Draw', 4.4])]
+    #[TestWith(['Away', 3.1])]
+    #[TestWith(['Home', 2.2])]
+    public function test_pinnacle_links_full_team_names_to_betfair_abbreviations_and_each_current_selection(string $selection, float $price): void
+    {
+        $this->freezeTime();
+        config(['services.sportsmeld.key' => '', 'services.football_fixture_index' => false]);
+        $this->actingAs($this->customer(), 'customers');
+        $start = now()->addHour()->timestamp;
+        $betfair = $this->fixture(['unique_key' => 'liverpool|man_united', 'team1' => 'Liverpool', 'team2' => 'Man Utd',
+            'tournament' => 'English Premier League', 'result_status' => 'Prematch', 'timestamp' => $start]);
+        $betfair->forceFill(['betfair_match_id' => '36225147', 'sports_api_pro_match_id' => null, 'data_sync_complete' => false])->save();
+        $this->fixture(['unique_key' => 'liverpool_fc|manchester_united', 'sportsApiPro_match_id' => 16363660,
+            'team1' => 'Liverpool FC', 'team2' => 'Manchester United', 'tournament' => 'Premier League',
+            'result_status' => 'Prematch', 'timestamp' => $start]);
+        foreach (['Liverpool' => 2.2, 'Man Utd' => 3.1, 'The Draw' => 4.4] as $runner => $quote) {
+            FootballMarket::query()->create(['selection_key' => hash('sha256', 'liverpool-'.$runner), 'football_match_unique_key' => $betfair->unique_key,
+                'market_id' => 'main', 'market_type' => 'MATCH_ODDS', 'runner' => $runner,
+                'payload' => ['marketType' => 'MATCH_ODDS', 'runner' => $runner, 'currentBackOdds' => $quote]]);
+        }
+        $drop = ['id' => 100, 'alert_key' => hash('sha256', 'liverpool-'.$selection), 'sport' => 'soccer', 'home' => 'Liverpool FC',
+            'away' => 'Manchester United', 'country' => 'England', 'league' => 'Premier League', 'sect' => 'Moneyline', 'outcome' => $selection,
+            'period' => 0, 'from_price' => 4.34, 'to_price' => 4.28, 'alerted' => now()->timestamp, 'starts' => $start];
+        Redis::shouldReceive('get')->andReturnUsing(static fn (string $key): ?string => $key === 'Pinnacle:drops' ? json_encode(['alerts' => [$drop]]) : null);
+
+        $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonPath('data.0.bf_back', $price)
+            ->assertJsonPath('data.0.bf_home', 'Liverpool')->assertJsonPath('data.0.bf_away', 'Man Utd');
+        $this->assertDatabaseHas('pinnacle_betfair_events', ['sport' => 'soccer', 'pinnacle_event_id' => '100', 'betfair_event_id' => '36225147']);
+        Http::assertNothingSent();
+    }
+
+    #[TestWith(['Borussia Mönchengladbach', 'Borussia Dortmund', 'Mgladbach', 'Dortmund', 'Bundesliga'])]
+    #[TestWith(['Borussia Moenchengladbach', 'Borussia Dortmund', 'B. Monchengladbach', 'Dortmund', 'Bundesliga'])]
+    #[TestWith(['Malmö FF', 'Elfsborg', 'Malmo', 'Elfsborg', 'Allsvenskan'])]
+    #[TestWith(['FC Copenhagen', 'Brondby IF', 'Copenhagen', 'Brondby IF', 'Superliga'])]
+    public function test_pinnacle_displays_current_betfair_quotes_for_club_name_variants(string $home, string $away, string $betfairHome, string $betfairAway, string $league): void
+    {
+        $this->freezeTime();
+        config(['services.sportsmeld.key' => '', 'services.football_fixture_index' => false]);
+        $this->actingAs($this->customer(), 'customers');
+        $start = now()->addHour()->timestamp;
+        $fixture = $this->fixture(['team1' => $betfairHome, 'team2' => $betfairAway, 'tournament' => $league, 'result_status' => 'Prematch', 'timestamp' => $start]);
+        $fixture->forceFill(['betfair_match_id' => '900', 'data_sync_complete' => false])->save();
+        FootballMarket::query()->create(['selection_key' => hash('sha256', 'club-quote'), 'football_match_unique_key' => $fixture->unique_key,
+            'market_id' => 'main', 'market_type' => 'MATCH_ODDS', 'runner' => $betfairHome,
+            'payload' => ['marketType' => 'MATCH_ODDS', 'runner' => $betfairHome, 'currentBackOdds' => 2.42, 'layOdds' => 2.46]]);
+        $this->fixture(['unique_key' => 'unrelated-league-fixture', 'sportsApiPro_match_id' => 100,
+            'team1' => 'Unrelated Home', 'team2' => 'Unrelated Away', 'tournament' => $league,
+            'result_status' => 'Prematch', 'timestamp' => $start])->forceFill(['betfair_match_id' => '901'])->save();
+        $fixture->forceFill(['tournament' => 'Provider '.$league])->save();
+        $drop = ['id' => 100, 'alert_key' => hash('sha256', 'club-drop'), 'sport' => 'soccer', 'home' => $home, 'away' => $away,
+            'league' => $league, 'sect' => 'Moneyline', 'outcome' => 'Home', 'period' => 0,
+            'from_price' => 2.6, 'to_price' => 2.3, 'alerted' => now()->timestamp, 'starts' => $start];
+        Redis::shouldReceive('get')->andReturnUsing(static fn (string $key): ?string => $key === 'Pinnacle:drops' ? json_encode(['alerts' => [$drop]]) : null);
+
+        $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonPath('data.0.bf_back', 2.42)->assertJsonPath('data.0.bf_lay', 2.46)
+            ->assertJsonPath('data.0.bf_home', $betfairHome);
+        $this->assertDatabaseHas('pinnacle_betfair_events', ['sport' => 'soccer', 'pinnacle_event_id' => '100', 'betfair_event_id' => '900']);
+        Http::assertNothingSent();
+    }
+
+    public function test_pinnacle_resolves_abbreviated_runner_names_and_refreshes_the_current_quote(): void
+    {
+        $this->freezeTime();
+        config(['services.sportsmeld.key' => '', 'services.football_fixture_index' => false]);
+        $this->actingAs($this->customer(), 'customers');
+        $start = now()->addHour()->timestamp;
+        $fixture = $this->fixture(['team1' => 'Borussia Mönchengladbach', 'team2' => 'Borussia Dortmund',
+            'tournament' => 'Bundesliga', 'result_status' => 'Prematch', 'timestamp' => $start]);
+        $fixture->forceFill(['betfair_match_id' => '900'])->save();
+        $market = FootballMarket::query()->create(['selection_key' => hash('sha256', 'short-runner'), 'football_match_unique_key' => $fixture->unique_key,
+            'market_id' => 'main', 'market_type' => 'MATCH_ODDS', 'runner' => 'Mgladbach',
+            'payload' => ['marketType' => 'MATCH_ODDS', 'runner' => 'Mgladbach', 'currentBackOdds' => 2.42]]);
+        $drop = ['id' => 100, 'alert_key' => hash('sha256', 'short-runner-drop'), 'sport' => 'soccer',
+            'home' => 'Borussia Mönchengladbach', 'away' => 'Borussia Dortmund', 'league' => 'Bundesliga',
+            'sect' => 'Moneyline', 'outcome' => 'Home', 'period' => 0, 'from_price' => 2.6, 'to_price' => 2.3,
+            'alerted' => now()->timestamp, 'starts' => $start];
+        Redis::shouldReceive('get')->andReturnUsing(static fn (string $key): ?string => $key === 'Pinnacle:drops' ? json_encode(['alerts' => [$drop]]) : null);
+
+        $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonPath('data.0.bf_back', 2.42);
+        $market->update(['payload' => ['marketType' => 'MATCH_ODDS', 'runner' => 'Mgladbach', 'currentBackOdds' => 2.48]]);
+        $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonPath('data.0.bf_back', 2.48);
+        Http::assertNothingSent();
+    }
+
+    public function test_pinnacle_uses_quotes_from_duplicate_records_of_the_same_betfair_event(): void
+    {
+        $this->freezeTime();
+        config(['services.sportsmeld.key' => '', 'services.football_fixture_index' => false]);
+        $this->actingAs($this->customer(), 'customers');
+        $start = now()->addHour()->timestamp;
+        foreach (['provider-one', 'provider-two'] as $index => $key) {
+            $fixture = $this->fixture(['unique_key' => $key, 'sportsApiPro_match_id' => $index + 100,
+                'team1' => 'Schalke 04', 'team2' => 'Stuttgart', 'tournament' => 'Bundesliga', 'result_status' => 'Prematch', 'timestamp' => $start]);
+            $fixture->forceFill(['betfair_match_id' => '900'])->save();
+        }
+        FootballMarket::query()->create(['selection_key' => hash('sha256', 'older-duplicate-event-quote'), 'football_match_unique_key' => 'provider-one',
+            'market_id' => 'main', 'market_type' => 'MATCH_ODDS', 'runner' => 'Stuttgart',
+            'payload' => ['marketType' => 'MATCH_ODDS', 'runner' => 'Stuttgart', 'currentBackOdds' => 2.12],
+            'updated_at' => now()->subMinute()]);
+        FootballMarket::query()->create(['selection_key' => hash('sha256', 'duplicate-event-quote'), 'football_match_unique_key' => 'provider-two',
+            'market_id' => 'main', 'market_type' => 'MATCH_ODDS', 'runner' => 'Stuttgart',
+            'payload' => ['marketType' => 'MATCH_ODDS', 'runner' => 'Stuttgart', 'currentBackOdds' => 1.91]]);
+        $drop = ['id' => 100, 'alert_key' => hash('sha256', 'duplicate-event-drop'), 'sport' => 'soccer', 'home' => 'Schalke 04', 'away' => 'Stuttgart',
+            'league' => 'Bundesliga', 'sect' => 'Moneyline', 'outcome' => 'Away', 'period' => 0,
+            'from_price' => 2, 'to_price' => 1.8, 'alerted' => now()->timestamp, 'starts' => $start];
+        Redis::shouldReceive('get')->andReturnUsing(static fn (string $key): ?string => $key === 'Pinnacle:drops' ? json_encode(['alerts' => [$drop]]) : null);
+
+        $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonPath('data.0.bf_back', 1.91);
+        $this->assertDatabaseHas('pinnacle_betfair_events', ['sport' => 'soccer', 'pinnacle_event_id' => '100', 'betfair_event_id' => '900']);
         Http::assertNothingSent();
     }
 

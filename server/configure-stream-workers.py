@@ -51,7 +51,11 @@ def systemd_quote(value):
 def worker_stop_command(command):
     php = command.index('artisan') - 1
     prefix = [arg for arg in command[:php] if arg != '-i']
-    pattern = '^' + re.escape(' '.join(command[php:])) + '$'
+    args = command[php:]
+    queue = next(arg for arg in args if arg.startswith('--queue='))
+    connection = args[3] if len(args) > 3 and not args[3].startswith('--') else None
+    identity = args[:3] + ([connection] if connection else []) + [queue]
+    pattern = '^' + re.escape(' '.join(identity)) + '( |$)'
     return prefix + ['sh', '-lc', 'pkill -TERM -f ' + shlex.quote(pattern) + ' || true']
 
 
@@ -61,13 +65,18 @@ def main():
     parser.add_argument('--container', default='aapanel')
     parser.add_argument('--app', default='/www/wwwroot/staging777.bfmarketsanalytics.com')
     parser.add_argument('--apply', action='store_true')
+    parser.add_argument('--service', action='append', help='Limit changes to the named worker; repeat for multiple workers')
     args = parser.parse_args()
     path = Path(args.config)
     config = json.loads(path.read_text())
     services = config.get('overrides', {}).get('production', {}).get('services', config['services'])
+    if args.service and any(name not in services or (name != 'queue-alerts-telegram' and not name.startswith('queue-realtime-')) for name in args.service):
+        raise ValueError('Select only configured realtime or Telegram workers')
     changes = []
     for name, original in services.items():
         if name != 'queue-alerts-telegram' and not name.startswith('queue-realtime-'):
+            continue
+        if args.service and name not in args.service:
             continue
         spec = dict(original, **original.get('overrides', {}).get('production', {}))
         unit = spec.get('unit', config.get('prefix', 'bfmarkets') + '-' + name + '.service')
@@ -76,7 +85,7 @@ def main():
         shown = subprocess.run(['systemctl', 'show', unit, '--property=ExecStart', '--value'], check=True, text=True, capture_output=True).stdout
         command = worker_command(shown, name, args.container, args.app)
         changes.append((unit, original, command))
-    if not any('alerts-ltd' in arg for _, _, command in changes for arg in command):
+    if not args.service and not any('alerts-ltd' in arg for _, _, command in changes for arg in command):
         raise ValueError('Telegram source queue configuration was not found')
     if args.apply and os.geteuid() != 0:
         raise ValueError('Apply this configuration with sudo')

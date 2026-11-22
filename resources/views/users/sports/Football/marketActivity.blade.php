@@ -941,7 +941,7 @@
             </span>
             <span class="feed-indicator inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold   [gap:6px] [padding:4px_12px] [border-radius:30px] [background:var(--surface-control)] [border:1px_solid_var(--border-control)] [font-size:11.5px]  [color:rgb(var(--text-muted))] [font-variant-numeric:tabular-nums] dark:[background:rgb(var(--surface-soft))] dark:[border-color:rgb(var(--border))] dark:[color:rgb(var(--text-soft))] [&_.feed-dot]:[width:6px] [&_.feed-dot]:[height:6px] [&_.feed-dot]:[border-radius:50%] [&_.feed-dot]:[background:var(--surface-success)] [&_.feed-dot]:[animation:pulse_1s_infinite] dark:[&_.feed-dot]:[background:var(--status-success-fill)]">
                 <span class="feed-dot"></span>
-                {{ __('Refresh latency') }} · <span class="feed-latency [color:rgb(var(--primary))] dark:[color:rgb(var(--primary))]" id="latencyDisplay">—</span> {{ __('ms') }}
+                <span id="marketTransportLabel">{{ __('Refresh latency') }}</span> · <span class="feed-latency [color:rgb(var(--primary))] dark:[color:rgb(var(--primary))]" id="latencyDisplay">—</span> {{ __('ms') }}
             </span>
         </div>
     </div>
@@ -1058,7 +1058,7 @@
                                 </span></td>
                             <td data-label="{{ __('Back Size') }}" class="col-odds"><span class="size-cell size-cell-back [background:var(--surface-brand-5-3)] [color:rgb(var(--primary))] dark:[background:var(--button-primary)] dark:[color:rgb(var(--primary))] [text-align:center] [font-weight:700] [font-size:12px] [border-radius:4px] [padding:5px_8px]! [min-width:60px] [display:inline-block] [margin:0_auto] [font-variant-numeric:tabular-nums] [transition:background_0.4s_ease,_color_0.4s_ease] max-[768px]:[font-size:11px] max-[768px]:[padding:4px_6px]! max-[768px]:[min-width:50px]">
                                     @if ($eventDisplayOdds)
-                                        {{ $event['totalBackSize'] >= 1000 ? number_format($event['totalBackSize'] / 1000, 1).'K' : $event['totalBackSize'] }}
+                                        {{ $favorite['backSize'] >= 1000 ? number_format($favorite['backSize'] / 1000, 1).'K' : $favorite['backSize'] }}
                                     @else
                                         <span class="inline-flex items-center justify-center" aria-label="{{ __('Subscription required') }}">@if (($event['available'] ?? true) === false)<span title="{{ __('Available five minutes before start') }}">—</span>@else @include('lock_icon') @endif</span>
                                     @endif
@@ -1072,7 +1072,7 @@
                                 </span></td>
                             <td data-label="{{ __('Lay Size') }}" class="col-odds"><span class="size-cell size-cell-lay [background:var(--surface-danger-0-5)] [color:var(--text-danger-35)] dark:[background:var(--status-danger-surface)] dark:[color:rgb(var(--text-main))] [text-align:center] [font-weight:700] [font-size:12px] [border-radius:4px] [padding:5px_8px]! [min-width:60px] [display:inline-block] [margin:0_auto] [font-variant-numeric:tabular-nums] [transition:background_0.4s_ease,_color_0.4s_ease] max-[768px]:[font-size:11px] max-[768px]:[padding:4px_6px]! max-[768px]:[min-width:50px]">
                                     @if ($eventDisplayOdds)
-                                        {{ $event['totalLaySize'] >= 1000 ? number_format($event['totalLaySize'] / 1000, 1).'K' : $event['totalLaySize'] }}
+                                        {{ $favorite['laySize'] >= 1000 ? number_format($favorite['laySize'] / 1000, 1).'K' : $favorite['laySize'] }}
                                     @else
                                         <span class="inline-flex items-center justify-center" aria-label="{{ __('Subscription required') }}">@if (($event['available'] ?? true) === false)<span title="{{ __('Available five minutes before start') }}">—</span>@else @include('lock_icon') @endif</span>
                                     @endif
@@ -1117,6 +1117,9 @@
                     @endforeach
                     @if ($marketActivites === [] && empty($marketRowOrder))
                         <tr data-market-empty><td colspan="14" class="py-10 text-center">{{ __('No data available.') }}</td></tr>
+                    @endif
+                    @if (request()->boolean('_market_switch'))
+                    <script type="application/json" data-market-options>@json($marketOptions)</script>
                     @endif
                     @unless ($compactMarketRows ?? false)
                     <script type="application/json" data-market-server-time>{{ time() }}</script>
@@ -1175,6 +1178,12 @@
                     }
                 });
 
+                let marketSport = @json($marketActivitySport);
+                let marketSourceUrl = window.location.href;
+                let marketSportRevision = 0;
+                let needsSportMetadata = false;
+                let marketChannel = null;
+                let scoreChannel = null;
                 let marketRefreshInterval = 3000;
                 let marketRefreshLoop = null;
                 let marketStream = null;
@@ -1359,6 +1368,14 @@
                     const template = document.createElement('template');
                     template.innerHTML = `<table><tbody>${payload.html}</tbody></table>`;
                     const body = template.content.querySelector('tbody');
+                    const options = body.querySelector('[data-market-options]');
+                    if (options) {
+                        const select = document.querySelector('.market-select');
+                        select.replaceChildren(...JSON.parse(options.textContent).map(option => new Option(option.label, option.value)));
+                        select.value = activeMarketFilter;
+                        options.remove();
+                        needsSportMetadata = false;
+                    }
                     const serverTime = body.querySelector('[data-market-server-time]');
                     const embeddedEvents = body.querySelector('[data-market-events]');
                     const embeddedOrder = body.querySelector('[data-market-order]');
@@ -1370,6 +1387,9 @@
                     serverClockOffset = Number(payload.server_time ?? serverTime?.textContent) * 1000 - Date.now();
                     let data = embeddedEvents ? JSON.parse(embeddedEvents.textContent) : payload.data;
                     data = marketStream?.reconcile(data) ?? data;
+                    for (const event of data) {
+                        if (event.marketLabel) MARKET_TAGS[event.market] = { label: event.marketLabel, cls: 'mo' };
+                    }
                     serverTime?.remove();
                     embeddedEvents?.remove();
                     if (versions) {
@@ -1458,7 +1478,8 @@
                 }
 
                 function marketActivityUrl(page, perPage = 20) {
-                    const url = new URL(window.location.href);
+                    const url = new URL(marketSourceUrl, window.location.origin);
+                    if (needsSportMetadata) url.searchParams.set('_market_switch', '1');
                     url.searchParams.set('page', page);
                     url.searchParams.set('per_page', perPage);
                     url.searchParams.set('type', activeFootballFilter);
@@ -1486,6 +1507,7 @@
                     let requestTimeout = null;
                     let timedOut = false;
                     try {
+                        const revision = marketSportRevision;
                         const loadedRowCount = reset ? 20 : Math.max(20, marketLoadedPages * 20);
                         const url = marketActivityUrl(1, loadedRowCount);
                         if (compactMarketActivity && !reset && Object.keys(marketRowVersions).length <= 100) {
@@ -1503,9 +1525,9 @@
                         if (!response.ok) throw new Error(`HTTP error: ${response.status}`);
 
                         const payload = await response.json();
-                        if (marketRequest?.signal.aborted) return;
+                        if (marketRequest?.signal.aborted || revision !== marketSportRevision) return;
                         const latency = document.getElementById('latencyDisplay');
-                        if (latency) latency.textContent = Math.round(performance.now() - requestedAt);
+                        if (latency && !streamConnected) latency.textContent = Math.round(performance.now() - requestedAt);
                         receiveMarketRows(payload, false, !reset && flashChanges);
                         if (reset) marketLoadedPages = 1;
                         updateMarketLoader(payload.has_more, marketLoadedPages + 1);
@@ -1536,6 +1558,7 @@
                         return;
                     }
 
+                    const revision = marketSportRevision;
                     marketLoading = 'append';
                     marketLazyLoader.querySelector('[data-market-loader-text]').textContent = (globalThis.bfTranslations?.["Loading matches…"] ?? "Loading matches…");
 
@@ -1548,7 +1571,7 @@
                         if (!response.ok) throw new Error(`HTTP error: ${response.status}`);
 
                         const payload = await response.json();
-                        if (marketRequest?.signal.aborted) return;
+                        if (marketRequest?.signal.aborted || revision !== marketSportRevision) return;
                         receiveMarketRows(payload, true);
                         marketLoadedPages++;
                         updateMarketLoader(payload.has_more, payload.next_page);
@@ -1617,9 +1640,9 @@
                         if (event.streamRemoved) { row.hidden = true; continue; }
                         const favorite = event.runners[event.favIdx];
                         write(row.querySelector('.odds-cell-back'), favorite.back.toFixed(2), true);
-                        write(row.querySelector('.size-cell-back'), fmtSize(event.totalBackSize), true);
+                        write(row.querySelector('.size-cell-back'), fmtSize(favorite.backSize), true);
                         write(row.querySelector('.odds-cell-lay'), favorite.lay.toFixed(2), true);
-                        write(row.querySelector('.size-cell-lay'), fmtSize(event.totalLaySize), true);
+                        write(row.querySelector('.size-cell-lay'), fmtSize(favorite.laySize), true);
                         if (event.market !== 'correct_score') {
                             const cell = row.querySelector('.col-fav .compact-name');
                             if (cell) { write(cell, favorite.name); cell.title = favorite.name; }
@@ -1708,7 +1731,7 @@
                     if (!selectedMarket || selectedMarket.locked || currentEventId === null || selectedQuoteRequest) return;
                     const key = window.marketStreamKey(selectedMarket);
                     const url = new URL(@json(route('market-activity.quote')), window.location.origin);
-                    url.searchParams.set('sport', @json($marketActivitySport));
+                    url.searchParams.set('sport', marketSport);
                     url.searchParams.set('match_key', selectedMarket.streamMatchKey);
                     url.searchParams.set('market_key', selectedMarket.streamMarketKey);
                     const controller = new AbortController();
@@ -1735,6 +1758,61 @@
                     lastFullRefresh = performance.now();
                     await Promise.all([reloadMarketActivity(false, true), refreshSelectedMarket()]);
                 }
+                function updateMarketTransport() {
+                    const label = document.getElementById('marketTransportLabel');
+                    if (label) label.textContent = streamConnected ? @json(__('WS Feed')) : @json(__('Refresh latency'));
+                }
+                function connectMarketSport() {
+                    if (marketChannel) window.Echo?.leave(marketChannel);
+                    if (scoreChannel) window.Echo?.leave(scoreChannel);
+                    streamConnected = false;
+                    updateMarketTransport();
+                    const sport = marketSport;
+                    if (['greyhounds', 'horseracing'].includes(sport)) {
+                        racingFeedMonitor = window.watchRacingFeed(document.getElementById('eventsWrap').parentElement,
+                            () => marketRefreshLoop.request(), sport);
+                    } else {
+                        scoreChannel = `sports.${sport}.live`;
+                        window.Echo?.channel(scoreChannel).listen('.score.updated', () => marketRefreshLoop.request());
+                    }
+                    if (!displayOdds) return;
+                    marketChannel = `sports.${sport}.market-activity`;
+                    window.Echo?.private(marketChannel)
+                        .subscribed(() => { if (sport !== marketSport) return; streamConnected = true; updateMarketTransport(); lastFullRefresh = -Infinity; marketRefreshLoop?.request(); })
+                        .error(() => { if (sport !== marketSport) return; streamConnected = false; updateMarketTransport(); lastFullRefresh = -Infinity; marketRefreshLoop?.request(); })
+                        .listen('.market.updated', payload => {
+                            if (sport !== marketSport) return;
+                            marketStream.receive(payload);
+                            const latency = document.getElementById('latencyDisplay');
+                            if (latency && Number.isFinite(payload.sent_at)) latency.textContent = Math.max(0, Math.round(serverNow() * 1000 - payload.sent_at * 1000));
+                        });
+                }
+                document.querySelector('[data-market-activity-tabs]')?.addEventListener('click', event => {
+                    const tab = event.target.closest('a[data-sport]');
+                    if (!tab || event.button > 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                    event.preventDefault();
+                    if (tab.dataset.sport === marketSport) return;
+                    marketSport = tab.dataset.sport;
+                    marketSourceUrl = tab.href;
+                    marketSportRevision++;
+                    needsSportMetadata = true;
+                    marketRequest?.abort();
+                    selectedQuoteRequest?.abort();
+                    window.closeDetail();
+                    events.splice(0);
+                    eventsBody.replaceChildren();
+                    marketStream?.retain([]);
+                    marketRowVersions = {};
+                    marketLoadedPages = 1;
+                    updateMarketLoader(false, 2);
+                    activeMarketFilter = '';
+                    document.querySelector('.market-select').value = '';
+                    document.querySelectorAll('[data-market-activity-tabs] a').forEach(item => item.classList.toggle('active', item === tab));
+                    trackMarketEvents();
+                    lastFullRefresh = -Infinity;
+                    connectMarketSport();
+                    reloadMarketActivity(true);
+                });
                 document.addEventListener('DOMContentLoaded', function() {
                     trackMarketEvents();
                     marketStream = window.createMarketQuoteStream(applyMarketQuotes, {
@@ -1746,26 +1824,10 @@
                     marketStream.start();
                     marketRefreshLoop = window.createMarketRefreshLoop(refreshLiveMarketActivity, { interval: marketRefreshInterval });
                     marketRefreshLoop.start();
-                    @if ($raceActivity)
-                    racingFeedMonitor = window.watchRacingFeed(document.getElementById('eventsWrap').parentElement,
-                        () => marketRefreshLoop.request(), @json($marketActivitySport));
-                    @else
-                    window.Echo?.channel(@json('sports.'.$marketActivitySport.'.live'))
-                        .listen('.score.updated', () => marketRefreshLoop.request());
-                    @endif
-                    if (displayOdds) {
-                        window.Echo?.private(@json('sports.'.$marketActivitySport.'.market-activity'))
-                            .subscribed(() => { streamConnected = true; lastFullRefresh = -Infinity; marketRefreshLoop.request(); })
-                            .error(() => { streamConnected = false; lastFullRefresh = -Infinity; marketRefreshLoop.request(); })
-                            .listen('.market.updated', payload => {
-                                marketStream.receive(payload);
-                                const latency = document.getElementById('latencyDisplay');
-                                if (latency && Number.isFinite(payload.sent_at)) latency.textContent = Math.max(0, Math.round(serverNow() * 1000 - payload.sent_at * 1000));
-                            });
-                        window.Echo?.connector.pusher.connection.bind('state_change', ({ current }) => {
-                            if (current !== 'connected') streamConnected = false;
-                        });
-                    }
+                    connectMarketSport();
+                    window.Echo?.connector.pusher.connection.bind('state_change', ({ current }) => {
+                        if (current !== 'connected') { streamConnected = false; updateMarketTransport(); }
+                    });
                 }, { once: true });
                 window.addEventListener('pagehide', () => {
                     marketRefreshLoop?.stop();

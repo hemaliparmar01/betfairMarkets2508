@@ -362,6 +362,7 @@ return [
         'webhook_secret' => env('TELEGRAM_WEBHOOK_SECRET'),
         'source_secret' => env('TELEGRAM_SOURCE_SECRET'),
         'source_channel' => env('TELEGRAM_SOURCE_CHANNEL', 'wageroddss'),
+        'allow_unresolved_source' => (bool) env('TELEGRAM_SOURCE_ALLOW_UNRESOLVED', false),
         'api_id' => env('TELEGRAM_API_ID'),
         'api_hash' => env('TELEGRAM_API_HASH'),
         'phone' => env('TELEGRAM_PHONE'),

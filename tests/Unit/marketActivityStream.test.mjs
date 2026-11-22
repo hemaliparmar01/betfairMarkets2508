@@ -96,9 +96,9 @@ test('the real table renderer patches cells in place and flashes only changed pr
     const next = { ...mergeMarketQuote(event(), quote()), momentum: 'back', volatility: 'low' };
     context.paintMarketQuotes([next]);
     assert.equal(cells['.odds-cell-back'].textContent, '1.80');
-    assert.equal(cells['.size-cell-back'].textContent, '3200');
+    assert.equal(cells['.size-cell-back'].textContent, '1600');
     assert.equal(cells['.odds-cell-lay'].textContent, '1.82');
-    assert.equal(cells['.size-cell-lay'].textContent, '3040.72');
+    assert.equal(cells['.size-cell-lay'].textContent, '40.72');
     assert.equal(flashes.length, 4);
     context.paintMarketQuotes([next]);
     assert.equal(flashes.length, 4);
@@ -171,4 +171,99 @@ for (const onPage of [true, false]) test(`an open market keeps updating ${onPage
     assert.equal(drawn.at(-1).backPercent, 80);
     assert.equal(drawn.at(-1).layPercent, 20);
     assert.equal(context.events.length, onPage ? 1 : 0);
+});
+
+test('sport tabs switch the market source and clear old quotes without navigating to fixtures', async () => {
+    const { readFileSync } = await import('node:fs');
+    const vm = await import('node:vm');
+    const source = readFileSync(new URL('../../resources/views/users/sports/Football/marketActivity.blade.php', import.meta.url), 'utf8');
+    const start = source.indexOf("document.querySelector('[data-market-activity-tabs]')?.addEventListener");
+    const end = source.indexOf("document.addEventListener('DOMContentLoaded'", start);
+    let click;
+    const calls = [];
+    const select = { value: 'MATCH_ODDS' };
+    const tab = { dataset: { sport: 'tennis' }, href: 'https://example.test/tennis/market-activity', classList: { toggle() {} } };
+    const context = { marketSport: 'football', marketSourceUrl: 'https://example.test/football/market-activity', marketSportRevision: 0,
+        events: [event()], eventsBody: { replaceChildren() { calls.push('clear rows'); } },
+        marketStream: { retain(rows) { assert.equal(rows.length, 0); calls.push('clear stream'); } },
+        marketRequest: { abort() { calls.push('abort rows'); } }, selectedQuoteRequest: { abort() { calls.push('abort selected'); } },
+        window: { location: { href: 'https://example.test/football/market-activity' }, closeDetail() { calls.push('close'); } },
+        document: { querySelector: selector => selector === '.market-select' ? select : { addEventListener(name, handler) { click = handler; } }, querySelectorAll: () => [tab] },
+        trackMarketEvents() {}, updateMarketLoader() {}, connectMarketSport() { calls.push('connect tennis'); }, reloadMarketActivity(reset) { assert.equal(reset, true); calls.push('load tennis'); } };
+    vm.createContext(context);
+    vm.runInContext(source.slice(start, end), context);
+    click({ target: { closest: () => tab }, button: 0, preventDefault() { calls.push('prevent navigation'); } });
+    assert.equal(context.marketSport, 'tennis');
+    assert.equal(context.marketSourceUrl, tab.href);
+    assert.equal(context.window.location.href, 'https://example.test/football/market-activity');
+    assert.equal(context.marketSportRevision, 1);
+    assert.equal(context.events.length, 0);
+    assert.equal(context.needsSportMetadata, true);
+    assert.equal(select.value, '');
+    assert.deepEqual(calls, ['prevent navigation', 'abort rows', 'abort selected', 'close', 'clear rows', 'clear stream', 'connect tennis', 'load tennis']);
+});
+
+test('switching sports leaves old channels and ignores late messages from the previous sport', async () => {
+    const { readFileSync } = await import('node:fs');
+    const vm = await import('node:vm');
+    const source = readFileSync(new URL('../../resources/views/users/sports/Football/marketActivity.blade.php', import.meta.url), 'utf8');
+    const start = source.indexOf('function connectMarketSport()');
+    const end = source.indexOf("document.querySelector('[data-market-activity-tabs]')", start);
+    const listeners = new Map(), left = [], received = [];
+    const chain = name => ({ subscribed() { return this; }, error() { return this; }, listen(event, callback) { listeners.set(name, callback); return this; } });
+    const context = { marketSport: 'football', marketChannel: null, scoreChannel: null, displayOdds: true, updateMarketTransport() {},
+        window: { Echo: { leave: name => left.push(name), private: chain, channel: chain } },
+        marketStream: { receive: payload => received.push(payload) }, document: { getElementById: () => null } };
+    vm.createContext(context);
+    vm.runInContext(source.slice(start, end), context);
+    context.connectMarketSport();
+    const old = listeners.get('sports.football.market-activity');
+    context.marketSport = 'tennis';
+    context.connectMarketSport();
+    old({ sport: 'football' });
+    listeners.get('sports.tennis.market-activity')({ sport: 'tennis' });
+    assert.deepEqual(left, ['sports.football.market-activity', 'sports.football.live']);
+    assert.deepEqual(received, [{ sport: 'tennis' }]);
+});
+
+for (const speed of [140, 1000, 2000, 3000, 5000, 8000, 10000]) test(`the actual ${speed}ms speed button updates quote rendering and recovery timing`, async () => {
+    const { readFileSync } = await import('node:fs');
+    const vm = await import('node:vm');
+    const source = readFileSync(new URL('../../resources/views/users/sports/Football/marketActivity.blade.php', import.meta.url), 'utf8');
+    const start = source.indexOf("document.getElementById('speedBar').addEventListener");
+    const end = source.indexOf("eventsBody.addEventListener('click'", start);
+    let click;
+    const speeds = [];
+    const button = { dataset: { speed }, classList: { toggle() {} }, setAttribute(name, value) { this[name] = value; } };
+    const context = { document: { getElementById: () => ({ addEventListener(name, handler) { click = handler; } }), querySelectorAll: () => [button] },
+        marketRefreshLoop: { setSpeed: value => speeds.push(value) }, marketStream: { setSpeed: value => speeds.push(value) } };
+    vm.createContext(context); vm.runInContext(source.slice(start, end), context);
+    click({ target: { closest: () => button } });
+    assert.deepEqual(speeds, [speed, speed]);
+    assert.equal(button['aria-pressed'], 'true');
+});
+
+test('a delayed HTTP response from the previous sport cannot repopulate the new table', async () => {
+    const { readFileSync } = await import('node:fs');
+    const vm = await import('node:vm');
+    const source = readFileSync(new URL('../../resources/views/users/sports/Football/marketActivity.blade.php', import.meta.url), 'utf8');
+    const start = source.indexOf('async function reloadMarketActivity(');
+    const end = source.indexOf('async function loadMoreMarketActivity()', start);
+    let resolve;
+    const pending = new Promise(done => { resolve = done; });
+    const received = [];
+    const context = { marketLoading: false, refreshPending: false, resetPending: false, marketLoadPending: false, marketHasMore: false,
+        marketSportRevision: 0, marketLoadedPages: 1, marketRowVersions: {}, compactMarketActivity: true,
+        document: { hidden: false, getElementById: () => null },
+        window: { setTimeout() { return 1; }, clearTimeout() {} }, performance: { now: () => 0 }, AbortController,
+        marketActivityUrl: () => new URL('https://example.test/football/market-activity'), fetch: () => pending,
+        receiveMarketRows: payload => received.push(payload), updateMarketLoader() {}, console };
+    vm.createContext(context);
+    vm.runInContext(source.slice(start, end), context);
+    const request = context.reloadMarketActivity(true);
+    context.marketSportRevision = 1;
+    resolve({ ok: true, json: async () => ({ data: [{ sport: 'football' }] }) });
+    await request;
+    assert.equal(received.length, 0);
+    assert.equal(context.marketLoading, false);
 });

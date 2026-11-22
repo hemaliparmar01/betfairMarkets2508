@@ -412,15 +412,31 @@ class AlertService
 
             return null;
         }
+        if (! $goal && $signal !== null) {
+            $placeholderId = DB::table('alerts')->where('type', 'ltd')
+                ->where('match_id', 'telegram-source:'.hash('sha256', $message['source'].'|'.$message['message_id']))
+                ->where('payload->context->signal->key', $signal['key'])->value('id');
+            if ($placeholderId !== null) {
+                return (int) $placeholderId;
+            }
+        }
         $hasTeams = preg_match('/(?:^|\n)\s*(?:⚽\s*)?(?:Match\s*:\s*)?([^\n:]+?)\s+(?:vs\.?|v\.?|—)\s+([^\n]+?)(?=\s+[|@]|\s+-\s+(?:Over|Under)|\n|$)/iu', $context, $teams);
+        $fallback = fn (?string $home = null, ?string $away = null, ?string $competition = null): ?int => $this->unresolvedSource($message, $signal, [
+            'goal' => $goal, 'settlement' => $settlement, 'home' => $home, 'away' => $away, 'competition' => $competition,
+            'score' => $hasScore ? $score[1].' - '.$score[2] : null, 'minute' => $hasMinute ? $minute[1] : null,
+            'status' => $hasMinute || preg_match('/^\h*LIVE\b/imu', $text) ? 'Live' : '—',
+        ]);
         if (! $hasTeams && $goal) {
             $hasTeams = preg_match('/\bgo+a+l+!?\h+([^\n]+?)\h+\d{1,2}\h*[-:]\h*\d{1,2}\h+([^\n]+?)(?=\h+@|\n|$)/iu', $text, $teams);
         }
         $hasLeague = preg_match('/(?:League|Competition|Tournament)\s*:\s*([^\n|]+)/iu', $context, $league);
+        $teamPairs = [];
         if (! $hasTeams) {
             $cardText = preg_replace('/^(\h*[\p{L}][^\n]*?)\n\h*(\((?:Women|W|Men|M)\))(?=\h|\n|$)/imu', '$1 $2', $text);
+            $cardText = preg_replace('/^(\h*[\p{L}][\p{L} .\x{2019}-]+)\n\h*(United|City|Town|Athletic|Hotspur)\h+(?=\d{1,2}\h*[:–-]\h*\d{1,2})/imu', '$1 $2 ', $cardText);
             $hasTeams = preg_match('/^\h*([\p{L}][^\n:]+?)\h+\d{1,2}\h*[:–-]\h*\d{1,2}\h+([\p{L}][^\n:]+?)(?:\n([\p{L}][\p{L} .-]+)(?=\n\h*\d))?\h*$/mu', $cardText, $teams);
             if ($hasTeams && isset($teams[3])) {
+                $teamPairs[] = [trim($teams[1].' '.$teams[3]), trim($teams[2])];
                 $teams[2] .= ' '.$teams[3];
             }
         }
@@ -448,14 +464,15 @@ class AlertService
                 }
             }
         }
-        if (! $hasTeams || (! $goal && ! $hasLeague)) {
+        if (! $hasTeams && $goal) {
             Log::info('Telegram source match details could not be parsed.', ['message_id' => $message['message_id'],
                 'teams_parsed' => (bool) $hasTeams, 'league_parsed' => (bool) $hasLeague]);
 
-            return null;
+            return $fallback();
         }
-        $home = trim($teams[1]);
-        $away = trim($teams[2]);
+        $home = $hasTeams ? trim($teams[1]) : '';
+        $away = $hasTeams ? trim($teams[2]) : '';
+        $teamPairs[] = [$home, $away];
         $competition = $hasLeague ? trim($league[1]) : null;
         $resolver = app(FootballSyncController::class);
         $womenCompetition = preg_match('/\bwomen\b/iu', $competition ?? '') === 1;
@@ -468,15 +485,14 @@ class AlertService
                 }
             }
 
-            return match (strtolower(trim($name))) {
-                'leeds' => 'Leeds United',
-                'tottenham' => 'Tottenham Hotspur',
-                default => $name,
-            };
+            return $name;
         };
         $normalizeLeague = static function (string $name) use ($womenCompetition): string {
             $name = match (strtolower(trim($name))) {
                 'english premier league', 'england premier league' => 'Premier League',
+                'italian serie a' => 'Serie A',
+                'german bundesliga' => 'Bundesliga',
+                'french ligue 1', 'france ligue 1' => 'Ligue 1',
                 default => trim(preg_replace('/^[^-]+ - /u', '', $name)),
             };
             if ($womenCompetition) {
@@ -488,26 +504,65 @@ class AlertService
 
             return $name;
         };
-        $candidates = FootballMatch::query()->whereIn('result_status', $goal ? ['Live', 'Prematch', 'Finished'] : ['Live', 'Prematch'])
-            ->whereBetween('start_timestamp', [time() - 6 * 3600, time() + 48 * 3600])
-            ->get(['id', 'sports_api_pro_match_id', 'betfair_match_id', 'team1', 'team2', 'tournament', 'unique_key', 'start_timestamp'])
-            ->filter(fn (FootballMatch $match): bool => (! $womenCompetition || preg_match('/\bwomen\b/iu', $match->tournament ?? '') === 1)
-                && $resolver->teamSimilarity($normalizeTeam($match->team1), $normalizeTeam($home)) >= 80
-                && $resolver->teamSimilarity($normalizeTeam($match->team2), $normalizeTeam($away)) >= 80
-                && ($competition === null || $resolver->teamSimilarity($normalizeLeague($match->tournament ?? ''), $normalizeLeague($competition)) >= 80));
-        if ($candidates->isEmpty() || $candidates->max('start_timestamp') - $candidates->min('start_timestamp') > 900) {
-            Log::info('Telegram source fixture could not be resolved uniquely.', ['message_id' => $message['message_id'], 'matches' => $candidates->count(),
-                'home' => $home, 'away' => $away, 'competition' => $competition]);
+        $matchesCompetition = static function (string $name) use ($competition, $normalizeLeague, $resolver): bool {
+            if ($competition === null) {
+                return true;
+            }
+            $candidate = $normalizeLeague($name);
+            $reference = $normalizeLeague($competition);
+            preg_match_all('/[0-9]+/', $candidate, $candidateNumbers);
+            preg_match_all('/[0-9]+/', $reference, $referenceNumbers);
 
-            return null;
+            return $candidateNumbers[0] === $referenceNumbers[0] && $resolver->teamSimilarity($candidate, $reference) >= 80;
+        };
+        $requiredSimilarity = ! $goal && ! $hasLeague ? 100 : 80;
+        $availableFixtures = FootballMatch::query()->whereIn('result_status', $goal ? ['Live', 'Prematch', 'Finished'] : ['Live', 'Prematch'])
+            ->whereBetween('start_timestamp', [time() - 6 * 3600, time() + 48 * 3600])
+            ->get(['id', 'sports_api_pro_match_id', 'betfair_match_id', 'team1', 'team2', 'tournament', 'unique_key', 'start_timestamp']);
+        $candidates = $availableFixtures->filter(fn (FootballMatch $match): bool => (! $womenCompetition || preg_match('/\bwomen\b/iu', $match->tournament ?? '') === 1)
+                && array_any($teamPairs, static fn (array $pair): bool => FootballFixtureNames::similarity($normalizeTeam($match->team1), $normalizeTeam($pair[0])) >= $requiredSimilarity
+                    && FootballFixtureNames::similarity($normalizeTeam($match->team2), $normalizeTeam($pair[1])) >= $requiredSimilarity)
+                && $matchesCompetition($match->tournament ?? ''));
+        $cardCandidates = $goal ? collect() : $availableFixtures->filter(function (FootballMatch $match) use ($text, $womenCompetition, $matchesCompetition): bool {
+            if (($womenCompetition && preg_match('/\bwomen\b/iu', $match->tournament ?? '') !== 1) || ! $matchesCompetition($match->tournament ?? '')) {
+                return false;
+            }
+            $homeScore = FootballFixtureNames::mentionScore($text, $match->team1);
+            $awayScore = FootballFixtureNames::mentionScore($text, $match->team2);
+
+            return ($homeScore === 100 && $awayScore >= 50) || ($awayScore === 100 && $homeScore >= 50);
+        });
+        $candidates = $candidates->merge($cardCandidates)->unique('id');
+        $anchor = $candidates->first();
+        $conflictingTeams = (count($teamPairs) > 1 || $cardCandidates->isNotEmpty()) && $anchor !== null && $candidates->contains(static fn (FootballMatch $match): bool => FootballFixtureNames::similarity($normalizeTeam($match->team1), $normalizeTeam($anchor->team1)) < 80
+            || FootballFixtureNames::similarity($normalizeTeam($match->team2), $normalizeTeam($anchor->team2)) < 80);
+        $ambiguousCompetition = ! $goal && ! $hasLeague && $candidates->map(static fn (FootballMatch $match): string => mb_strtolower($normalizeLeague($match->tournament ?? '')))->unique()->count() !== 1;
+        if ($candidates->isEmpty() || $conflictingTeams || $ambiguousCompetition || $candidates->max('start_timestamp') - $candidates->min('start_timestamp') > 900) {
+            Log::info('Telegram source fixture could not be resolved uniquely.', ['message_id' => $message['message_id'], 'matches' => $candidates->count(),
+                'home' => $home, 'away' => $away, 'competition' => $competition, 'ocr_excerpt' => mb_substr($text, 0, 1500)]);
+
+            return $fallback($home, $away, $competition);
         }
         $candidates = $candidates->sortByDesc(static fn (FootballMatch $match): int => (filled($match->sports_api_pro_match_id) ? 2 : 0) + (filled($match->betfair_match_id) ? 1 : 0));
         $record = $candidates->first()->refresh();
+        if ($cardCandidates->isNotEmpty() && (! $hasTeams || FootballFixtureNames::similarity($normalizeTeam($record->team1), $normalizeTeam($home)) < $requiredSimilarity
+            || FootballFixtureNames::similarity($normalizeTeam($record->team2), $normalizeTeam($away)) < $requiredSimilarity)) {
+            Log::info('Telegram source fixture recovered from card text.', ['message_id' => $message['message_id'],
+                'home' => $record->team1, 'away' => $record->team2, 'competition' => $record->tournament]);
+        }
+        if (! $goal && ! $hasLeague) {
+            Log::info('Telegram source fixture resolved without OCR league.', ['message_id' => $message['message_id'],
+                'home' => $record->team1, 'away' => $record->team2, 'competition' => $record->tournament]);
+        }
         $oddsRecord = $candidates->first(static fn (FootballMatch $match): bool => filled($match->betfair_match_id));
         $match = array_replace($record->payload, ['team1' => $record->team1, 'team2' => $record->team2,
             'tournament' => $record->tournament, 'timestamp' => (int) $record->start_timestamp, 'result_status' => $record->result_status]);
         $matchId = filled($record->sports_api_pro_match_id) ? $record->sports_api_pro_match_id : ($oddsRecord === null ? null : 'betfair:'.$oddsRecord->betfair_match_id);
-        if ($matchId === null || (! $goal && MatchBackup::isHidden($match, 'football'))) {
+        unset($match['internal_backup']);
+        if ($matchId === null) {
+            return $fallback($record->team1, $record->team2, $record->tournament);
+        }
+        if (! $goal && MatchBackup::isHidden($match, 'football')) {
             return null;
         }
         $match['sportsApiPro_match_id'] = $matchId;
@@ -582,6 +637,83 @@ class AlertService
         return $id;
     }
 
+    /** @param array<string, mixed> $message @param array<string, mixed>|null $signal @param array<string, mixed> $details */
+    private function unresolvedSource(array $message, ?array $signal, array $details): ?int
+    {
+        if (! config('services.telegram.allow_unresolved_source')) {
+            return null;
+        }
+        if (! $details['goal'] && $signal !== null) {
+            $existingId = DB::table('alerts')->where('type', 'ltd')->where('payload->context->provider', 'telegram_source')
+                ->where('payload->context->signal->key', $signal['key'])->where(function ($query) use ($message): void {
+                    $query->where('payload->context->source_message_id', $message['message_id'])
+                        ->orWhereJsonContains('payload->context->source_message_ids', $message['message_id']);
+                })->value('id');
+            if ($existingId !== null) {
+                return (int) $existingId;
+            }
+        }
+        $parent = null;
+        $parentPayload = [];
+        if ($details['goal']) {
+            if (empty($message['reply_message_id'])) {
+                return null;
+            }
+            $parents = DB::table('alerts')->where('type', 'ltd')->where('created_at', '>=', now()->subHours(54))
+                ->where('payload->context->provider', 'telegram_source')->where(function ($query) use ($message): void {
+                    $query->where('payload->context->source_message_id', $message['reply_message_id'])
+                        ->orWhereJsonContains('payload->context->source_message_ids', $message['reply_message_id']);
+                })->limit(2)->get();
+            if ($parents->count() !== 1) {
+                return null;
+            }
+            $parent = $parents->first();
+            $parentPayload = json_decode($parent->payload, true);
+            $parentSignal = $parentPayload['context']['signal'] ?? null;
+            if ($parentSignal === null || ($signal !== null && $signal['key'] !== $parentSignal['key'])) {
+                return null;
+            }
+            $signal = $parentSignal;
+            if ($details['settlement'] === null && $signal['is_ltd'] && $details['minute'] !== null
+                && ! str_starts_with($details['minute'], '45+') && (int) $details['minute'] > 45) {
+                return null;
+            }
+        }
+        if ($signal === null) {
+            return null;
+        }
+        $name = static function (?string $value): string {
+            if ($value === null || ! preg_match('/[\p{L}]{2}/u', $value)) {
+                return '—';
+            }
+
+            return trim(preg_replace('/[^\p{L}\p{N}\h().\x{0027}\x{2019}-]/u', '', $value));
+        };
+        $names = isset($parentPayload['match']) ? explode(' vs ', $parentPayload['match'], 2) : [];
+        $match = ['sportsApiPro_match_id' => $parent?->match_id ?? 'telegram-source:'.hash('sha256', $message['source'].'|'.$message['message_id']),
+            'team1' => $names[0] ?? $name($details['home']), 'team2' => $names[1] ?? $name($details['away']),
+            'tournament' => $parentPayload['league'] ?? ($details['competition'] ?: '—'), 'result_status' => $details['status']];
+        $context = ['provider' => 'telegram_source', 'signal' => $signal, 'source_message_id' => $message['message_id'],
+            'unresolved_fixture' => true, 'match_status' => $details['status'], 'score' => $details['score'], 'minute' => $details['minute']];
+        if ($parent !== null) {
+            $context['parent_alert_id'] = $parent->id;
+            $context['score'] ??= '—';
+            $context['result_status'] = $details['settlement'] ?? 'goal';
+            if ($signal['is_ltd'] && $details['settlement'] === null && $details['minute'] !== null && $details['score'] !== null
+                && is_string($parentPayload['score'] ?? null) && preg_match('/^[0-9]+ - [0-9]+$/', $parentPayload['score'])) {
+                $previous = array_map('intval', explode(' - ', $parentPayload['score']));
+                $current = array_map('intval', explode(' - ', $details['score']));
+                if ($current[0] >= ($previous[0] ?? 0) && $current[1] >= ($previous[1] ?? 0) && array_sum($current) > array_sum($previous)) {
+                    $context['result_status'] = 'won';
+                }
+            }
+        }
+        $id = $this->process($parent === null ? 'ltd' : 'goal', $match, $context);
+        Log::info('Telegram source temporary placeholder alert processed.', ['message_id' => $message['message_id'], 'alert_id' => $id]);
+
+        return $id;
+    }
+
     /** @param array<string, mixed> $match @param array<string, mixed> $context */
     public function process(string $type, array $match, array $context = [], ?int $customerId = null): ?int
     {
@@ -621,9 +753,13 @@ class AlertService
                     'from' => $from, 'to' => $to, 'at' => $at, 'sport' => $sport, 'pinnacle_alert_key' => $pinnacle['alert_key'],
                 ]];
         }
+        $visibleMatch = $match;
+        if ($sourceSignal) {
+            unset($visibleMatch['internal_backup']);
+        }
         if (! in_array($type, ['test', 'expired'], true)) {
             if ($pinnacle === null && (empty($matchId) || empty($match['team1']) || empty($match['team2']) || empty($match['tournament'])
-                || (! ($sourceSignal && $type === 'goal') && MatchBackup::isHidden($match, 'football')))) {
+                || (! ($sourceSignal && $type === 'goal') && MatchBackup::isHidden($visibleMatch, 'football')))) {
                 return null;
             }
             $predicate = $pinnacle === null && ! $sourceSignal ? $this->footballFilterPredicate($type) : null;
@@ -743,7 +879,7 @@ class AlertService
         }
         $payload = [
             'alert_type' => $type, 'match_id' => $matchId,
-            'match' => isset($match['team1']) ? $match['team1'].' vs '.$match['team2'] : null,
+            'match' => isset($match['team1']) ? (($context['unresolved_fixture'] ?? false) && $match['team1'] === '—' && $match['team2'] === '—' ? '—' : $match['team1'].' vs '.$match['team2']) : null,
             'league' => $match['tournament'] ?? null, 'score' => $score, 'minute' => $minute,
             'kickoff' => isset($match['timestamp']) ? date('c', (int) $match['timestamp']) : null,
             'customer_id' => $customerId, 'context' => $context,
@@ -761,7 +897,7 @@ class AlertService
                 $payload['templates'][$locale]['strategy_label'] = $label;
                 $payload['templates'][$locale]['status_label'] = $type === 'goal'
                     ? ($locale === 'ka' ? ['won' => 'მოგებულია', 'lost' => 'წაგებულია', 'void' => 'გაუქმებულია', 'goal' => 'გოლი დაფიქსირდა'][$result] : ucfirst($result))
-                    : (($match['result_status'] ?? '') === 'Prematch' ? ($locale === 'ka' ? 'მატჩამდე' : 'PREMATCH') : 'LIVE');
+                    : (($match['result_status'] ?? '') === 'Prematch' ? ($locale === 'ka' ? 'მატჩამდე' : 'PREMATCH') : (($match['result_status'] ?? '') === 'Live' ? 'LIVE' : '—'));
                 $payload['templates'][$locale]['odds_label'] = $locale === 'ka' ? 'Betfair Back კოეფიციენტი' : 'Betfair Back Odds';
                 $payload['templates'][$locale]['half_label'] = $signal['period'] === 1 ? ($locale === 'ka' ? '1-ლი ტაიმი' : '1st Half')
                     : ($signal['period'] === 2 ? ($locale === 'ka' ? 'მე-2 ტაიმი' : '2nd Half') : ($locale === 'ka' ? 'სრული მატჩი' : 'Full Time'));
@@ -795,10 +931,10 @@ class AlertService
         if ($alert === null || $alert->fanned_out_at !== null) {
             return 0;
         }
-        if ($alert->type === 'goal' && (DB::table('alerts')->where('id', $alert->parent_alert_id)->whereNull('fanned_out_at')->exists()
-            || DB::table('alert_deliveries')->where('alert_id', $alert->parent_alert_id)->whereIn('status', ['pending', 'retry', 'sending'])->exists())) {
+        if ($alert->type === 'goal' && DB::table('alerts')->where('id', $alert->parent_alert_id)->whereNull('fanned_out_at')->exists()) {
             return 5;
         }
+        $waitingForParent = $alert->type === 'goal' && DB::table('alert_deliveries')->where('alert_id', $alert->parent_alert_id)->whereIn('status', ['pending', 'retry', 'sending'])->exists();
         $payload = json_decode($alert->payload, true);
         $pinnacle = $alert->type === 'prematch_drops' && ($payload['context']['provider'] ?? null) === 'pinnacle';
         $pinnacleDrop = ($payload['context']['pinnacle_drop'] ?? []) + ['sport' => $payload['context']['sport'] ?? $payload['context']['movement']['sport'] ?? '',
@@ -871,6 +1007,9 @@ class AlertService
                     ProcessAlert::dispatch('deliver', ['delivery_id' => $id])->onQueue($channel === 'platform' ? 'alerts-platform' : (in_array($alert->type, ['ltd', 'goal'], true) ? 'alerts-ltd' : 'alerts-telegram'))->afterCommit();
                 }
             });
+        }
+        if ($waitingForParent) {
+            return 5;
         }
         DB::table('alerts')->where('id', $alertId)->update(['fanned_out_at' => now()]);
 
@@ -1117,7 +1256,7 @@ class AlertService
                             $error = 'Telegram bot is not configured.';
                         } else {
                             $response = Http::connectTimeout(3)->timeout(10)->post('https://api.telegram.org/bot'.$botToken.'/sendMessage', [
-                                'chat_id' => $customer->telegram_chat_id, 'text' => $this->text($payload, $betfairBack), 'protect_content' => true,
+                                'chat_id' => $customer->telegram_chat_id, 'text' => $this->text($payload, $betfairBack, $customer->timezone ?: (string) config('app.timezone', 'UTC')), 'protect_content' => true,
                             ]);
                             if ($response->json('ok') === true) {
                                 $remoteId = (string) $response->json('result.message_id');
@@ -1168,7 +1307,7 @@ class AlertService
     }
 
     /** @param array<string, mixed> $payload */
-    public function text(array $payload, ?float $betfairBack = null): string
+    public function text(array $payload, ?float $betfairBack = null, ?string $timezone = null): string
     {
         $type = $payload['alert_type'];
         if ($type === 'test') {
@@ -1197,7 +1336,7 @@ class AlertService
                 $label = $signal['is_ltd'] ? self::STRATEGY['en'] : 'Source Channel Signal';
 
                 return "🟢 BF MARKETS | ALERT DETECTED\n\n🎯 Filter: {$label}\n{$base}\n📊 Market: {$signal['label']}\n⏱ Status: {$status}"
-                    .($status === 'Prematch' || $payload['minute'] === null ? '' : " | Time: {$time}' min")
+                    .(($payload['context']['unresolved_fixture'] ?? false) && $payload['minute'] === null ? ' | Time: —' : ($status === 'Prematch' || $payload['minute'] === null ? '' : " | Time: {$time}' min"))
                     .($status === 'Prematch' ? '' : " | Score: {$score}")
                     ."\n📈 Betfair Back Odds: ".($quote === null ? '— (currently unavailable)' : number_format($quote, 2))
                     .($signal['is_ltd'] ? "\n📈 1st Half Draw Odds: ".(isset($payload['context']['draw_lay']) ? number_format($payload['context']['draw_lay'], 2) : '—')."\n📊 Action: LAY THE DRAW (LTD)" : '')
@@ -1211,7 +1350,12 @@ class AlertService
             $from = is_numeric($m['from']) ? number_format((float) $m['from'], 2) : '—';
             $to = is_numeric($m['to']) ? number_format((float) $m['to'], 2) : '—';
             $drop = is_numeric($m['from']) && (float) $m['from'] > 0 && is_numeric($m['to']) ? round(((float) $m['from'] - (float) $m['to']) / (float) $m['from'] * 100, 1) : null;
-            $kickoff = isset($payload['kickoff']) ? Carbon::parse($payload['kickoff'])->timezone(getCurrentUserTimezone())->format('d M H:i') : '—';
+            try {
+                $zone = new \DateTimeZone(($timezone ?? getCurrentUserTimezone()) ?: 'UTC');
+            } catch (\Exception) {
+                $zone = new \DateTimeZone('UTC');
+            }
+            $kickoff = isset($payload['kickoff']) ? Carbon::parse($payload['kickoff'])->timezone($zone)->format('d M H:i') : '—';
             $shock = $type === 'market_shock';
             $line = is_numeric($m['point'] ?? null) ? ' '.$m['point'] : '';
             $text = ($shock ? "⚡️ BF MARKETS | MARKET SHOCK DETECTED\n\n🎯 Filter: Market Shock Detector" : "🟡 BF MARKETS | PREMATCH DROP ALERT 📉\n🟡 Filter: Betfair > Pinnacle Drop")

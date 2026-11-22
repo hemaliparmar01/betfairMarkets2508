@@ -81,6 +81,8 @@ async def main():
             psm_option = '-psm'
         print(f'Telegram image OCR ready ({psm_option}).', flush=True)
 
+    image_text_cache = {}
+
     @client.on(events.NewMessage(chats=entity, incoming=True))
     @client.on(events.MessageEdited(chats=entity, incoming=True))
     async def receive(event):
@@ -97,27 +99,41 @@ async def main():
     async def forward(event):
         reply = await asyncio.wait_for(event.get_reply_message(), timeout=15) if event.is_reply else None
         text = event.raw_text or ''
-        if ocr and event.photo and ' vs ' not in text.lower():
+        if ocr and event.photo:
             try:
-                photo = await asyncio.wait_for(event.download_media(file=bytes), timeout=10)
-                if photo:
-                    process = await asyncio.create_subprocess_exec(
-                        ocr, 'stdin', 'stdout', psm_option, '6',
-                        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.DEVNULL,
-                    )
-                    try:
-                        extracted, _ = await asyncio.wait_for(process.communicate(photo), timeout=10)
-                    except asyncio.TimeoutError:
-                        if process.returncode is None:
-                            process.kill()
-                        await process.wait()
-                        raise
-                    if process.returncode == 0:
-                        text = extracted.decode('utf-8', errors='replace') + '\n' + text
-                        print(f'Source post {event.id} image OCR completed ({len(extracted)} bytes).', flush=True)
-                    else:
-                        print(f'Source post {event.id} image OCR failed (exit {process.returncode}).', file=sys.stderr)
+                photo_id = getattr(event.photo, 'id', None)
+                extracted_text = image_text_cache.get(photo_id) if photo_id is not None else None
+                if extracted_text is None:
+                    photo = await asyncio.wait_for(event.download_media(file=bytes), timeout=10)
+                    fragments = []
+                    if photo:
+                        for mode in ('6', '3'):
+                            process = await asyncio.create_subprocess_exec(
+                                ocr, 'stdin', 'stdout', psm_option, mode,
+                                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.DEVNULL,
+                            )
+                            try:
+                                extracted, _ = await asyncio.wait_for(process.communicate(photo), timeout=10)
+                            except asyncio.TimeoutError:
+                                if process.returncode is None:
+                                    process.kill()
+                                await process.wait()
+                                continue
+                            if process.returncode == 0:
+                                fragment = extracted.decode('utf-8', errors='replace').strip()[:3000]
+                                if fragment and fragment not in fragments:
+                                    fragments.append(fragment)
+                            else:
+                                print(f'Source post {event.id} image OCR failed (mode {mode}, exit {process.returncode}).', file=sys.stderr)
+                    extracted_text = '\n'.join(fragments)
+                    if extracted_text and photo_id is not None:
+                        if len(image_text_cache) >= 64:
+                            image_text_cache.pop(next(iter(image_text_cache)))
+                        image_text_cache[photo_id] = extracted_text
+                if extracted_text:
+                    text = extracted_text + '\n' + text
+                    print(f'Source post {event.id} image OCR completed ({len(extracted_text.encode())} bytes, modes 6/3).', flush=True)
             except (OSError, asyncio.TimeoutError):
                 print('Could not read Telegram alert image.', file=sys.stderr)
         if not text.strip():

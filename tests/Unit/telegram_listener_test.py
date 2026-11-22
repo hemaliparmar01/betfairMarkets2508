@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class TelegramListenerTest(unittest.TestCase):
-    def execute_listener(self, script, *, check=False, authorized=True, login=False, phone='', ocr_version=None, reply_failure=False):
+    def execute_listener(self, script, *, check=False, authorized=True, login=False, phone='', ocr_version=None, reply_failure=False, failed_ocr_mode=None):
         handlers = []
         requests = []
         calls = []
@@ -29,7 +29,7 @@ class TelegramListenerTest(unittest.TestCase):
             edit_date = None
             is_reply = True
             raw_text = 'Total. Over (0.5). 1st half'
-            photo = True if ocr_version is not None else None
+            photo = types.SimpleNamespace(id=99) if ocr_version is not None else None
 
             async def download_media(self, **kwargs):
                 return b'test-image'
@@ -96,15 +96,19 @@ class TelegramListenerTest(unittest.TestCase):
             if args[1] not in ('--version', 'stdin'):
                 self.fail('Only --version may be used to probe Tesseract; legacy --help exits non-zero')
             class Process:
-                returncode = 1 if args[1] == '--version' and ocr_version.startswith(b'tesseract 3.') else 0
+                returncode = 1 if (args[1] == '--version' and ocr_version.startswith(b'tesseract 3.')) or (args[1] == 'stdin' and args[4] == failed_ocr_mode) else 0
 
                 async def communicate(self, data=None):
                     if args[1] == '--version':
                         return ocr_version, None
                     expected_option = '-psm' if ocr_version.startswith(b'tesseract 3.') else '--psm'
-                    self_test.assertEqual(args, ('/usr/bin/tesseract', 'stdin', 'stdout', expected_option, '6'))
+                    self_test.assertEqual(args[:4], ('/usr/bin/tesseract', 'stdin', 'stdout', expected_option))
+                    self_test.assertIn(args[4], ('6', '3'))
+                    calls.append(('ocr', args[4]))
                     self_test.assertEqual(data, b'test-image')
-                    return b'Jordan 0:0 Australia\nFootball. Friendlies. National Teams', None
+                    if args[4] == failed_ocr_mode:
+                        return b'', None
+                    return (b'Jordan 0:0 Australia\nFootball. Friendlies. National Teams' if args[4] == '6' else b'Jordan\n0:0\nAustralia'), None
 
             return Process()
 
@@ -148,10 +152,22 @@ class TelegramListenerTest(unittest.TestCase):
         for location in ['server', 'local']:
             for version_text in [b'tesseract 3.04.00\n leptonica-1.72', b'tesseract 4.1.1', b'tesseract 5.5.0']:
                 with self.subTest(location=location, version_text=version_text):
-                    _, _, requests = self.execute_listener(ROOT / location / 'telegram-listener.py', ocr_version=version_text)
+                    calls, _, requests = self.execute_listener(ROOT / location / 'telegram-listener.py', ocr_version=version_text)
+                    self.assertEqual([call for call in calls if isinstance(call, tuple) and call[0] == 'ocr'], [('ocr', '6'), ('ocr', '3')])
+                    self.assertIn('Jordan\n0:0\nAustralia', requests[0]['text'])
                     self.assertEqual(len(requests), 2)
                     self.assertIn('Jordan 0:0 Australia', requests[0]['text'])
                     self.assertIn('Total. Over (0.5). 1st half', requests[0]['text'])
+
+    def test_a_failed_ocr_layout_does_not_discard_the_other_layout(self):
+        for location in ['server', 'local']:
+            for failed_mode, recovered in [('6', 'Jordan\n0:0\nAustralia'), ('3', 'Jordan 0:0 Australia')]:
+                with self.subTest(location=location, failed_mode=failed_mode):
+                    _, _, requests = self.execute_listener(ROOT / location / 'telegram-listener.py',
+                        ocr_version=b'tesseract 3.04.00', failed_ocr_mode=failed_mode)
+                    self.assertEqual(len(requests), 2)
+                    self.assertIn(recovered, requests[0]['text'])
+                    self.assertIn(recovered, requests[1]['text'])
 
     def test_new_and_edited_posts_and_offline_updates_reach_laravel(self):
         calls, handlers, requests = self.execute_listener(ROOT / 'server/telegram-listener.py')

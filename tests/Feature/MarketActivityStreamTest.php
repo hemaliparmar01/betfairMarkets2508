@@ -26,6 +26,51 @@ class MarketActivityStreamTest extends TestCase
         return array_map(static fn (string $sport): array => [$sport], array_keys(MarketActivityStream::SPORTS));
     }
 
+    public static function teamSports(): array
+    {
+        return array_filter(self::sports(), static fn (array $sport): bool => ! in_array($sport[0], ['HorseRacing', 'Greyhounds'], true));
+    }
+
+    #[DataProvider('teamSports')]
+    public function test_real_rolling_quotes_keep_one_and_five_minute_indicators_consistent_across_sports(string $prefix): void
+    {
+        $now = microtime(true);
+        $match = $this->match();
+        foreach ($match['markets']['123_WIN'] as &$runner) {
+            $previous = [];
+            for ($ago = 310; $ago >= 0; $ago -= 10) {
+                $interest = $ago >= 300 ? 20 : ($ago >= 60 ? 40 : 70);
+                $previous = updateOddsMonitoring(array_replace($runner, ['backSize' => 100 - $interest, 'laySize' => $interest]), $previous, $now - $ago);
+            }
+            $runner = $previous;
+        }
+        unset($runner);
+
+        $quotes = app(MarketActivityStream::class)->markets($prefix, 'match-a', $match);
+
+        $this->assertSame('back', $quotes[0]['balance']);
+        $this->assertSame('strong_back', $quotes[0]['momentum']);
+        $this->assertEqualsWithDelta(30.0, $quotes[0]['deltaWindows'][60], 0.001);
+        $this->assertEqualsWithDelta(50.0, $quotes[0]['deltaValue'], 0.001);
+        $this->assertFalse($quotes[0]['stale']);
+    }
+
+    public function test_fixture_tabs_keep_racing_and_market_entry_defaults_to_football(): void
+    {
+        $this->withoutVite();
+        Redis::shouldReceive('get')->andReturn(null);
+
+        $response = $this->get(route('football.home'))->assertOk();
+
+        $document = new \DOMDocument;
+        $document->loadHTML($response->getContent(), LIBXML_NOERROR | LIBXML_NOWARNING);
+        $xpath = new \DOMXPath($document);
+        $this->assertSame(route('horseracing.home'), $xpath->evaluate('string(//*[@id="sportSelector"]/a[@data-sport="horseracing"]/@href)'));
+        $this->assertSame(route('greyhounds.home'), $xpath->evaluate('string(//*[@id="sportSelector"]/a[@data-sport="greyhounds"]/@href)'));
+        $this->assertSame(0, $xpath->query('//*[@id="sportSelector"][@data-market-activity-tabs]')->length);
+        $this->assertGreaterThan(0, $xpath->query('//a[@href="'.route('football.market-activity').'"]')->length);
+    }
+
     #[DataProvider('sports')]
     public function test_committed_exchange_quotes_stream_with_existing_indicators_and_without_history(string $prefix): void
     {
@@ -154,8 +199,17 @@ class MarketActivityStreamTest extends TestCase
         $sport = MarketActivityStream::SPORTS[$prefix];
 
         $url = route($sport.'.market-activity', [], false);
-        $this->get($url)->assertOk()->assertSee('data-market-ui="selected-market-v2"', false)->assertSee('function refreshSelectedMarket()', false)->assertSee('function paintMarketDetail(event)', false);
+        $response = $this->get($url)->assertOk()->assertSee('data-market-ui="selected-market-v2"', false)->assertSee('function refreshSelectedMarket()', false)->assertSee('function paintMarketDetail(event)', false);
+        $document = new \DOMDocument;
+        $document->loadHTML($response->getContent(), LIBXML_NOERROR | LIBXML_NOWARNING);
+        $xpath = new \DOMXPath($document);
+        $tabs = $xpath->query('//*[@id="sportSelector"][@data-market-activity-tabs]/a');
+        $this->assertCount(7, $tabs);
+        foreach (['football', 'tennis', 'basketball', 'cricket', 'icehockey', 'americanfootball', 'baseball'] as $tab) {
+            $this->assertSame(route($tab.'.market-activity'), $xpath->evaluate('string(//*[@id="sportSelector"]/a[@data-sport="'.$tab.'"]/@href)'));
+        }
         $this->getJson($url.'?_market_rows=1')->assertOk()->assertJsonStructure(['html', 'has_more', 'next_page']);
+        $this->getJson($url.'?_market_rows=1&_market_switch=1')->assertOk()->assertSee('data-market-options');
     }
 
     private function match(): array
