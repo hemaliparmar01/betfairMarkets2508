@@ -267,3 +267,44 @@ test('a delayed HTTP response from the previous sport cannot repopulate the new 
     assert.equal(received.length, 0);
     assert.equal(context.marketLoading, false);
 });
+
+test('time-to-start buttons reload the complete server-filtered dataset from page one', async () => {
+    const { readFileSync } = await import('node:fs');
+    const vm = await import('node:vm');
+    const source = readFileSync(new URL('../../resources/views/users/sports/Football/marketActivity.blade.php', import.meta.url), 'utf8');
+    const start = source.indexOf("document.getElementById('timeToStart').addEventListener");
+    const end = source.indexOf('let marketLoading', start);
+    let click;
+    const reloads = [];
+    const buttons = [600, 1200, 1800, 3600, 7200, 10800, 21600, 0].map(seconds => ({
+        dataset: { startSeconds: String(seconds) }, classList: { toggle() {} }, setAttribute() {},
+    }));
+    const context = { activeStartSeconds: 0, marketSportRevision: 0, applyStartFilter() {}, scheduleAvailability() {},
+        reloadMarketActivity(reset) { reloads.push(reset); },
+        document: { getElementById: () => ({ addEventListener(_, callback) { click = callback; } }), querySelectorAll: () => buttons } };
+    vm.createContext(context);
+    vm.runInContext(source.slice(start, end), context);
+    for (const button of buttons) {
+        click({ target: { closest: () => button } });
+        assert.equal(context.activeStartSeconds, Number(button.dataset.startSeconds));
+    }
+    assert.deepEqual(reloads, Array(8).fill(true));
+    assert.equal(context.marketSportRevision, 8);
+});
+
+test('market pagination and refresh URLs retain the selected server-side start window', async () => {
+    const { readFileSync } = await import('node:fs');
+    const vm = await import('node:vm');
+    const source = readFileSync(new URL('../../resources/views/users/sports/Football/marketActivity.blade.php', import.meta.url), 'utf8');
+    const start = source.indexOf('function marketActivityUrl(');
+    const end = source.indexOf('let refreshPending', start);
+    const context = { URL, marketSourceUrl: '/football/market-activity', needsSportMetadata: false,
+        activeFootballFilter: 'all', activeMarketFilter: 'active', activeStartSeconds: 21600, compactMarketActivity: true,
+        window: { location: { origin: 'https://example.test' } } };
+    vm.createContext(context);
+    vm.runInContext(source.slice(start, end), context);
+    const url = context.marketActivityUrl(2, 20);
+    assert.equal(url.searchParams.get('start_seconds'), '21600');
+    assert.equal(url.searchParams.get('page'), '2');
+    assert.equal(url.searchParams.get('type'), 'all');
+});

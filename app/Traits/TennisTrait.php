@@ -6,6 +6,7 @@ use App\Http\Controllers\Users\Tennis\TennisSyncController;
 use App\Models\Favorite;
 use App\Models\PredictionVote;
 use App\Models\TennisMatch;
+use App\Services\MarketActivityTiming;
 use App\Services\MatchBackup;
 use Carbon\Carbon;
 
@@ -47,8 +48,10 @@ trait TennisTrait
         $favoriteKeys = $customerId === null ? [] : array_fill_keys(Favorite::query()->where('sport', 'tennis')->where('customer_id', $customerId)->pluck('event_key')->all(), true);
         $timezone = getCurrentUserTimezone();
         $today = Carbon::now($timezone)->toDateString();
-        $matches = array_filter($visibleMatches, static function (array $match) use ($today, $timezone, $type, $favoriteKeys, $index, $prematchOnly): bool {
-            if ($prematchOnly && (($match['result_status'] ?? '') !== 'Prematch' || (int) ($match['timestamp'] ?? 0) <= time())) {
+        $startWindow = $prematchOnly ? MarketActivityTiming::windowSeconds() : 0;
+        $matches = array_filter($visibleMatches, static function (array $match) use ($today, $timezone, $type, $favoriteKeys, $index, $prematchOnly, $startWindow): bool {
+            if ($prematchOnly && (($match['result_status'] ?? '') !== 'Prematch' || (int) ($match['timestamp'] ?? 0) <= time()
+                || ($startWindow > 0 && (int) $match['timestamp'] > time() + $startWindow))) {
                 return false;
             }
 
@@ -56,7 +59,7 @@ trait TennisTrait
                 return false;
             }
             $status = $match['result_status'] ?? 'Prematch';
-            if ($status === 'Prematch' && Carbon::createFromTimestamp((int) $match['timestamp'], $timezone)->toDateString() !== $today) {
+            if (! $prematchOnly && $status === 'Prematch' && Carbon::createFromTimestamp((int) $match['timestamp'], $timezone)->toDateString() !== $today) {
                 return false;
             }
 
@@ -149,7 +152,7 @@ trait TennisTrait
                 request()->session()->put($sessionKey, $customerVote);
             }
             $groupKey = ($match['tournament_country'] ?? '').'|'.($match['tournament'] ?? 'Tennis').'|'.$match['result_status'];
-            if ($type === 'by_time') {
+            if ($type === 'by_time' || $prematchOnly) {
                 $groupKey .= '|'.$match['timestamp'];
             }
             $groups[$groupKey] ??= ['tournament_name' => $match['tournament'] ?? 'Tennis', 'tournament_logo' => $match['tournament_logo'] ?? null, 'tournament_country' => $match['tournament_country'] ?? null, 'status' => $match['result_status'], 'matches' => []];

@@ -6,6 +6,7 @@ use App\Http\Controllers\Users\Football\FootballSyncController;
 use App\Models\Favorite;
 use App\Models\FootballMatch;
 use App\Models\PredictionVote;
+use App\Services\MarketActivityTiming;
 use App\Services\MatchBackup;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -1230,6 +1231,10 @@ trait FootballTrait
         }
         $getData = array_filter($getData, static fn (array $match): bool => ($match['result_status'] ?? '') === 'Prematch' && (int) ($match['timestamp'] ?? 0) > time());
         $now = time();
+        $startWindow = MarketActivityTiming::windowSeconds();
+        if ($startWindow > 0) {
+            $getData = array_filter($getData, static fn (array $match): bool => (int) $match['timestamp'] <= $now + $startWindow);
+        }
         $type = request()->input('type', 'all');
 
         switch ($type) {
@@ -1390,10 +1395,10 @@ trait FootballTrait
             $minutes = (int) ceil(max(0, (int) ($match['timestamp'] ?? $now) - $now) / 60);
             $statusPriority = $status === 'Live' ? 0 : ($minutes <= 5 ? 1 : ($minutes <= 10 ? 2 : 3));
             $priority = $match['_fixture_priority'] ?? $this->footballLeaguePriority((string) ($match['tournament'] ?? ''), $match['tournament_country'] ?? null);
-            $candidates[$key] = [$priority, $statusPriority, (float) $liquidity, $minutes, $markets];
+            $candidates[$key] = [$priority, $statusPriority, (float) $liquidity, $minutes, $markets, (int) $match['timestamp']];
             $rowCount += count($markets);
         }
-        uasort($candidates, static fn (array $first, array $second): int => ($first[0] <=> $second[0])
+        uasort($candidates, static fn (array $first, array $second): int => ($first[5] <=> $second[5]) ?: ($first[0] <=> $second[0])
             ?: ($first[1] <=> $second[1]) ?: ($second[2] <=> $first[2]));
 
         $page = max(1, (int) request()->input('page', 1));
@@ -1455,9 +1460,7 @@ trait FootballTrait
                 : null;
             $displayTime = $isLive
                 ? (preg_match('/^\d+(?:\+\d*)?$/', (string) $displayMinutes) === 1 ? $displayMinutes."'" : $displayMinutes)
-                : ($minutesUntilStart >= 60
-                    ? 'in '.intdiv($minutesUntilStart, 60).'h'.($minutesUntilStart % 60 > 0 ? ' '.($minutesUntilStart % 60).'m' : '')
-                    : 'in '.$minutesUntilStart.' min');
+                : MarketActivityTiming::until((int) ($data['timestamp'] ?? 0), $now);
 
             foreach ($data['markets'] as $marketKey => $markets) {
                 if (! is_array($markets)) {

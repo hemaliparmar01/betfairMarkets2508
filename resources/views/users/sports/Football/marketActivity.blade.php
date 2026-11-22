@@ -780,6 +780,7 @@
 @else
 @php
     $marketRowsOnly ??= request()->expectsJson();
+    $marketStartWindow = \App\Services\MarketActivityTiming::windowSeconds();
     $raceActivity = in_array($marketActivitySport, ['greyhounds', 'horseracing'], true);
     if ($marketActivitySport !== 'football') {
         $icons = ['cricket' => '🏏', 'icehockey' => '🏒', 'americanfootball' => '🏈', 'baseball' => '⚾', 'basketball' => '🏀', 'tennis' => '🎾', 'greyhounds' => '🐕', 'horseracing' => '🏇'];
@@ -804,7 +805,7 @@
                 'id' => (string) $row['id'], 'sport' => $marketActivitySport, 'sportIcon' => $icons[$marketActivitySport],
                 'comp' => $row['tournament'] ?? '', 'country' => $row['country'] ?? null,
                 'match' => $row['team1'].($raceActivity ? ' · ' : ' vs ').$row['team2'],
-                'status' => strtoupper($row['status']), 'time' => $row['status'] === 'Finished' ? '' : ($row['minutes'] ?? ''), 'score' => $row['score'] ?? '',
+                'status' => strtoupper($row['status']), 'time' => $row['status'] === 'Finished' ? '' : (in_array(strtoupper($row['status']), ['UP', 'PREMATCH', 'UPCOMING'], true) ? \App\Services\MarketActivityTiming::until((int) ($row['timestamp'] ?? 0)) : ($row['minutes'] ?? '')), 'score' => $row['score'] ?? '',
                 'market' => $raceActivity ? 'win_market' : $row['marketType'], 'marketLabel' => $raceActivity ? 'Win Market' : $row['marketName'],
                 'runners' => $runners ?: [['name' => '—', 'back' => 0, 'lay' => 0, 'backSize' => 0, 'laySize' => 0]], 'favIdx' => $favoriteIndex,
                 'totalBackSize' => array_sum(array_column($runners, 'backSize')), 'totalLaySize' => array_sum(array_column($runners, 'laySize')),
@@ -972,7 +973,7 @@
             <div id="timeToStart" class="flex min-w-0 max-[768px]:basis-full flex-1 items-center gap-2 overflow-x-auto whitespace-nowrap py-1" role="group" aria-label="{{ __('Time to Start') }}">
                 <span class="shrink-0 text-xs font-bold text-[rgb(var(--text-muted))] dark:text-[rgb(var(--text-soft))]"><i class="fas fa-clock"></i> {{ __('Time to Start:') }}</span>
                 @foreach ([600 => 'Starts in 10m', 1200 => 'Starts in 20m', 1800 => 'Starts in 30m', 3600 => 'Starts in 1h', 7200 => 'Starts in 2h', 10800 => 'Starts in 3h', 21600 => 'Starts in 6h', 0 => 'All'] as $seconds => $label)
-                    <button type="button" data-start-seconds="{{ $seconds }}" aria-pressed="{{ $seconds === 0 ? 'true' : 'false' }}" class="{{ $seconds === 0 ? 'active' : '' }} shrink-0 cursor-pointer rounded-full border border-[var(--border-control)] bg-[var(--surface-control)] px-3 py-1.5 text-xs font-semibold text-[var(--text-secondary-strong)] dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--surface-soft))] dark:text-[rgb(var(--text-soft))] [&.active]:border-[var(--border-primary)] [&.active]:bg-linear-to-br [&.active]:from-[var(--surface-heading)] [&.active]:to-[var(--surface-primary)] [&.active]:text-white">{{ __($label) }}</button>
+                    <button type="button" data-start-seconds="{{ $seconds }}" aria-pressed="{{ $seconds === $marketStartWindow ? 'true' : 'false' }}" class="{{ $seconds === $marketStartWindow ? 'active' : '' }} shrink-0 cursor-pointer rounded-full border border-[var(--border-control)] bg-[var(--surface-control)] px-3 py-1.5 text-xs font-semibold text-[var(--text-secondary-strong)] dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--surface-soft))] dark:text-[rgb(var(--text-soft))] [&.active]:border-[var(--border-primary)] [&.active]:bg-linear-to-br [&.active]:from-[var(--surface-heading)] [&.active]:to-[var(--surface-primary)] [&.active]:text-white">{{ __($label) }}</button>
                 @endforeach
             </div>
         </div>
@@ -1285,7 +1286,7 @@
                 let activeMarketFilter = marketSelect?.value ?? 'active';
                 let activeFootballFilter = document.querySelector('.filter-pill.active')?.dataset.filter || 'all';
 
-                let activeStartSeconds = 0;
+                let activeStartSeconds = @json($marketStartWindow);
                 let serverClockOffset = Number(eventsBody.querySelector('[data-market-server-time]').textContent) * 1000 - Date.now();
                 const serverNow = () => (Date.now() + serverClockOffset) / 1000;
 
@@ -1333,6 +1334,8 @@
                         item.setAttribute('aria-pressed', String(item === button));
                     });
                     applyStartFilter();
+                    marketSportRevision++;
+                    reloadMarketActivity(true);
                     scheduleAvailability();
                 });
 
@@ -1484,6 +1487,7 @@
                     url.searchParams.set('per_page', perPage);
                     url.searchParams.set('type', activeFootballFilter);
                     url.searchParams.set('market_name', activeMarketFilter);
+                    url.searchParams.set('start_seconds', activeStartSeconds);
                     if (compactMarketActivity) {
                         url.searchParams.set('_market_rows', '1');
                         url.searchParams.delete('_market_versions');
