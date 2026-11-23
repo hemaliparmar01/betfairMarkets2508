@@ -18,6 +18,26 @@ class MarketActivityTiming
         return self::windowSeconds() ?: self::MAX_WINDOW_SECONDS;
     }
 
+    public static function minimumSeconds(): int
+    {
+        return match (self::windowSeconds()) {
+            1200 => 600,
+            1800 => 1200,
+            3600 => 1800,
+            7200 => 3600,
+            10800 => 7200,
+            21600 => 10800,
+            default => 0,
+        };
+    }
+
+    public static function matchesStartWindow(int $timestamp, ?int $now = null): bool
+    {
+        $now ??= time();
+
+        return $timestamp > $now + self::minimumSeconds() && $timestamp <= $now + self::horizonSeconds();
+    }
+
     public static function withinHorizon(int $timestamp, ?int $now = null): bool
     {
         $now ??= time();

@@ -48,10 +48,9 @@ trait TennisTrait
         $favoriteKeys = $customerId === null ? [] : array_fill_keys(Favorite::query()->where('sport', 'tennis')->where('customer_id', $customerId)->pluck('event_key')->all(), true);
         $timezone = getCurrentUserTimezone();
         $today = Carbon::now($timezone)->toDateString();
-        $startWindow = $prematchOnly ? MarketActivityTiming::horizonSeconds() : 0;
-        $matches = array_filter($visibleMatches, static function (array $match) use ($today, $timezone, $type, $favoriteKeys, $index, $prematchOnly, $startWindow): bool {
-            if ($prematchOnly && (($match['result_status'] ?? '') !== 'Prematch' || (int) ($match['timestamp'] ?? 0) <= time()
-                || ($startWindow > 0 && (int) $match['timestamp'] > time() + $startWindow))) {
+        $matches = array_filter($visibleMatches, static function (array $match) use ($today, $timezone, $type, $favoriteKeys, $index, $prematchOnly): bool {
+            if ($prematchOnly && (($match['result_status'] ?? '') !== 'Prematch'
+                || ! MarketActivityTiming::matchesStartWindow((int) ($match['timestamp'] ?? 0)))) {
                 return false;
             }
 

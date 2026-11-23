@@ -1231,10 +1231,7 @@ trait FootballTrait
         }
         $getData = array_filter($getData, static fn (array $match): bool => ($match['result_status'] ?? '') === 'Prematch' && (int) ($match['timestamp'] ?? 0) > time());
         $now = time();
-        $startWindow = MarketActivityTiming::horizonSeconds();
-        if ($startWindow > 0) {
-            $getData = array_filter($getData, static fn (array $match): bool => (int) $match['timestamp'] <= $now + $startWindow);
-        }
+        $getData = array_filter($getData, static fn (array $match): bool => MarketActivityTiming::matchesStartWindow((int) $match['timestamp'], $now));
         $type = request()->input('type', 'all');
 
         switch ($type) {

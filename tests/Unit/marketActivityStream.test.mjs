@@ -327,3 +327,21 @@ test('All stays within 48 hours and rejects started matches during live updates'
     assert.equal(context.matchesStartWindow(row, 1000), false);
     assert.equal(context.matchesStartWindow({ ...row, timestamp: 4600 }, 1000), true);
 });
+
+
+test('live interval filtering excludes earlier windows and has no overlapping boundaries', async () => {
+    const { readFileSync } = await import('node:fs');
+    const vm = await import('node:vm');
+    const source = readFileSync(new URL('../../resources/views/users/sports/Football/marketActivity.blade.php', import.meta.url), 'utf8');
+    const start = source.indexOf('function matchesStartWindow(');
+    const end = source.indexOf('function applyStartFilter(', start);
+    const context = { activeStartSeconds: 0 };
+    vm.createContext(context);
+    vm.runInContext(source.slice(start, end), context);
+    for (const [minimum, maximum] of [[0, 600], [600, 1200], [1200, 1800], [1800, 3600], [3600, 7200], [7200, 10800], [10800, 21600]]) {
+        context.activeStartSeconds = maximum;
+        for (const [remaining, visible] of [[minimum, false], [minimum + 1, true], [maximum, true], [maximum + 1, false]]) {
+            assert.equal(context.matchesStartWindow({ status: 'PREMATCH', timestamp: 1000 + remaining }, 1000), visible);
+        }
+    }
+});

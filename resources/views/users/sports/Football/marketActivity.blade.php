@@ -970,10 +970,10 @@
                     <option value="{{ $marketOption['value'] }}">{{ $marketOption['label'] }}</option>
                 @endforeach
             </select>
-            <div id="timeToStart" class="flex min-w-0 max-[768px]:basis-full flex-1 items-center gap-2 overflow-x-auto whitespace-nowrap py-1" role="group" aria-label="{{ __('Time to Start') }}">
-                <span class="shrink-0 text-xs font-bold text-[rgb(var(--text-muted))] dark:text-[rgb(var(--text-soft))]"><i class="fas fa-clock"></i> {{ __('Time to Start:') }}</span>
-                @foreach ([600 => 'Starts in 10m', 1200 => 'Starts in 20m', 1800 => 'Starts in 30m', 3600 => 'Starts in 1h', 7200 => 'Starts in 2h', 10800 => 'Starts in 3h', 21600 => 'Starts in 6h', 0 => 'All (48h)'] as $seconds => $label)
-                    <button type="button" data-start-seconds="{{ $seconds }}" aria-pressed="{{ $seconds === $marketStartWindow ? 'true' : 'false' }}" class="{{ $seconds === $marketStartWindow ? 'active' : '' }} shrink-0 cursor-pointer rounded-full border border-[var(--border-control)] bg-[var(--surface-control)] px-3 py-1.5 text-xs font-semibold text-[var(--text-secondary-strong)] dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--surface-soft))] dark:text-[rgb(var(--text-soft))] [&.active]:border-[var(--border-primary)] [&.active]:bg-linear-to-br [&.active]:from-[var(--surface-heading)] [&.active]:to-[var(--surface-primary)] [&.active]:text-white">{{ __($label) }}</button>
+            <div id="timeToStart" class="flex min-w-0 max-[768px]:basis-full flex-1 items-center gap-1.5 flex-wrap py-1" role="group" aria-label="{{ __('Time to Start') }}">
+                <span class="shrink-0 text-xs font-bold text-[rgb(var(--text-muted))] dark:text-[rgb(var(--text-soft))]"><i class="fas fa-clock"></i> {{ __('Market Activity starts:') }}</span>
+                @foreach ([600 => '0 – 10m', 1200 => '10m – 20m', 1800 => '20m – 30m', 3600 => '30m – 1h', 7200 => '1h – 2h', 10800 => '2h – 3h', 21600 => '3h – 6h', 0 => 'All (48h)'] as $seconds => $label)
+                    <button type="button" data-start-seconds="{{ $seconds }}" aria-pressed="{{ $seconds === $marketStartWindow ? 'true' : 'false' }}" class="{{ $seconds === $marketStartWindow ? 'active' : '' }} shrink-0 cursor-pointer rounded-full border border-[var(--border-control)] bg-[var(--surface-control)] px-2 py-1.5 text-xs font-semibold text-[var(--text-secondary-strong)] dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--surface-soft))] dark:text-[rgb(var(--text-soft))] [&.active]:border-[var(--border-primary)] [&.active]:bg-linear-to-br [&.active]:from-[var(--surface-heading)] [&.active]:to-[var(--surface-primary)] [&.active]:text-white">{{ __($label) }}</button>
                 @endforeach
             </div>
         </div>
@@ -1001,20 +1001,20 @@
                 </colgroup>
                 <thead>
                     <tr>
-                        <th>{{ __('TIME')}}</th>
-                        <th>{{ __('COMP')}}</th>
-                        <th>{{ __('MATCH')}}</th>
-                        <th>{{ __('MARKET')}}</th>
-                        <th>{{ __('FAV')}}</th>
-                        <th>{{ __('BACK')}}</th>
-                        <th>{{ __('SIZE')}}</th>
-                        <th>{{ __('LAY')}}</th>
-                        <th>{{ __('SIZE')}}</th>
-                        <th title="{{ __('Resting Back interest versus Lay interest') }}">{{ __('BAL')}}</th>
-                        <th title="{{ __('Back interest change over 1 minute, in percentage points') }}">{{ __('MOM')}}</th>
+                        <th>{{ __('Market Activity column: TIME')}}</th>
+                        <th>{{ __('Market Activity column: COMP')}}</th>
+                        <th>{{ __('Market Activity column: MATCH')}}</th>
+                        <th>{{ __('Market Activity column: MARKET')}}</th>
+                        <th>{{ __('Market Activity column: FAV')}}</th>
+                        <th>{{ __('Market Activity column: BACK')}}</th>
+                        <th>{{ __('Market Activity column: SIZE')}}</th>
+                        <th>{{ __('Market Activity column: LAY')}}</th>
+                        <th>{{ __('Market Activity column: SIZE')}}</th>
+                        <th title="{{ __('Resting Back interest versus Lay interest') }}">{{ __('Market Activity column: BAL')}}</th>
+                        <th title="{{ __('Back interest change over 1 minute, in percentage points') }}">{{ __('Market Activity column: MOM')}}</th>
                         <th title="{{ __('Back interest change over 5 minutes, in percentage points') }}">{{ __('Δ')}}</th>
-                        <th>{{ __('VOL')}}</th>
-                        <th>{{ __('ACTION')}}</th>
+                        <th>{{ __('Market Activity column: VOL')}}</th>
+                        <th>{{ __('Market Activity column: ACTION')}}</th>
                     </tr>
                 </thead>
                 <tbody id="eventsBody" class="[&_tr[hidden]]:!hidden">
@@ -1294,8 +1294,9 @@
                     if (event.streamRemoved) return false;
                     if (event.internal_backup || event.hidden || event.status === 'FINISHED') return false;
                     const remaining = Number(event.timestamp) - now;
+                    const minimum = ({ 1200: 600, 1800: 1200, 3600: 1800, 7200: 3600, 10800: 7200, 21600: 10800 })[activeStartSeconds] || 0;
                     return ['UP', 'PREMATCH', 'UPCOMING'].includes(event.status)
-                        && Number.isFinite(remaining) && remaining > 0 && remaining <= Math.min(activeStartSeconds || 172800, 172800);
+                        && Number.isFinite(remaining) && remaining > minimum && remaining <= Math.min(activeStartSeconds || 172800, 172800);
                 }
 
                 function applyStartFilter() {
@@ -1853,7 +1854,10 @@
                         if (!event.stale && event.lastMarketUpdate && event.freshUntil > now) boundaries.push({ at: event.freshUntil, reload: false });
                         if (activeStartSeconds && ['UP', 'PREMATCH', 'UPCOMING'].includes(event.status) && Number(event.timestamp) > now) {
                             const entry = Number(event.timestamp) - activeStartSeconds;
-                            boundaries.push({ at: entry > now ? entry : Number(event.timestamp), reload: false });
+                            const minimum = ({ 1200: 600, 1800: 1200, 3600: 1800, 7200: 3600, 10800: 7200, 21600: 10800 })[activeStartSeconds] || 0;
+                            const exit = Number(event.timestamp) - minimum;
+                            if (entry > now) boundaries.push({ at: entry, reload: false });
+                            if (exit > now) boundaries.push({ at: exit, reload: false });
                         }
                     }
                     const next = boundaries.reduce((first, boundary) => !first || boundary.at < first.at ? boundary : first, null);

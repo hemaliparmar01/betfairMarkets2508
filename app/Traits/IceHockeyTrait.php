@@ -38,10 +38,9 @@ trait IceHockeyTrait
         $timezone = getCurrentUserTimezone();
         $today = Carbon::now($timezone)->toDateString();
         $type = request()->input('type', 'all');
-        $startWindow = $prematchOnly ? MarketActivityTiming::horizonSeconds() : 0;
-        $matches = array_filter($visibleMatches, static function (array $match) use ($today, $timezone, $type, $favoriteKeys, $index, $prematchOnly, $startWindow): bool {
-            if ($prematchOnly && (($match['result_status'] ?? '') !== 'Prematch' || (int) ($match['timestamp'] ?? 0) <= time()
-                || ($startWindow > 0 && (int) $match['timestamp'] > time() + $startWindow))) {
+        $matches = array_filter($visibleMatches, static function (array $match) use ($today, $timezone, $type, $favoriteKeys, $index, $prematchOnly): bool {
+            if ($prematchOnly && (($match['result_status'] ?? '') !== 'Prematch'
+                || ! MarketActivityTiming::matchesStartWindow((int) ($match['timestamp'] ?? 0)))) {
                 return false;
             }
 

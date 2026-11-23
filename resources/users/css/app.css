@@ -246,6 +246,12 @@ body.dark-mode {
 #eventsWrap .events-table td {
     padding: 8px 5px !important;
 }
+#eventsWrap .events-table th {
+    font-size: 10px;
+    letter-spacing: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
 #eventsWrap .compact-name,
 #eventsWrap .market-tag {
     display: inline-block;
@@ -264,7 +270,7 @@ body.dark-mode {
 #eventsWrap .market-details-toggle { display: none; }
 
 @media (min-width: 769px) and (max-width: 1199px) {
-    #eventsWrap .events-table { min-width: 840px !important; }
+    #eventsWrap .events-table { min-width: 0 !important; }
     #eventsWrap .events-table col:nth-child(n+10):nth-child(-n+13) { width: 0 !important; }
     #eventsWrap .events-table th:nth-child(n+10):nth-child(-n+13),
     #eventsWrap .events-table tr[data-id] td:nth-child(n+10):nth-child(-n+13) { display: none; }

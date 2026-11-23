@@ -262,7 +262,7 @@ class MarketActivityStreamTest extends TestCase
         $base = $this->match() + ['sportsApiPro_match_id' => 1, 'team1' => 'Home', 'team2' => 'Away', 'tournament_country' => 'England', 'data_sync_complete' => true];
         $base['tournament'] = $prefix === 'Tennis' ? 'ATP Finals Turin' : 'Premier League';
         $matches = [];
-        foreach (['far' => 90 * 86400, 'soon' => 1200, 'later' => 5 * 3600, 'tomorrow' => 36 * 3600] as $key => $offset) {
+        foreach (['far' => 90 * 86400, 'soon' => 2700, 'later' => 5 * 3600, 'tomorrow' => 36 * 3600] as $key => $offset) {
             $matches[$key] = array_replace($base, ['unique_key' => $key, 'sportsApiPro_match_id' => count($matches) + 1, 'betfair_match_id' => count($matches) + 101, 'timestamp' => $now + $offset]);
         }
         config(['services.football_fixture_index' => false, 'services.'.$sport.'_match_cache' => false]);
@@ -275,9 +275,74 @@ class MarketActivityStreamTest extends TestCase
         $this->assertCount(1, $rows);
         $this->assertSame('soon', $rows[0]['streamMatchKey']);
         $this->app->instance('request', Request::create('/'.$sport.'/market-activity', 'GET', ['start_seconds' => 21600, 'per_page' => 100]));
-        $this->assertSame(['soon', 'later'], array_column($controller->getMarketActivites(), 'streamMatchKey'));
+        $this->assertSame(['later'], array_column($controller->getMarketActivites(), 'streamMatchKey'));
         $this->app->instance('request', Request::create('/'.$sport.'/market-activity', 'GET', ['per_page' => 100]));
         $this->assertSame(['soon', 'later', 'tomorrow'], array_column($controller->getMarketActivites(), 'streamMatchKey'));
+    }
+
+    #[DataProvider('teamSports')]
+    public function test_time_intervals_filter_before_pagination_in_every_sport(string $prefix): void
+    {
+        $sport = MarketActivityStream::SPORTS[$prefix];
+        $base = $this->match() + ['team1' => 'Home', 'team2' => 'Away', 'tournament' => 'Unknown Cup', 'data_sync_complete' => false];
+        $matches = [];
+        foreach ([21600 => 16200, 10800 => 9000, 7200 => 5400, 3600 => 2700, 1800 => 1500, 1200 => 900, 600 => 300] as $window => $remaining) {
+            $key = 'window-'.$window;
+            $matches[$key] = array_replace($base, ['unique_key' => $key, 'betfair_match_id' => $window, 'timestamp' => time() + $remaining]);
+        }
+        config(['services.football_fixture_index' => false, 'services.'.$sport.'_match_cache' => false]);
+        Redis::shouldReceive('get')->andReturnUsing(static fn (string $key): ?string => $key === $prefix.':matches' ? json_encode($matches) : null);
+        $controller = app('App\\Http\\Controllers\\Users\\'.$prefix.'\\'.$prefix.'Controller');
+
+        foreach ([600, 1200, 1800, 3600, 7200, 10800, 21600] as $window) {
+            $this->app->instance('request', Request::create('/'.$sport.'/market-activity', 'GET', ['start_seconds' => $window, 'per_page' => 1]));
+            $this->assertSame(['window-'.$window], array_column($controller->getMarketActivites(), 'streamMatchKey'));
+        }
+    }
+
+    #[TestWith([600, 0, 600])]
+    #[TestWith([1200, 600, 1200])]
+    #[TestWith([1800, 1200, 1800])]
+    #[TestWith([3600, 1800, 3600])]
+    #[TestWith([7200, 3600, 7200])]
+    #[TestWith([10800, 7200, 10800])]
+    #[TestWith([21600, 10800, 21600])]
+    #[TestWith([0, 0, 172800])]
+    public function test_interval_boundaries_do_not_overlap(int $window, int $minimum, int $maximum): void
+    {
+        $this->app->instance('request', Request::create('/football/market-activity', 'GET', ['start_seconds' => $window]));
+
+        $this->assertFalse(MarketActivityTiming::matchesStartWindow($minimum, 0));
+        $this->assertTrue(MarketActivityTiming::matchesStartWindow($minimum + 1, 0));
+        $this->assertTrue(MarketActivityTiming::matchesStartWindow($maximum, 0));
+        $this->assertFalse(MarketActivityTiming::matchesStartWindow($maximum + 1, 0));
+    }
+
+    public function test_georgian_market_controls_use_compact_labels_and_headers(): void
+    {
+        $this->withoutMiddleware(CustomerAuthService::class);
+        $this->withoutVite();
+        app()->setLocale('ka');
+        $customer = CustomerFactory::new()->create(['trial_ends_at' => now()->addDay()]);
+        $this->actingAs($customer, 'customers');
+        config(['cache.stores.redis.driver' => 'array']);
+        Cache::purge('redis');
+        Redis::shouldReceive('get')->andReturn(null);
+        $this->partialMock(FootballController::class, function ($mock): void {
+            $mock->shouldReceive('getMarketActivites')->andReturn([]);
+            $mock->shouldReceive('getAllMarkets')->andReturn(['options' => []]);
+        });
+
+        $response = $this->get(route('football.market-activity', [], false));
+
+        $document = new \DOMDocument;
+        $document->loadHTML($response->getContent(), LIBXML_NOERROR | LIBXML_NOWARNING);
+        $xpath = new \DOMXPath($document);
+        $buttons = $xpath->query('//*[@id="timeToStart"]/button');
+        $this->assertSame(['10 წთ-ში', '20 წთ-ში', '30 წთ-ში', '1 სთ-ში', '2 სთ-ში', '3 სთ-ში', '6 სთ-ში', 'ყველა (48 სთ)'], array_map(static fn ($button): string => trim($button->textContent), iterator_to_array($buttons)));
+        $this->assertSame('იწყება:', trim($xpath->evaluate('string(//*[@id="timeToStart"]/span)')));
+        $this->assertSame('რყევა', trim($xpath->evaluate('string(//*[@id="eventsWrap"]//thead/tr/th[13])')));
+        $this->assertSame('იმპ.', trim($xpath->evaluate('string(//*[@id="eventsWrap"]//thead/tr/th[11])')));
     }
 
     #[DataProvider('teamSports')]
@@ -341,7 +406,7 @@ class MarketActivityStreamTest extends TestCase
         $base = $this->match() + ['sportsApiPro_match_id' => 1, 'team1' => 'Home', 'team2' => 'Away', 'tournament' => 'Unlisted Regional Cup', 'tournament_country' => 'England'];
         $current = [];
         $entries = [];
-        foreach (['far' => 100 * 86400, 'soon' => 1200, 'outside' => 7 * 3600] as $key => $offset) {
+        foreach (['far' => 100 * 86400, 'soon' => 4 * 3600, 'outside' => 7 * 3600] as $key => $offset) {
             $current[$key] = array_replace($base, ['unique_key' => $key, 'timestamp' => time() + $offset]);
             $entries[$key] = array_diff_key($current[$key], ['markets' => true]);
             $entries[$key]['_market_activity'] = prepareMatchOddsMonitoring($current[$key], marketActivitySummary: true);
