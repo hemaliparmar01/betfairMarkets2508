@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Events\MarketActivityUpdated;
 use App\Http\Controllers\Users\Football\FootballController;
+use App\Http\Controllers\Users\Football\FootballSyncController;
 use App\Jobs\ProcessAlert;
 use App\Services\AlertService;
 use App\Services\CustomerAuthService;
@@ -217,6 +218,23 @@ class MarketActivityStreamTest extends TestCase
         $this->getJson($url.'?_market_rows=1&_market_switch=1')->assertOk()->assertSee('data-market-options');
     }
 
+    public function test_market_activity_includes_betfair_competitions_excluded_from_fixtures(): void
+    {
+        $match = $this->match() + ['sportsApiPro_match_id' => 123, 'team1' => 'Home', 'team2' => 'Away',
+            'tournament' => 'Unlisted Regional Cup', 'tournament_country' => 'England', 'data_sync_complete' => true];
+        config(['services.football_fixture_index' => false, 'services.football_match_cache' => false]);
+        Redis::shouldReceive('get')->andReturnUsing(static fn (string $key): ?string => $key === 'Football:matches' ? json_encode(['match-a' => $match]) : null);
+        $controller = app(FootballController::class);
+        $this->app->instance('request', Request::create('/football/market-activity', 'GET'));
+
+        $rows = $controller->getMarketActivites();
+
+        $this->assertSame(['match-a'], array_column($rows, 'streamMatchKey'));
+        $this->assertFalse(FootballSyncController::allowsFootballCompetition($match));
+        $this->app->instance('request', Request::create('/football'));
+        $this->assertSame([], $controller->getFootballMatches());
+    }
+
     public function test_football_market_activity_sorts_kickoff_before_league_priority_and_pagination(): void
     {
         $now = time();
@@ -244,7 +262,7 @@ class MarketActivityStreamTest extends TestCase
         $base = $this->match() + ['sportsApiPro_match_id' => 1, 'team1' => 'Home', 'team2' => 'Away', 'tournament_country' => 'England', 'data_sync_complete' => true];
         $base['tournament'] = $prefix === 'Tennis' ? 'ATP Finals Turin' : 'Premier League';
         $matches = [];
-        foreach (['far' => 90 * 86400, 'soon' => 1200, 'later' => 5 * 3600, 'tomorrow' => 2 * 86400] as $key => $offset) {
+        foreach (['far' => 90 * 86400, 'soon' => 1200, 'later' => 5 * 3600, 'tomorrow' => 36 * 3600] as $key => $offset) {
             $matches[$key] = array_replace($base, ['unique_key' => $key, 'sportsApiPro_match_id' => count($matches) + 1, 'betfair_match_id' => count($matches) + 101, 'timestamp' => $now + $offset]);
         }
         config(['services.football_fixture_index' => false, 'services.'.$sport.'_match_cache' => false]);
@@ -259,7 +277,52 @@ class MarketActivityStreamTest extends TestCase
         $this->app->instance('request', Request::create('/'.$sport.'/market-activity', 'GET', ['start_seconds' => 21600, 'per_page' => 100]));
         $this->assertSame(['soon', 'later'], array_column($controller->getMarketActivites(), 'streamMatchKey'));
         $this->app->instance('request', Request::create('/'.$sport.'/market-activity', 'GET', ['per_page' => 100]));
-        $this->assertSame(['soon', 'later', 'tomorrow', 'far'], array_column($controller->getMarketActivites(), 'streamMatchKey'));
+        $this->assertSame(['soon', 'later', 'tomorrow'], array_column($controller->getMarketActivites(), 'streamMatchKey'));
+    }
+
+    #[DataProvider('teamSports')]
+    public function test_all_betfair_leagues_within_48_hours_are_visible_without_sportsapi_matching(string $prefix): void
+    {
+        $sport = MarketActivityStream::SPORTS[$prefix];
+        $base = $this->match() + ['team1' => 'Home', 'team2' => 'Away', 'tournament_country' => 'England'];
+        $base['tournament'] = 'Unlisted Regional Cup';
+        $base['data_sync_complete'] = false;
+        $matches = [];
+        foreach (['outside' => 49 * 3600, 'tomorrow' => 36 * 3600, 'soon' => 1200, 'started' => -60] as $key => $offset) {
+            $matches[$key] = array_replace($base, ['unique_key' => $key, 'betfair_match_id' => count($matches) + 101, 'timestamp' => time() + $offset]);
+        }
+        if ($prefix === 'Tennis') {
+            $matches['tomorrow']['tournament'] = 'Wimbledon';
+        }
+        config(['services.football_fixture_index' => false, 'services.'.$sport.'_match_cache' => false]);
+        Redis::shouldReceive('get')->andReturnUsing(static fn (string $key): ?string => $key === $prefix.':matches' ? json_encode($matches) : null);
+        $controller = app('App\\Http\\Controllers\\Users\\'.$prefix.'\\'.$prefix.'Controller');
+        $this->app->instance('request', Request::create('/'.$sport.'/market-activity', 'GET', ['per_page' => 100, 'start_seconds' => 9999999]));
+
+        $rows = $controller->getMarketActivites();
+
+        $this->assertSame(['soon', 'tomorrow'], array_column($rows, 'streamMatchKey'));
+        $this->app->instance('request', Request::create('/'.$sport));
+        $this->assertSame([], $controller->{'get'.$prefix.'Matches'}());
+    }
+
+    #[TestWith([0, false])]
+    #[TestWith([1, true])]
+    #[TestWith([172800, true])]
+    #[TestWith([172801, false])]
+    public function test_market_horizon_has_an_inclusive_48_hour_limit(int $timestamp, bool $visible): void
+    {
+        $this->assertSame($visible, MarketActivityTiming::withinHorizon($timestamp, 0));
+    }
+
+    public function test_websocket_quotes_remove_matches_outside_the_48_hour_window(): void
+    {
+        $match = array_replace($this->match(), ['timestamp' => time() + 49 * 3600]);
+
+        $quotes = app(MarketActivityStream::class)->markets('Football', 'match-a', $match);
+
+        $this->assertTrue($quotes[0]['removed']);
+        $this->assertSame([], $quotes[0]['runners']);
     }
 
     #[TestWith([1, 'in 1 min'])]
@@ -275,7 +338,7 @@ class MarketActivityStreamTest extends TestCase
 
     public function test_indexed_market_activity_filters_and_sorts_before_reading_the_selected_fixture(): void
     {
-        $base = $this->match() + ['sportsApiPro_match_id' => 1, 'team1' => 'Home', 'team2' => 'Away', 'tournament' => 'Premier League', 'tournament_country' => 'England'];
+        $base = $this->match() + ['sportsApiPro_match_id' => 1, 'team1' => 'Home', 'team2' => 'Away', 'tournament' => 'Unlisted Regional Cup', 'tournament_country' => 'England'];
         $current = [];
         $entries = [];
         foreach (['far' => 100 * 86400, 'soon' => 1200, 'outside' => 7 * 3600] as $key => $offset) {

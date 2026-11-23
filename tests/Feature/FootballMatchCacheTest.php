@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Redis;
+use PHPUnit\Framework\Attributes\TestWith;
 use Tests\TestCase;
 
 class FootballMatchCacheTest extends TestCase
@@ -56,6 +57,25 @@ class FootballMatchCacheTest extends TestCase
         $this->assertSame(2, $cache->migrate()['matches']);
 
         return $cache;
+    }
+
+    #[TestWith([false])]
+    #[TestWith([true])]
+    public function test_unlisted_betfair_competitions_survive_legacy_and_record_cache_writes(bool $indexed): void
+    {
+        $betfair = array_replace($this->fixture(201), ['betfair_match_id' => '900201', 'tournament' => 'Unlisted Regional Cup']);
+        $sportsOnly = array_replace($this->fixture(202), ['tournament' => 'Unlisted Regional Cup']);
+        config(['services.football_match_cache' => false, 'services.football_fixture_index' => $indexed]);
+
+        storeInRedis('Football:matches', ['match-201' => $betfair, 'match-202' => $sportsOnly], mergeLifecycle: false);
+
+        $this->assertSame(['match-201'], array_keys(getInRedis('Football:matches', readOnly: true)));
+        config(['services.football_match_cache' => true]);
+        $cache = app(FootballMatchCache::class);
+        $this->assertSame(1, $cache->migrate()['matches']);
+        $this->assertSame(['match-201'], array_keys($cache->index()['matches']));
+        $cache->store(['match-201' => $betfair, 'match-202' => $sportsOnly], 10, false);
+        $this->assertSame(['match-201'], array_keys($cache->read()));
     }
 
     public function test_migration_keeps_each_match_and_index_consistent_and_is_repeatable(): void

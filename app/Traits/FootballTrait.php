@@ -1219,7 +1219,7 @@ trait FootballTrait
         if (($index['market_activity'] ?? null) !== 1) {
             $index = null;
         }
-        $getData = array_filter($index['matches'] ?? getInRedis('Football:matches', readOnly: true) ?? [], [FootballSyncController::class, 'allowsFootballCompetition']);
+        $getData = $index['matches'] ?? getInRedis('Football:matches', readOnly: true) ?? [];
         if (request()->filled('match')) {
             $matchId = (string) request()->query('match');
             if (isset($index['ids'][$matchId])) {
@@ -1231,7 +1231,7 @@ trait FootballTrait
         }
         $getData = array_filter($getData, static fn (array $match): bool => ($match['result_status'] ?? '') === 'Prematch' && (int) ($match['timestamp'] ?? 0) > time());
         $now = time();
-        $startWindow = MarketActivityTiming::windowSeconds();
+        $startWindow = MarketActivityTiming::horizonSeconds();
         if ($startWindow > 0) {
             $getData = array_filter($getData, static fn (array $match): bool => (int) $match['timestamp'] <= $now + $startWindow);
         }

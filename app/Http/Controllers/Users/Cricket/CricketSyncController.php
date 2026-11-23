@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Users\Cricket;
 use App\Http\Controllers\Controller;
 use App\Models\CricketMarket;
 use App\Models\CricketMatch;
+use App\Services\MarketActivityTiming;
 use App\Services\MatchBackup;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -226,7 +227,8 @@ class CricketSyncController extends Controller
                 continue;
             }
             $currentTimestamp = Carbon::parse($payload['openTimestamp'])->timestamp;
-            if (! $isLiveApi && Carbon::createFromTimestamp($currentTimestamp, getCurrentUserTimezone())->toDateString() !== Carbon::now(getCurrentUserTimezone())->toDateString()) {
+            if (! $isLiveApi && ! Carbon::createFromTimestamp($currentTimestamp, getCurrentUserTimezone())->isToday()
+                && ! MarketActivityTiming::withinHorizon($currentTimestamp)) {
                 continue;
             }
             $team1 = $payload['team1'];

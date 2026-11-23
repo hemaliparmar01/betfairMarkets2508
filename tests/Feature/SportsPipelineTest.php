@@ -110,6 +110,30 @@ class SportsPipelineTest extends TestCase
         return self::teamSports() + self::racingSports();
     }
 
+    #[TestWith(['Tennis'])]
+    #[TestWith(['Basketball'])]
+    #[TestWith(['Cricket'])]
+    #[TestWith(['IceHockey'])]
+    #[TestWith(['AmericanFootball'])]
+    #[TestWith(['Baseball'])]
+    public function test_betfair_prematch_ingestion_keeps_tomorrow_without_extending_beyond_48_hours(string $sport): void
+    {
+        $sync = $this->sync($sport);
+        $events = [];
+        foreach ([456 => 600, 457 => 36 * 3600, 458 => 49 * 3600] as $id => $offset) {
+            $events[$id] = $this->betfair($sport, ['team1' => 'Home '.$id, 'openTimestamp' => gmdate('c', time() + $offset)]);
+        }
+
+        $matches = (new ReflectionMethod($sync, 'readBetFairData'))->invoke($sync, ['liveMap' => $events], $sport.':matches', false, 10);
+
+        $ids = array_map('intval', array_column($matches, 'betfair_match_id'));
+        sort($ids);
+        $this->assertSame([456, 457], $ids);
+        $cachedIds = array_map('intval', array_column(getInRedis($sport.':matches', readOnly: true), 'betfair_match_id'));
+        sort($cachedIds);
+        $this->assertSame([456, 457], $cachedIds);
+    }
+
     /** @return array<string, mixed> */
     private function betfair(string $sport, array $changes = []): array
     {

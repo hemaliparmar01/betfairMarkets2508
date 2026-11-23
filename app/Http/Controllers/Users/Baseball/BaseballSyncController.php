@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Users\Baseball;
 use App\Http\Controllers\Controller;
 use App\Models\BaseballMarket;
 use App\Models\BaseballMatch;
+use App\Services\MarketActivityTiming;
 use App\Services\MatchBackup;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -227,7 +228,8 @@ class BaseballSyncController extends Controller
                 continue;
             }
             $currentTimestamp = Carbon::parse($payload['openTimestamp'])->timestamp;
-            if (! $isLiveApi && Carbon::createFromTimestamp($currentTimestamp, getCurrentUserTimezone())->toDateString() !== Carbon::now(getCurrentUserTimezone())->toDateString()) {
+            if (! $isLiveApi && ! Carbon::createFromTimestamp($currentTimestamp, getCurrentUserTimezone())->isToday()
+                && ! MarketActivityTiming::withinHorizon($currentTimestamp)) {
                 continue;
             }
             $team1 = trim(preg_replace('/\s*\(.*$/u', '', $payload['team1']));

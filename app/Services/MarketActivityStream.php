@@ -33,7 +33,8 @@ class MarketActivityStream
         $entries = $index['matches'] ?? getInRedis($prefix.':matches', readOnly: true) ?? [];
         $keys = [];
         foreach ($entries as $key => $match) {
-            if (isset($ids[(string) ($match['betfair_match_id'] ?? '')])) {
+            if (isset($ids[(string) ($match['betfair_match_id'] ?? '')])
+                && (int) ($match['timestamp'] ?? 0) <= time() + MarketActivityTiming::MAX_WINDOW_SECONDS) {
                 $keys[] = $key;
             }
         }
@@ -106,7 +107,8 @@ class MarketActivityStream
     public function markets(string $prefix, string $matchKey, array $match): array
     {
         $racing = in_array($prefix, ['HorseRacing', 'Greyhounds'], true);
-        $removed = ($match['result_status'] ?? '') !== 'Prematch' || MatchBackup::isHidden($match, self::SPORTS[$prefix]);
+        $removed = ($match['result_status'] ?? '') !== 'Prematch'
+            || ! MarketActivityTiming::withinHorizon((int) ($match['timestamp'] ?? 0)) || MatchBackup::isHidden($match, self::SPORTS[$prefix]);
         if ($racing && (int) ($match['timestamp'] ?? 0) > time() + 300) {
             return [];
         }

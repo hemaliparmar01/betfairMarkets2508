@@ -16,9 +16,14 @@ class TennisMatchCache extends MatchRecordCache
 
     protected const READY = 'Tennis:matches:individual';
 
+    public static function allowsMarketData(array $match): bool
+    {
+        return ! empty($match['betfair_match_id']) || TennisSyncController::tennisCompetition($match) !== null;
+    }
+
     protected function allowed(array $match): bool
     {
-        return TennisSyncController::tennisCompetition($match) !== null;
+        return self::allowsMarketData($match);
     }
 
     protected function canonicalMatches(array $matches): array

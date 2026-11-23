@@ -2,7 +2,6 @@
 
 use App\Http\Controllers\Users\Football\FootballController;
 use App\Http\Controllers\Users\Football\FootballSyncController;
-use App\Http\Controllers\Users\Tennis\TennisSyncController;
 use App\Services\BasketballMatchCache;
 use App\Services\FootballMatchCache;
 use App\Services\MatchBackup;
@@ -1006,7 +1005,7 @@ if (! function_exists('storeInRedis')) {
             return;
         }
         if ($cacheKey === 'Tennis:matches') {
-            $data = array_filter($data, static fn (array $match): bool => TennisSyncController::tennisCompetition($match) !== null);
+            $data = array_filter($data, [TennisMatchCache::class, 'allowsMarketData']);
             if (app(TennisMatchCache::class)->active()) {
                 app(TennisMatchCache::class)->store($data, $ttlMinutes, $mergeLifecycle, $existingData);
 
@@ -1020,7 +1019,7 @@ if (! function_exists('storeInRedis')) {
             return;
         }
         if ($football) {
-            $data = array_filter($data, [FootballSyncController::class, 'allowsFootballCompetition']);
+            $data = array_filter($data, [FootballMatchCache::class, 'allowsMarketData']);
         }
         $indexed = $football && config('services.football_fixture_index');
         $cachedData = null;
@@ -1057,10 +1056,10 @@ if (! function_exists('storeInRedis')) {
             unset($cachedData);
             $mergedData = array_replace($existingData, $data);
             if ($cacheKey === 'Tennis:matches') {
-                $mergedData = array_filter($mergedData, static fn (array $match): bool => TennisSyncController::tennisCompetition($match) !== null);
+                $mergedData = array_filter($mergedData, [TennisMatchCache::class, 'allowsMarketData']);
             }
             if ($football) {
-                $mergedData = array_filter($mergedData, [FootballSyncController::class, 'allowsFootballCompetition']);
+                $mergedData = array_filter($mergedData, [FootballMatchCache::class, 'allowsMarketData']);
                 $mergedData = app(FootballSyncController::class)->mergeDuplicateMatches($mergedData);
             }
             $sport = MatchBackup::sportForCache($cacheKey);

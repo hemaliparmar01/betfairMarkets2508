@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Users\Tennis;
 use App\Http\Controllers\Controller;
 use App\Models\TennisMarket;
 use App\Models\TennisMatch;
+use App\Services\MarketActivityTiming;
 use App\Services\MatchBackup;
 use App\Services\TennisMatchCache;
 use Carbon\Carbon;
@@ -333,7 +334,8 @@ class TennisSyncController extends Controller
                 continue;
             }
             $currentTimestamp = Carbon::parse($payload['openTimestamp'])->timestamp;
-            if (! $isLiveApi && Carbon::createFromTimestamp($currentTimestamp, getCurrentUserTimezone())->toDateString() !== Carbon::now(getCurrentUserTimezone())->toDateString()) {
+            if (! $isLiveApi && ! Carbon::createFromTimestamp($currentTimestamp, getCurrentUserTimezone())->isToday()
+                && ! MarketActivityTiming::withinHorizon($currentTimestamp)) {
                 continue;
             }
             $team1 = $payload['team1'];
@@ -1101,7 +1103,7 @@ class TennisSyncController extends Controller
 
     private function storeMatchesInDatabase(array $matches): void
     {
-        $matches = array_filter($matches, static fn (array $match): bool => self::tennisCompetition($match) !== null);
+        $matches = array_filter($matches, [TennisMatchCache::class, 'allowsMarketData']);
 
         if ($matches === []) {
             return;

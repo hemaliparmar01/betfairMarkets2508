@@ -42,20 +42,20 @@ trait TennisTrait
 
         $type = request()->input('type', 'all');
         $index = getInRedis('Tennis:matches', fixtureIndex: true);
-        $visibleMatches = array_filter($index['matches'] ?? getVisibleSportsMatches('Tennis:matches'), static fn (array $match): bool => TennisSyncController::tennisCompetition($match) !== null && ! MatchBackup::isHidden($match, 'tennis'));
+        $visibleMatches = array_filter($index['matches'] ?? getVisibleSportsMatches('Tennis:matches'), static fn (array $match): bool => ($prematchOnly || TennisSyncController::tennisCompetition($match) !== null) && ! MatchBackup::isHidden($match, 'tennis'));
 
         $customerId = request()->user('customers')?->getAuthIdentifier();
         $favoriteKeys = $customerId === null ? [] : array_fill_keys(Favorite::query()->where('sport', 'tennis')->where('customer_id', $customerId)->pluck('event_key')->all(), true);
         $timezone = getCurrentUserTimezone();
         $today = Carbon::now($timezone)->toDateString();
-        $startWindow = $prematchOnly ? MarketActivityTiming::windowSeconds() : 0;
+        $startWindow = $prematchOnly ? MarketActivityTiming::horizonSeconds() : 0;
         $matches = array_filter($visibleMatches, static function (array $match) use ($today, $timezone, $type, $favoriteKeys, $index, $prematchOnly, $startWindow): bool {
             if ($prematchOnly && (($match['result_status'] ?? '') !== 'Prematch' || (int) ($match['timestamp'] ?? 0) <= time()
                 || ($startWindow > 0 && (int) $match['timestamp'] > time() + $startWindow))) {
                 return false;
             }
 
-            if (! isset($match['timestamp']) || ! filled($match['sportsApiPro_match_id'] ?? null)) {
+            if (! isset($match['timestamp']) || (! filled($match['sportsApiPro_match_id'] ?? null) && ! ($prematchOnly && filled($match['betfair_match_id'] ?? null)))) {
                 return false;
             }
             $status = $match['result_status'] ?? 'Prematch';
@@ -82,8 +82,8 @@ trait TennisTrait
                 default => true,
             };
         });
-        usort($matches, static function (array $left, array $right) use ($type): int {
-            if ($type === 'by_time') {
+        usort($matches, static function (array $left, array $right) use ($type, $prematchOnly): int {
+            if ($prematchOnly || $type === 'by_time') {
                 return (int) $left['timestamp'] <=> (int) $right['timestamp'];
             }
             $priority = ($left['_fixture_priority'] ?? TennisSyncController::tennisCompetitionPriority($left)) <=> ($right['_fixture_priority'] ?? TennisSyncController::tennisCompetitionPriority($right));

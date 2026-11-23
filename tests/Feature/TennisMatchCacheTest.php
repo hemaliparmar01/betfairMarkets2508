@@ -61,6 +61,23 @@ class TennisMatchCacheTest extends TestCase
         return $cache;
     }
 
+    public function test_unlisted_betfair_tournaments_survive_legacy_and_record_caches(): void
+    {
+        $betfair = array_replace($this->fixture(201), ['betfair_match_id' => '900201', 'tournament' => 'Unknown Local Cup']);
+        $sportsOnly = array_replace($this->fixture(202), ['tournament' => 'Unknown Local Cup']);
+        config(['services.tennis_match_cache' => false]);
+
+        storeInRedis('Tennis:matches', ['match-201' => $betfair, 'match-202' => $sportsOnly], mergeLifecycle: false);
+
+        $this->assertSame(['match-201'], array_keys(getInRedis('Tennis:matches', readOnly: true)));
+        config(['services.tennis_match_cache' => true]);
+        $cache = app(TennisMatchCache::class);
+        $this->assertSame(1, $cache->migrate()['matches']);
+        $cache->store(['match-201' => $betfair, 'match-202' => $sportsOnly], 10, false);
+        $this->assertSame(['match-201'], array_keys($cache->index()['matches']));
+        $this->assertSame(['match-201'], array_keys($cache->read()));
+    }
+
     public function test_tournament_matching_checks_tour_and_blocks_unlisted_competitions(): void
     {
         $this->assertSame(['ATP Masters 1000', 'Paris Masters'], TennisSyncController::tennisCompetition([

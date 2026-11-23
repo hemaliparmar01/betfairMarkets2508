@@ -4,11 +4,25 @@ namespace App\Services;
 
 class MarketActivityTiming
 {
+    public const MAX_WINDOW_SECONDS = 172800;
+
     public static function windowSeconds(): int
     {
         $seconds = request()->integer('start_seconds');
 
         return in_array($seconds, [600, 1200, 1800, 3600, 7200, 10800, 21600], true) ? $seconds : 0;
+    }
+
+    public static function horizonSeconds(): int
+    {
+        return self::windowSeconds() ?: self::MAX_WINDOW_SECONDS;
+    }
+
+    public static function withinHorizon(int $timestamp, ?int $now = null): bool
+    {
+        $now ??= time();
+
+        return $timestamp > $now && $timestamp <= $now + self::MAX_WINDOW_SECONDS;
     }
 
     public static function until(int $timestamp, ?int $now = null): string

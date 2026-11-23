@@ -38,14 +38,15 @@ trait IceHockeyTrait
         $timezone = getCurrentUserTimezone();
         $today = Carbon::now($timezone)->toDateString();
         $type = request()->input('type', 'all');
-        $startWindow = $prematchOnly ? MarketActivityTiming::windowSeconds() : 0;
+        $startWindow = $prematchOnly ? MarketActivityTiming::horizonSeconds() : 0;
         $matches = array_filter($visibleMatches, static function (array $match) use ($today, $timezone, $type, $favoriteKeys, $index, $prematchOnly, $startWindow): bool {
             if ($prematchOnly && (($match['result_status'] ?? '') !== 'Prematch' || (int) ($match['timestamp'] ?? 0) <= time()
                 || ($startWindow > 0 && (int) $match['timestamp'] > time() + $startWindow))) {
                 return false;
             }
 
-            if (($match['data_sync_complete'] ?? false) !== true || ! isset($match['sportsApiPro_match_id'], $match['timestamp'])) {
+            if (! isset($match['timestamp']) || (! ($prematchOnly && filled($match['betfair_match_id'] ?? null))
+                && (($match['data_sync_complete'] ?? false) !== true || ! isset($match['sportsApiPro_match_id'])))) {
                 return false;
             }
             $status = $match['result_status'] ?? 'Prematch';
@@ -73,8 +74,8 @@ trait IceHockeyTrait
                 default => true,
             };
         });
-        usort($matches, static function (array $left, array $right) use ($type): int {
-            if ($type === 'by_time') {
+        usort($matches, static function (array $left, array $right) use ($type, $prematchOnly): int {
+            if ($prematchOnly || $type === 'by_time') {
                 return (int) $left['timestamp'] <=> (int) $right['timestamp'];
             }
             $order = ['Live' => 0, 'Prematch' => 1, 'Finished' => 2];
@@ -96,7 +97,7 @@ trait IceHockeyTrait
             $matchesById = array_intersect_key($visibleMatches, array_fill_keys(array_column($matches, 'unique_key'), true));
         }
         unset($visibleMatches);
-        $matchIds = array_map(static fn (array $match): string => (string) $match['sportsApiPro_match_id'], $matches);
+        $matchIds = array_map(static fn (array $match): string => (string) ($match['sportsApiPro_match_id'] ?? 'betfair:'.($match['betfair_match_id'] ?? '')), $matches);
         $votes = $matchIds === [] ? collect() : PredictionVote::query()->where('sport', 'icehockey')->whereIn('match_id', $matchIds)->where('poll', '1x2')->select('match_id', 'value')->selectRaw('COUNT(*) as total')->groupBy('match_id', 'value')->get()->groupBy('match_id');
         $customerVotes = $customerId === null || $matchIds === [] ? [] : PredictionVote::query()->where('sport', 'icehockey')->where('customer_id', $customerId)->whereIn('match_id', $matchIds)->where('poll', '1x2')->pluck('value', 'match_id')->all();
         $groups = [];
@@ -127,7 +128,7 @@ trait IceHockeyTrait
                 $runner['odds_direction'] = $initial > 0 && $current > 0 ? ($current < $initial ? 'down' : ($current > $initial ? 'up' : 'same')) : 'same';
             }
             unset($runner);
-            $matchId = (string) $match['sportsApiPro_match_id'];
+            $matchId = (string) ($match['sportsApiPro_match_id'] ?? 'betfair:'.($match['betfair_match_id'] ?? ''));
             $predictionCounts = ['1' => 0, '2' => 0, 'X' => 0];
             foreach ($votes->get($matchId, collect()) as $vote) {
                 $predictionCounts[$vote->value] = (int) $vote->total;
@@ -310,7 +311,7 @@ trait IceHockeyTrait
                         continue;
                     }
                     $first = $runners[array_key_first($runners)] ?? [];
-                    $rows[] = ['streamMatchKey' => (string) $match['unique_key'], 'streamMarketKey' => (string) $key, 'timestamp' => $match['timestamp'] ?? null, 'id' => $key, 'match_id' => $match['sportsApiPro_match_id'], 'team1' => $match['team1'], 'team2' => $match['team2'], 'tournament' => $group['tournament_name'], 'status' => $match['status'], 'minutes' => $match['minutes'], 'score' => $match['score'], 'marketName' => $first['name'] ?? $first['marketType'] ?? 'Market', 'marketType' => $first['marketType'] ?? '', 'runners' => array_values($runners), 'favorite' => $favorite, 'indicators' => $raw['market_indicators'][$key] ?? []];
+                    $rows[] = ['streamMatchKey' => (string) $match['unique_key'], 'streamMarketKey' => (string) $key, 'timestamp' => $match['timestamp'] ?? null, 'id' => $key, 'match_id' => $match['sportsApiPro_match_id'] ?? 'betfair:'.($match['betfair_match_id'] ?? ''), 'team1' => $match['team1'], 'team2' => $match['team2'], 'tournament' => $group['tournament_name'], 'status' => $match['status'], 'minutes' => $match['minutes'], 'score' => $match['score'], 'marketName' => $first['name'] ?? $first['marketType'] ?? 'Market', 'marketType' => $first['marketType'] ?? '', 'runners' => array_values($runners), 'favorite' => $favorite, 'indicators' => $raw['market_indicators'][$key] ?? []];
                 }
             }
         }

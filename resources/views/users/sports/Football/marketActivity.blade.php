@@ -972,7 +972,7 @@
             </select>
             <div id="timeToStart" class="flex min-w-0 max-[768px]:basis-full flex-1 items-center gap-2 overflow-x-auto whitespace-nowrap py-1" role="group" aria-label="{{ __('Time to Start') }}">
                 <span class="shrink-0 text-xs font-bold text-[rgb(var(--text-muted))] dark:text-[rgb(var(--text-soft))]"><i class="fas fa-clock"></i> {{ __('Time to Start:') }}</span>
-                @foreach ([600 => 'Starts in 10m', 1200 => 'Starts in 20m', 1800 => 'Starts in 30m', 3600 => 'Starts in 1h', 7200 => 'Starts in 2h', 10800 => 'Starts in 3h', 21600 => 'Starts in 6h', 0 => 'All'] as $seconds => $label)
+                @foreach ([600 => 'Starts in 10m', 1200 => 'Starts in 20m', 1800 => 'Starts in 30m', 3600 => 'Starts in 1h', 7200 => 'Starts in 2h', 10800 => 'Starts in 3h', 21600 => 'Starts in 6h', 0 => 'All (48h)'] as $seconds => $label)
                     <button type="button" data-start-seconds="{{ $seconds }}" aria-pressed="{{ $seconds === $marketStartWindow ? 'true' : 'false' }}" class="{{ $seconds === $marketStartWindow ? 'active' : '' }} shrink-0 cursor-pointer rounded-full border border-[var(--border-control)] bg-[var(--surface-control)] px-3 py-1.5 text-xs font-semibold text-[var(--text-secondary-strong)] dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--surface-soft))] dark:text-[rgb(var(--text-soft))] [&.active]:border-[var(--border-primary)] [&.active]:bg-linear-to-br [&.active]:from-[var(--surface-heading)] [&.active]:to-[var(--surface-primary)] [&.active]:text-white">{{ __($label) }}</button>
                 @endforeach
             </div>
@@ -1292,11 +1292,10 @@
 
                 function matchesStartWindow(event, now) {
                     if (event.streamRemoved) return false;
-                    if (!activeStartSeconds) return true;
                     if (event.internal_backup || event.hidden || event.status === 'FINISHED') return false;
                     const remaining = Number(event.timestamp) - now;
                     return ['UP', 'PREMATCH', 'UPCOMING'].includes(event.status)
-                        && Number.isFinite(remaining) && remaining >= 0 && remaining <= activeStartSeconds;
+                        && Number.isFinite(remaining) && remaining > 0 && remaining <= Math.min(activeStartSeconds || 172800, 172800);
                 }
 
                 function applyStartFilter() {

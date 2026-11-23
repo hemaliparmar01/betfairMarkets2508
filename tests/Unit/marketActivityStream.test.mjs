@@ -308,3 +308,22 @@ test('market pagination and refresh URLs retain the selected server-side start w
     assert.equal(url.searchParams.get('page'), '2');
     assert.equal(url.searchParams.get('type'), 'all');
 });
+
+
+test('All stays within 48 hours and rejects started matches during live updates', async () => {
+    const { readFileSync } = await import('node:fs');
+    const vm = await import('node:vm');
+    const source = readFileSync(new URL('../../resources/views/users/sports/Football/marketActivity.blade.php', import.meta.url), 'utf8');
+    const start = source.indexOf('function matchesStartWindow(');
+    const end = source.indexOf('function applyStartFilter(', start);
+    const context = { activeStartSeconds: 0 };
+    vm.createContext(context);
+    vm.runInContext(source.slice(start, end), context);
+    const row = { status: 'PREMATCH', timestamp: 1000 + 172800 };
+    assert.equal(context.matchesStartWindow(row, 1000), true);
+    assert.equal(context.matchesStartWindow({ ...row, timestamp: row.timestamp + 1 }, 1000), false);
+    assert.equal(context.matchesStartWindow({ ...row, timestamp: 1000 }, 1000), false);
+    context.activeStartSeconds = 3600;
+    assert.equal(context.matchesStartWindow(row, 1000), false);
+    assert.equal(context.matchesStartWindow({ ...row, timestamp: 4600 }, 1000), true);
+});
