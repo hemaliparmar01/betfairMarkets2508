@@ -24,9 +24,12 @@ class SubscriptionController extends Controller
             ->header('Cache-Control', 'private, no-store');
     }
 
-    public function subscriptions(): View
+    public function subscriptions(SubscriptionService $subscriptions): View
     {
-        return view('users.subscription', ['plans' => Subscriptions::query()->where('is_active', true)->orderBy('sort_order')->get()]);
+        return view('users.subscription', [
+            'plans' => Subscriptions::query()->where('is_active', true)->orderBy('sort_order')->get(),
+            'isGeorgian' => $subscriptions->countryCode() === 'GE',
+        ]);
     }
 
     public function getSubscriptions(Request $request, SubscriptionService $subscriptions): View|RedirectResponse
@@ -38,13 +41,14 @@ class SubscriptionController extends Controller
         if ($selectedPlan !== null && $request->user('customers') === null) {
             return redirect()->guest(route('login'));
         }
-        $gateways = $subscriptions->gateways();
+        $countryCode = $subscriptions->countryCode();
+        $gateways = $subscriptions->gateways($countryCode);
         if ($selectedPlan !== null && blank($selectedPlan->paypal_plan_id)) {
             unset($gateways['paypal']);
         }
 
         return view('users.subscriptionDetails', [
-            'plans' => $plans, 'selectedPlan' => $selectedPlan, 'gateways' => $gateways,
+            'plans' => $plans, 'selectedPlan' => $selectedPlan, 'gateways' => $gateways, 'isGeorgian' => $countryCode === 'GE',
         ]);
     }
 }

@@ -9,28 +9,53 @@ use App\Models\Subscriptions;
 use App\Services\Payments\BogPaymentService;
 use App\Services\Payments\FittService;
 use App\Services\Payments\PaypalService;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use RuntimeException;
 
 class SubscriptionService
 {
-    /** @return array<string, array{label: string, recurring: bool}> */
-    public function gateways(): array
+    public function countryCode(?Customer $customer = null): string
     {
-        $result = [];
-        if (filled(config('services.paypal.client_id')) && filled(config('services.paypal.secret')) && filled(config('services.paypal.webhook_id'))) {
-            $result['paypal'] = ['label' => 'PayPal (EUR)', 'recurring' => true];
+        $customer ??= request()->user('customers');
+        $country = strtoupper(trim((string) $customer?->country_code));
+        if (preg_match('/^[A-Z]{2}$/', $country)) {
+            return $country;
         }
-        // Temporary payment testing: restore this credential visibility check after testing.
-        // if (filled(config('services.bog.client_id')) && filled(config('services.bog.secret')) && filled(config('services.bog.public_key'))) {
-        $result['bog'] = ['label' => 'Bank of Georgia (GEL)', 'recurring' => (bool) config('services.bog.recurring_enabled')];
-        // }
-        // if (filled(config('services.flitt.merchant_id')) && filled(config('services.flitt.key'))) {
-        $result['tbc_flitt'] = ['label' => 'TBC / Flitt ('.config('services.flitt.currency').')', 'recurring' => (bool) config('services.flitt.recurring_enabled')];
-        // }
+        $ip = request()->ip();
+        if (! filter_var($ip, FILTER_VALIDATE_IP)) {
+            return '';
+        }
+        try {
+            $response = Http::acceptJson()->connectTimeout(2)->timeout(3)->get('https://api.country.is/'.$ip);
+
+            return $response->successful() ? strtoupper((string) $response->json('country', '')) : '';
+        } catch (ConnectionException) {
+            return '';
+        }
+    }
+
+    /** @return array<string, array{label: string, recurring: bool, currency: string}> */
+    public function gateways(?string $countryCode = null): array
+    {
+        $isGeorgian = ($countryCode ?? $this->countryCode()) === 'GE';
+        $result = [];
+        if (! $isGeorgian && filled(config('services.paypal.client_id')) && filled(config('services.paypal.secret')) && filled(config('services.paypal.webhook_id'))) {
+            $result['paypal'] = ['label' => 'PayPal (EUR)', 'recurring' => true, 'currency' => 'EUR'];
+        }
+        if ($isGeorgian && filled(config('services.bog.client_id')) && filled(config('services.bog.secret')) && filled(config('services.bog.public_key'))) {
+            $result['bog'] = ['label' => 'Bank of Georgia (GEL)', 'recurring' => (bool) config('services.bog.recurring_enabled'), 'currency' => 'GEL'];
+        }
+        if (filled(config('services.flitt.merchant_id')) && filled(config('services.flitt.key'))) {
+            $currency = $isGeorgian ? 'GEL' : 'EUR';
+            $result['tbc_flitt'] = ['label' => 'TBC / Flitt ('.$currency.')', 'recurring' => (bool) config('services.flitt.recurring_enabled'), 'currency' => $currency];
+        }
 
         return $result;
     }
@@ -42,7 +67,7 @@ class SubscriptionService
 
     public function checkout(Customer $customer, Subscriptions $plan, string $gateway, bool $autoRenew, string $key): CustomerSubscriptions
     {
-        $available = $this->gateways();
+        $available = $this->gateways($this->countryCode($customer));
         if (! $plan->is_active || ! isset($available[$gateway]) || ($autoRenew && ! $available[$gateway]['recurring'])) {
             throw ValidationException::withMessages(['gateway' => 'This plan or payment option is unavailable.']);
         }
@@ -53,25 +78,52 @@ class SubscriptionService
             throw ValidationException::withMessages(['gateway' => 'AutoPay consent is required to continue.']);
         }
 
-        return Cache::lock('subscription-customer:'.$customer->id, 120)->block(5, function () use ($customer, $plan, $gateway, $autoRenew, $key): CustomerSubscriptions {
-            $record = DB::transaction(function () use ($customer, $plan, $gateway, $autoRenew, $key): CustomerSubscriptions {
-                Customer::query()->whereKey($customer->id)->lockForUpdate()->firstOrFail();
-                $existing = CustomerSubscriptions::query()->where('checkout_key', $key)->first();
-                if ($existing !== null) {
-                    if ($existing->customer_id !== $customer->id || $existing->subscription_id !== $plan->id || $existing->gateway !== $gateway
-                        || $existing->auto_renew !== $autoRenew) {
-                        throw ValidationException::withMessages(['subscription' => 'This checkout request has already been used.']);
-                    }
-
-                    return $existing;
+        return Cache::lock('subscription-customer:'.$customer->id, 120)->block(5, function () use ($customer, $plan, $gateway, $autoRenew, $key, $available): CustomerSubscriptions {
+            $record = DB::transaction(function () use ($customer, $plan, $gateway, $autoRenew, $key, $available): CustomerSubscriptions {
+                $customer = Customer::query()->whereKey($customer->id)->lockForUpdate()->firstOrFail();
+                if ($customer->hasActiveSubscription() || $customer->subscriptions()->where(function (Builder $query): void {
+                    $query->where('status', 'cancellation_pending')
+                        ->orWhere(function (Builder $query): void {
+                            $query->where('auto_renew', true)->where(function (Builder $query): void {
+                                $query->where('status', 'active')->orWhere(function (Builder $query): void {
+                                    $query->where('status', 'past_due')->whereNotNull('last_payment_at');
+                                });
+                            });
+                        });
+                })->exists()) {
+                    throw ValidationException::withMessages(['subscription' => __('You already have an active subscription. Manage your existing subscription from your profile before starting another payment.')]);
                 }
-                $currency = $gateway === 'bog' ? 'GEL' : ($gateway === 'paypal' ? 'EUR' : config('services.flitt.currency'));
-                if (! in_array($currency, ['EUR', 'GEL'], true)) {
-                    throw ValidationException::withMessages(['gateway' => 'No subscription price is configured for this currency.']);
-                }
+                $currency = $available[$gateway]['currency'];
                 $amount = $currency === 'GEL' ? $plan->price_for_local : $plan->price_for_international;
                 if ((float) $amount <= 0) {
                     throw ValidationException::withMessages(['subscription' => 'This plan has no valid price.']);
+                }
+                $existing = CustomerSubscriptions::query()->where('checkout_key', $key)->first();
+                if ($existing !== null) {
+                    if ($existing->customer_id !== $customer->id || $existing->subscription_id !== $plan->id || $existing->gateway !== $gateway
+                        || (in_array($existing->status, ['pending', 'past_due'], true) && $existing->auto_renew !== $autoRenew)) {
+                        throw ValidationException::withMessages(['subscription' => 'This checkout request has already been used.']);
+                    }
+                    if ($existing->status === 'pending' || ($existing->status === 'past_due' && $existing->last_payment_at === null)) {
+                        if ($existing->currency !== $currency || (int) round((float) $existing->amount * 100) !== (int) round((float) $amount * 100)) {
+                            throw ValidationException::withMessages(['subscription' => __('The price has changed. Please refresh the page and try again.')]);
+                        }
+
+                        return $existing;
+                    }
+                    if (! in_array($existing->status, ['failed', 'cancelled', 'expired'], true)) {
+                        throw ValidationException::withMessages(['subscription' => __('Please refresh the page and try again.')]);
+                    }
+                    $key = (string) Str::uuid();
+                }
+                $pending = $customer->subscriptions()->where(function (Builder $query): void {
+                    $query->where('status', 'pending')->orWhere(function (Builder $query): void {
+                        $query->where('status', 'past_due')->whereNull('last_payment_at');
+                    });
+                })->where('subscription_id', $plan->id)->where('currency', $currency)->where('amount', $amount)
+                    ->where('gateway', $gateway)->where('auto_renew', $autoRenew)->latest('id')->first();
+                if ($pending !== null) {
+                    return $pending;
                 }
 
                 return CustomerSubscriptions::query()->create([

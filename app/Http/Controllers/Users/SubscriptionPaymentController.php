@@ -33,7 +33,7 @@ class SubscriptionPaymentController extends Controller
         } catch (Throwable $exception) {
             report($exception);
 
-            return back()->withErrors(['payment' => __('Checkout could not be confirmed. Your pending attempt is retained; retry safely or contact support.')]);
+            return back()->withErrors(['payment' => __('We could not open the payment page. Please try again.')]);
         }
 
         return redirect()->away($record->checkout_url);

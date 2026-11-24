@@ -73,7 +73,7 @@ class SubscriptionTest extends TestCase
         $xpath = new \DOMXPath($document);
         $forms = $xpath->query('//form[@data-checkout-consent]');
 
-        $this->assertCount(3, $forms);
+        $this->assertCount(2, $forms);
         foreach ($forms as $form) {
             $this->assertCount(1, $xpath->query('.//input[@name="auto_renew" and @required and not(@checked)]', $form));
             $this->assertCount(1, $xpath->query('.//button[@type="submit" and @disabled]', $form));
@@ -775,18 +775,191 @@ class SubscriptionTest extends TestCase
         $this->assertNull($this->customer->fresh()->subscription_ends_at);
     }
 
-    public function test_existing_subscription_and_admin_access_allow_new_checkouts(): void
+    public function test_active_subscription_prevents_checkout_with_another_gateway(): void
     {
-        $this->paypalFake();
         $record = $this->subscription('tbc_flitt');
         $record->update(['status' => 'active', 'active_customer_id' => $this->customer->id]);
-        $this->customer->forceFill(['admin_free_days' => -1, 'country_code' => 'GE'])->save();
+        $this->customer->forceFill(['subscription_starts_at' => now(), 'subscription_ends_at' => now()->addDays(30)])->save();
+
+        $this->actingAs($this->customer, 'customers')->post('/subscriptions/'.$this->plan->id.'/checkout',
+            ['gateway' => 'paypal', 'checkout_key' => (string) Str::uuid(), 'auto_renew' => 1])
+            ->assertSessionHasErrors(['subscription' => 'You already have an active subscription. Manage your existing subscription from your profile before starting another payment.']);
+
+        $this->assertDatabaseCount('customers_subscriptions', 1);
+        $this->assertSame('active', $record->fresh()->status);
+        Http::assertNothingSent();
+    }
+
+    #[TestWith(['GE', ['bog', 'tbc_flitt'], 'GEL', 20.00])]
+    #[TestWith(['US', ['paypal', 'tbc_flitt'], 'EUR', 10.00])]
+    public function test_country_controls_checkout_methods_and_prices(string $country, array $expectedGateways, string $currency, float $amount): void
+    {
+        $this->bogConfiguration();
+        $this->customer->update(['country_code' => $country]);
+        $response = $this->actingAs($this->customer, 'customers')->get('/subscriptions-details?plan='.$this->plan->id)->assertOk();
+        $response->assertViewHas('isGeorgian', $country === 'GE');
+        $response->assertViewHas('gateways', function (array $gateways) use ($expectedGateways, $currency): bool {
+            $this->assertSame($expectedGateways, array_keys($gateways));
+            foreach ($gateways as $gateway) {
+                $this->assertSame($currency, $gateway['currency']);
+            }
+
+            return true;
+        });
+        $response->assertSee(number_format($amount, 2));
+        Http::assertNothingSent();
+    }
+
+    #[TestWith(['GE', true])]
+    #[TestWith(['US', false])]
+    public function test_guest_prices_use_ip_country(string $country, bool $isGeorgian): void
+    {
+        Http::fake(['api.country.is/*' => Http::response(['country' => $country])]);
+        $this->get('/subscriptions')->assertOk()->assertViewHas('isGeorgian', $isGeorgian);
+        $this->get('/subscriptions-details')->assertOk()->assertViewHas('isGeorgian', $isGeorgian)
+            ->assertSee($isGeorgian ? '20.00' : '10.00');
+        Http::assertSent(fn ($request): bool => str_starts_with($request->url(), 'https://api.country.is/'));
+    }
+
+    public function test_guest_prices_fall_back_to_international_when_ip_lookup_fails(): void
+    {
+        Http::fake(['api.country.is/*' => Http::failedConnection()]);
+        $this->get('/subscriptions')->assertOk()->assertViewHas('isGeorgian', false);
+        Http::assertSentCount(1);
+    }
+
+    #[TestWith(['GE', 'paypal'])]
+    #[TestWith(['US', 'bog'])]
+    public function test_country_restrictions_cannot_be_bypassed_by_posting_a_hidden_gateway(string $country, string $gateway): void
+    {
+        $this->bogConfiguration();
+        $this->customer->update(['country_code' => $country]);
+        $this->actingAs($this->customer, 'customers')->post('/subscriptions/'.$this->plan->id.'/checkout',
+            ['gateway' => $gateway, 'checkout_key' => (string) Str::uuid(), 'auto_renew' => 1])->assertSessionHasErrors('gateway');
+        $this->assertDatabaseCount('customers_subscriptions', 0);
+        Http::assertNothingSent();
+    }
+
+    public function test_unconfigured_gateways_are_not_offered(): void
+    {
+        config(['services.bog.client_id' => null, 'services.flitt.key' => null]);
+        $this->assertSame([], app(SubscriptionService::class)->gateways('GE'));
+        Http::assertNothingSent();
+    }
+
+    #[TestWith(['GE', 'GEL', 2000])]
+    #[TestWith(['US', 'EUR', 1000])]
+    public function test_flitt_charges_the_country_price_shown_at_checkout(string $country, string $currency, int $amount): void
+    {
+        $this->customer->update(['country_code' => $country]);
+        $data = base64_encode(json_encode(['order' => ['checkout_url' => 'https://pay.flitt.com/approve', 'response_status' => 'success']]));
+        Http::fake(['test.flitt.example/*' => Http::response(['response' => [
+            'version' => '2.0', 'data' => $data, 'signature' => sha1('test-key|'.$data),
+        ]])]);
+        $this->actingAs($this->customer, 'customers')->post('/subscriptions/'.$this->plan->id.'/checkout',
+            ['gateway' => 'tbc_flitt', 'checkout_key' => (string) Str::uuid(), 'auto_renew' => 1])->assertRedirect('https://pay.flitt.com/approve');
+        $this->assertDatabaseHas('customers_subscriptions', ['customer_id' => $this->customer->id, 'currency' => $currency, 'amount' => $amount / 100]);
+        Http::assertSent(function ($request) use ($currency, $amount): bool {
+            $order = json_decode(base64_decode($request->data()['request']['data']), true)['order'];
+
+            return $order['currency'] === $currency && $order['amount'] === $amount && $order['recurring_data']['amount'] === $amount;
+        });
+    }
+
+    public function test_failed_checkout_can_be_retried_with_the_same_form_without_deleting_records(): void
+    {
+        $record = $this->subscription('tbc_flitt');
+        $record->update(['checkout_url' => 'https://old.example/expired']);
+        app(SubscriptionService::class)->failed($record, 'initial-failure');
+        $data = base64_encode(json_encode(['order' => ['checkout_url' => 'https://pay.flitt.com/approve', 'response_status' => 'success']]));
+        Http::fake(['test.flitt.example/*' => Http::response(['response' => [
+            'version' => '2.0', 'data' => $data, 'signature' => sha1('test-key|'.$data),
+        ]])]);
+        $this->actingAs($this->customer, 'customers')->post('/subscriptions/'.$this->plan->id.'/checkout',
+            ['gateway' => 'tbc_flitt', 'checkout_key' => $record->checkout_key, 'auto_renew' => 1])
+            ->assertSessionHasNoErrors()->assertRedirect('https://pay.flitt.com/approve');
+        $this->assertDatabaseCount('customers_subscriptions', 2);
+        $this->assertSame('failed', $record->fresh()->status);
+        $new = CustomerSubscriptions::query()->latest('id')->first();
+        $this->assertSame('pending', $new->status);
+        $this->assertNotSame($record->checkout_key, $new->checkout_key);
+        $this->assertNull($this->customer->fresh()->subscription_ends_at);
+    }
+
+    #[TestWith(['failed'])]
+    #[TestWith(['cancelled'])]
+    #[TestWith(['expired'])]
+    public function test_unsuccessful_checkout_history_does_not_prevent_a_fresh_payment(string $status): void
+    {
+        $record = $this->subscription();
+        $record->update(['status' => $status, 'auto_renew' => false, 'gateway_subscription_id' => 'I-OLD']);
+        $this->paypalFake();
+        $this->actingAs($this->customer, 'customers')->post('/subscriptions/'.$this->plan->id.'/checkout',
+            ['gateway' => 'paypal', 'checkout_key' => $record->checkout_key, 'auto_renew' => 1])
+            ->assertSessionHasNoErrors()->assertRedirect('https://www.sandbox.paypal.com/approve');
+        $this->assertDatabaseCount('customers_subscriptions', 2);
+        $this->assertSame($status, $record->fresh()->status);
+    }
+
+    public function test_old_pending_checkout_cannot_charge_a_different_country_price(): void
+    {
+        $record = $this->subscription('tbc_flitt');
+        $record->update(['checkout_url' => 'https://old.example/eur-checkout']);
+        $this->customer->update(['country_code' => 'GE']);
+        $this->actingAs($this->customer, 'customers')->post('/subscriptions/'.$this->plan->id.'/checkout',
+            ['gateway' => 'tbc_flitt', 'checkout_key' => $record->checkout_key, 'auto_renew' => 1])
+            ->assertSessionHasErrors(['subscription' => 'The price has changed. Please refresh the page and try again.']);
+        $this->assertDatabaseCount('customers_subscriptions', 1);
+        Http::assertNothingSent();
+    }
+
+    public function test_initial_paypal_failure_can_resume_without_database_cleanup(): void
+    {
+        $record = $this->subscription();
+        $record->update(['checkout_url' => 'https://www.sandbox.paypal.com/approve']);
+        app(SubscriptionService::class)->failed($record, 'initial-failure');
         $this->actingAs($this->customer, 'customers')->post('/subscriptions/'.$this->plan->id.'/checkout',
             ['gateway' => 'paypal', 'checkout_key' => (string) Str::uuid(), 'auto_renew' => 1])
             ->assertSessionHasNoErrors()->assertRedirect('https://www.sandbox.paypal.com/approve');
-        $this->assertDatabaseCount('customers_subscriptions', 2);
-        $this->assertSame('active', $record->fresh()->status);
-        $this->assertNull(CustomerSubscriptions::query()->latest('id')->first()->active_customer_id);
+        $this->assertDatabaseCount('customers_subscriptions', 1);
+        $this->assertSame('past_due', $record->fresh()->status);
+        Http::assertNothingSent();
+    }
+
+    public function test_refreshing_checkout_resumes_the_pending_payment_instead_of_creating_another(): void
+    {
+        $this->paypalFake();
+        $this->actingAs($this->customer, 'customers');
+        for ($attempt = 0; $attempt < 2; $attempt++) {
+            $this->post('/subscriptions/'.$this->plan->id.'/checkout',
+                ['gateway' => 'paypal', 'checkout_key' => (string) Str::uuid(), 'auto_renew' => 1])
+                ->assertSessionHasNoErrors()->assertRedirect('https://www.sandbox.paypal.com/approve');
+        }
+        $this->assertDatabaseCount('customers_subscriptions', 1);
+        $creates = collect(Http::recorded())->filter(fn ($pair): bool => str_ends_with($pair[0]->url(), '/v1/billing/subscriptions'));
+        $this->assertCount(1, $creates);
+    }
+
+    public function test_provider_error_shows_retry_message_and_can_be_retried_after_refresh(): void
+    {
+        Http::fake([
+            'api-m.sandbox.paypal.com/v1/oauth2/token' => Http::response(['access_token' => 'test-token']),
+            'api-m.sandbox.paypal.com/v1/billing/plans/*' => Http::response(['status' => 'ACTIVE', 'billing_cycles' => [[
+                'tenure_type' => 'REGULAR', 'frequency' => ['interval_unit' => 'DAY', 'interval_count' => 30],
+                'pricing_scheme' => ['fixed_price' => ['value' => '10.00', 'currency_code' => 'EUR']],
+            ]]]),
+            'api-m.sandbox.paypal.com/v1/billing/subscriptions' => Http::sequence()->push([], 503)
+                ->push(['id' => 'I-TEST', 'links' => [['rel' => 'approve', 'href' => 'https://www.sandbox.paypal.com/approve']]]),
+        ]);
+        $this->actingAs($this->customer, 'customers')->post('/subscriptions/'.$this->plan->id.'/checkout',
+            ['gateway' => 'paypal', 'checkout_key' => (string) Str::uuid(), 'auto_renew' => 1])
+            ->assertSessionHasErrors(['payment' => 'We could not open the payment page. Please try again.']);
+        $key = CustomerSubscriptions::query()->sole()->checkout_key;
+        $this->post('/subscriptions/'.$this->plan->id.'/checkout',
+            ['gateway' => 'paypal', 'checkout_key' => (string) Str::uuid(), 'auto_renew' => 1])
+            ->assertSessionHasNoErrors()->assertRedirect('https://www.sandbox.paypal.com/approve');
+        $this->assertDatabaseCount('customers_subscriptions', 1);
+        Http::assertSent(fn ($request): bool => str_ends_with($request->url(), '/v1/billing/subscriptions') && $request->header('PayPal-Request-Id') === [$key]);
     }
 
     public function test_initial_failed_checkout_releases_customer_slot_without_granting_access(): void
