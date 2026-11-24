@@ -226,10 +226,19 @@ if (notificationPage && notificationState) {
                 telegramWindow = window.open('about:blank', '_blank');
                 if (telegramWindow) telegramWindow.opener = null;
                 const data = await notificationRequest(notificationPage.dataset.connectUrl, 'POST');
-                const destination = data.web_url || data.url;
+                const destination = data.url || data.web_url;
                 if (telegramWindow) telegramWindow.location.replace(destination);
                 else window.location.assign(destination);
                 notificationFeedback.textContent = (globalThis.bfTranslations?.["Open @BFMarketsAlertsBot and press Start to finish connecting."] ?? "Open @BFMarketsAlertsBot and press Start to finish connecting.");
+                if (data.web_url) {
+                    const webFallback = document.createElement('a');
+                    webFallback.href = data.web_url;
+                    webFallback.target = '_blank';
+                    webFallback.rel = 'noopener noreferrer';
+                    webFallback.className = 'font-semibold underline';
+                    webFallback.textContent = (globalThis.bfTranslations?.["Use Telegram Web"] ?? "Use Telegram Web");
+                    notificationFeedback.append(' ', webFallback);
+                }
                 if (!latestNotificationState.connected && telegramAction === 'connect') {
                     connectionExpiresAt = Date.now() + data.expires_in * 1000;
                     updateNotificationStatus(latestNotificationState);

@@ -110,3 +110,34 @@ for (const dataset of [{popupsUrl: undefined}, {since: undefined}, {since: 'unde
         assert.match(app.requests[0], /notifications\/popups\?after=0&since=1000/);
     });
 }
+
+for (const popupAllowed of [true, false]) {
+    test(`Telegram connect prefers the tokenized app link and offers explicit web fallback (popup ${popupAllowed})`, async () => {
+        const start = source.indexOf("if (button.id === 'btnConnectTelegram' && !latestNotificationState.connected) {");
+        const end = source.indexOf("} else if (button.id === 'btnConnectTelegram')", start);
+        const body = source.slice(source.indexOf('{', start) + 1, end);
+        const data = { url: 'https://t.me/BFMarketsAlertsBot?start=fresh-token',
+            web_url: 'https://web.telegram.org/k/#?tgaddr=tokenized-web-link', expires_in: 300 };
+        const opened = [], requests = [], links = [];
+        const telegramWindow = { opener: {}, location: { replace(url) { opened.push(url); } } };
+        const context = vm.createContext({
+            Date: { now: () => 1000 }, telegramAction: null, connectionExpiresAt: null, telegramWindow: null,
+            latestNotificationState: { connected: false }, updateNotificationStatus() {},
+            notificationPage: { dataset: { connectUrl: '/notifications/telegram/connect' } },
+            notificationFeedback: { textContent: '', append(space, link) { links.push(link); } },
+            document: { createElement(name) { assert.equal(name, 'a'); return {}; } },
+            window: { open() { return popupAllowed ? telegramWindow : null; }, location: { assign(url) { opened.push(url); } } },
+            async notificationRequest(url, method) { requests.push([url, method]); return data; },
+        });
+
+        await vm.runInContext(`(async () => { ${body} })()`, context);
+
+        assert.deepEqual(opened, [data.url]);
+        assert.deepEqual(requests, [['/notifications/telegram/connect', 'POST']]);
+        assert.equal(links[0].href, data.web_url);
+        assert.equal(links[0].rel, 'noopener noreferrer');
+        assert.equal(links[0].textContent, 'Use Telegram Web');
+        assert.equal(context.connectionExpiresAt, 301000);
+        if (popupAllowed) assert.equal(telegramWindow.opener, null);
+    });
+}
