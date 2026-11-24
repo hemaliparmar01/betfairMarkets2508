@@ -309,7 +309,7 @@ if (alertContainer) {
                 mute.disabled = false;
             }
         });
-        let remaining = 8000;
+        let remaining = 25000;
         let started = performance.now();
         let dismiss = setTimeout(() => popup.remove(), remaining);
         popup.querySelector('[data-close]').addEventListener('click', () => { clearTimeout(dismiss); popup.remove(); });
