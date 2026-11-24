@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 import plistlib
 import runpy
+import shlex
+import shutil
 import subprocess
 import tempfile
 import time
@@ -483,6 +485,125 @@ class ServiceManagerTest(unittest.TestCase):
             self.manager.execute('install', 'betfair')
             definition.assert_not_called()
             run.assert_not_called()
+
+
+class ProductionServiceManagerTest(unittest.TestCase):
+    def setUp(self):
+        self.php_cli = shutil.which('php')
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name).resolve()
+        self.project = SOURCE.parent.parent
+        self.production = self.project / 'main'
+        self.environment = patch.dict(os.environ, {
+            'SERVICES_ENV': 'production',
+            'SERVICES_ROOT': '/www/wwwroot/bfmarketsanalytics.com',
+            'SERVICES_CONFIG': str(self.production / 'services-manager.json'),
+            'SERVICES_PHP': '/www/server/php/83/bin/php',
+            'SERVICES_USER': 'www',
+        }, clear=True)
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
+        self.addCleanup(self.temporary.cleanup)
+        with patch.object(server_module.platform, 'system', return_value='Linux'), patch.object(Path, 'is_file', return_value=True):
+            self.manager = server_module.Manager()
+        self.manager.state = self.root / 'state'
+        self.manager.logs = self.manager.state / 'logs'
+
+    def test_production_keeps_all_staging_commands_and_uses_separate_units(self):
+        staging = json.loads((self.project / 'server/services-manager.json').read_text())
+        self.assertEqual(set(staging['services']), set(self.manager.instances))
+        self.assertEqual(26, len(self.manager.instances))
+        self.assertEqual(26, len({spec['unit'] for spec in self.manager.instances.values()}))
+        for name, spec in self.manager.instances.items():
+            with self.subTest(service=name):
+                original = staging['services'][name]
+                self.assertEqual(original['command'], spec['command'])
+                self.assertEqual(original['enabled'], spec['enabled'])
+                self.assertEqual(original.get('workers', 1), spec.get('workers', 1))
+                self.assertTrue(spec['unit'].startswith('bfmarkets-production-'))
+                self.assertNotEqual(original.get('unit', 'bfmarkets-' + name + '.service'), spec['unit'])
+        self.assertEqual(staging['restart_delay'], self.manager.config['restart_delay'])
+        self.assertEqual(staging['stop_timeout'], self.manager.config['stop_timeout'])
+
+    def test_generated_units_use_native_php_user_and_production_directory(self):
+        for name, spec in self.manager.instances.items():
+            with self.subTest(service=name):
+                definition = self.manager.definition(name, spec).decode()
+                execution = next(line.partition('=')[2] for line in definition.splitlines() if line.startswith('ExecStart='))
+                self.assertEqual(['/www/server/php/83/bin/php', '/www/wwwroot/bfmarketsanalytics.com/artisan'] + spec['command'], shlex.split(execution))
+                self.assertIn('User=www\n', definition)
+                self.assertIn('WorkingDirectory="/www/wwwroot/bfmarketsanalytics.com"', definition)
+                self.assertIn('KillMode=control-group', definition)
+                self.assertIn('StandardOutput=journal\nStandardError=journal', definition)
+                self.assertNotRegex(definition, r'docker|staging777|staging999|/Users/')
+        environment = (self.production / 'php-cli.conf').read_text()
+        self.assertIn('Environment="PHPRC=/etc/php/8.3/cli-custom/php.ini"', environment)
+        self.assertIn('PATH=/www/server/php/83/bin:', environment)
+
+    def test_prepare_generates_only_local_review_files_without_running_commands(self):
+        with patch.object(server_module, 'run') as commands:
+            self.manager.execute('prepare', 'betfair')
+
+        commands.assert_not_called()
+        prepared = list(self.manager.state.glob('*.service'))
+        self.assertEqual(['bfmarkets-production-betfair.service'], [path.name for path in prepared])
+        self.assertEqual(self.manager.definition('betfair', self.manager.instances['betfair']), prepared[0].read_bytes())
+
+    def test_repeat_install_does_not_start_enable_or_duplicate_services(self):
+        destination = self.root / 'units'
+        with patch.object(self.manager, 'destination', side_effect=lambda spec: destination / spec['unit']), \
+                patch.object(self.manager, 'inspect', return_value=(False, 'inactive/dead')), \
+                patch.object(server_module, 'run') as commands:
+            self.manager.execute('install')
+        installed = {path.name: path.read_bytes() for path in destination.iterdir()}
+        self.assertEqual(26, len(installed))
+        self.assertEqual([['systemctl', 'daemon-reload']] * 26, [call.args[0] for call in commands.call_args_list])
+
+        with patch.object(self.manager, 'destination', side_effect=lambda spec: destination / spec['unit']), \
+                patch.object(self.manager, 'inspect', return_value=(True, 'inactive/dead')), \
+                patch.object(self.manager, 'verify_existing'), patch.object(server_module, 'run') as commands:
+            self.manager.execute('install')
+
+        commands.assert_not_called()
+        self.assertEqual(installed, {path.name: path.read_bytes() for path in destination.iterdir()})
+
+    def test_existing_provider_process_blocks_a_duplicate_connection(self):
+        process = subprocess.CompletedProcess([], 0, '123 php /srv/other-app/artisan betfair:listen\n', '')
+        with patch.object(server_module, 'run', return_value=process):
+            with self.assertRaisesRegex(ValueError, 'Unmanaged matching Artisan process'):
+                self.manager.reject_unmanaged(self.manager.instances['betfair'])
+
+    def test_entry_point_ignores_staging_environment_and_resolves_from_another_directory(self):
+        interpreter = self.root / 'capture-python'
+        interpreter.write_text('#!/bin/sh\nprintf "%s\\n" "$SERVICES_ENV" "$SERVICES_ROOT" "$SERVICES_CONFIG" "$SERVICES_PREFIX" "$SERVICES_PHP" "$SERVICES_USER" "$PHPRC" "${SERVICES_CONTAINER-unset}" "${SERVICES_CONTAINER_ROOT-unset}" "$@"\n')
+        interpreter.chmod(0o755)
+        uname = self.root / 'uname'
+        uname.write_text('#!/bin/sh\nprintf "Linux\\n"\n')
+        uname.chmod(0o755)
+        environment = {
+            'PATH': str(self.root) + ':/usr/bin:/bin', 'SERVICES_PYTHON': str(interpreter),
+            'SERVICES_ENV': 'local', 'SERVICES_ROOT': '/srv/other-app', 'SERVICES_CONFIG': '/tmp/staging.json',
+            'SERVICES_PREFIX': 'bfmarkets', 'SERVICES_CONTAINER': 'aapanel', 'SERVICES_CONTAINER_ROOT': '/srv/other-app',
+        }
+
+        result = subprocess.run(['sh', str(self.production / 'services.sh'), 'status', 'betfair'], cwd=self.root, env=environment, capture_output=True, text=True, check=True)
+
+        self.assertEqual([
+            'production', '/www/wwwroot/bfmarketsanalytics.com', str(self.production / 'services-manager.json'),
+            'bfmarkets-production', '/www/server/php/83/bin/php', 'www', '/etc/php/8.3/cli-custom/php.ini',
+            'unset', 'unset', str(self.production / '../server/services-manager.py'), 'status', 'betfair',
+        ], result.stdout.splitlines())
+
+    def test_phprc_file_is_used_by_native_cli_and_inherited_by_children(self):
+        php = self.php_cli
+        if not php:
+            self.skipTest('Requires the project PHP CLI.')
+        ini = self.root / 'php.ini'
+        ini.write_text('memory_limit=137M\n')
+
+        result = subprocess.run([php, '-r', 'echo php_ini_loaded_file(), "\\n", ini_get("memory_limit"), "\\n"; passthru(escapeshellarg(PHP_BINARY)." -r ".escapeshellarg("echo ini_get(\\\"memory_limit\\\");"));'], env=dict(os.environ, PHPRC=str(ini)), capture_output=True, text=True, check=True)
+
+        self.assertEqual([str(ini), '137M', '137M'], result.stdout.splitlines())
 
 
 if __name__ == '__main__':
