@@ -564,10 +564,7 @@
                                                 <span class="checkout-badge">{{ $plan->badge }}</span>
                                             @endif
                                         </div>
-
-                                        {{-- Temporary payment testing: restore the country condition after testing. --}}
-                                    {{-- @if ((auth('customers')->user()?->country_code === 'GE' ? 'Georgia' : get_current_country()) == 'Georgia') --}}
-                                    @if (true)
+                                        @if ($isGeorgian)
                                             <div class="space-y-4">
                                                 <div class="checkout-price">
                                                     {{ number_format((float) $plan->price_for_local, 2) }}
@@ -636,9 +633,7 @@
                                         {{ $formatDuration((int) $selectedPlan->duration_days) }}
                                     </p>
                                     <div class="mt-4 flex items-end gap-2">
-                                        {{-- Temporary payment testing: restore the country condition after testing. --}}
-                                    {{-- @if ((auth('customers')->user()?->country_code === 'GE' ? 'Georgia' : get_current_country()) == 'Georgia') --}}
-                                    @if (true)
+                                    @if ($isGeorgian)
                                             <span class="text-3xl font-bold theme-text-main">
                                                 {{ number_format((float) $selectedPlan->price_for_local, 2) }}
                                             </span>
@@ -678,9 +673,7 @@
                                 </div>
                                 <div class="checkout-summary-line">
                                     <span>{{ __('Amount') }}</span>
-                                    {{-- Temporary payment testing: restore the country condition after testing. --}}
-                                    {{-- @if ((auth('customers')->user()?->country_code === 'GE' ? 'Georgia' : get_current_country()) == 'Georgia') --}}
-                                    @if (true)
+                                    @if ($isGeorgian)
                                         <strong>
                                             {{ number_format((float) $selectedPlan->price_for_local, 2) }}
                                             {{ __('GEL') }}
@@ -743,7 +736,7 @@
                                         {{ __('Complete your payment') }}
                                     </h2>
                                     <p class="mt-3 text-sm leading-6 theme-text-muted">
-                                        {{ __('PayPal is the main payment method for all users worldwide. Bank of Georgia is shown for Georgian cards, and TBC is available in the local card checkout section.') }}
+                                        {{ __('Users in Georgia can pay with Bank of Georgia or TBC. Users in other countries can pay with PayPal or TBC.') }}
                                     </p>
                                 </div>
 
@@ -765,7 +758,7 @@
                                                 <input type="hidden" name="gateway" value="{{ $gateway }}">
                                                 <input type="hidden" name="checkout_key" value="{{ (string) \Illuminate\Support\Str::uuid() }}">
                                                 <h3 class="text-xl font-bold theme-text-main">{{ $options['label'] }}</h3>
-                                                <p class="theme-text-main">{{ $gateway === 'bog' || ($gateway === 'tbc_flitt' && config('services.flitt.currency') === 'GEL') ? $selectedPlan->price_for_local.' GEL' : $selectedPlan->price_for_international.' EUR' }} · {{ $selectedPlan->duration_days }} {{ __('days') }}</p>
+                                                <p class="theme-text-main">{{ $options['currency'] === 'GEL' ? $selectedPlan->price_for_local.' GEL' : $selectedPlan->price_for_international.' EUR' }} · {{ $selectedPlan->duration_days }} {{ __('days') }}</p>
                                                 @if ($options['recurring'])
                                                     <label class="checkout-consent-label"><input class="checkout-consent-checkbox" type="checkbox" name="auto_renew" value="1" required><span>{{ __('Enable AutoPay. I authorize recurring payments at this price and period until I cancel from my profile or the provider billing schedule ends.') }}</span></label>
                                                 @else
