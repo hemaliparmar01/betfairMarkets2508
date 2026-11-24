@@ -33,7 +33,10 @@ class ListenTelegram extends Command
 
                 return self::FAILURE;
             }
-            $listener = base_path(PHP_OS_FAMILY === 'Linux' ? 'server/telegram-listener.py' : 'local/telegram-listener.py');
+            // $listener = base_path(PHP_OS_FAMILY === 'Linux' ? 'server/telegram-listener.py' : 'local/telegram-listener.py');
+            $listener = base_path(match (config('app.env')) {
+                'production' => 'main/telegram-listener.py','staging' => 'server/telegram-listener.py',default => 'local/telegram-listener.py',
+            });
             $process = new Process(array_filter([config('services.telegram.python'), $listener, $this->option('login') ? '--login' : null, $this->option('check') ? '--check' : null]), base_path(), [
                 'TELEGRAM_API_ID' => (string) config('services.telegram.api_id'), 'TELEGRAM_API_HASH' => config('services.telegram.api_hash'),
                 'TELEGRAM_PHONE' => config('services.telegram.phone'),

@@ -1495,9 +1495,33 @@ class AlertSystemTest extends TestCase
         Http::assertNothingSent();
     }
 
-    #[TestWith([true])]
-    #[TestWith([false])]
-    public function test_pinnacle_reads_only_the_matched_fixture_from_the_compact_index_without_a_full_snapshot(bool $hasSportsApiIndex): void
+    public function test_pinnacle_retains_the_drop_when_an_incomplete_cache_entry_has_no_database_fixture(): void
+    {
+        config(['services.sportsmeld.key' => '']);
+        $this->actingAs($this->customer(), 'customers');
+        $key = 'incomplete-fixture';
+        $entry = ['unique_key' => $key, 'timestamp' => time() + 3600, 'result_status' => 'Prematch', 'betfair_match_id' => '900'];
+        $index = ['ids' => [], 'matches' => [$key => $entry]];
+        $cache = \Mockery::mock(FootballMatchCache::class);
+        $cache->shouldReceive('active')->andReturnTrue();
+        $cache->shouldReceive('index')->once()->andReturn($index);
+        $cache->shouldReceive('read')->never();
+        $this->app->instance(FootballMatchCache::class, $cache);
+        $drop = ['id' => 100, 'alert_key' => hash('sha256', 'incomplete-fixture-drop'), 'sport' => 'soccer', 'home' => 'Torino', 'away' => 'Monza 1912',
+            'sect' => 'Moneyline', 'outcome' => 'Home', 'period' => 0, 'from_price' => 2.5, 'to_price' => 2.3, 'starts' => $entry['timestamp'], 'alerted' => time()];
+        Redis::shouldReceive('get')->byDefault()->andReturnUsing(static fn (string $key): ?string => $key === 'Pinnacle:drops' ? json_encode(['alerts' => [$drop]]) : null);
+        Redis::shouldReceive('get')->with('Football:matches')->never();
+
+        $this->getJson(route('football.pinnacle-odds'))->assertOk()->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.home', 'Torino')->assertJsonPath('data.0.bf_back', null);
+        Http::assertNothingSent();
+    }
+
+    #[TestWith([true, false])]
+    #[TestWith([false, false])]
+    #[TestWith([true, true])]
+    #[TestWith([false, true])]
+    public function test_pinnacle_reads_only_the_matched_fixture_from_the_compact_index_without_a_full_snapshot(bool $hasSportsApiIndex, bool $partialIdentity): void
     {
         config(['services.sportsmeld.key' => null]);
         $this->actingAs($this->customer(), 'customers');
@@ -1507,6 +1531,10 @@ class AlertSystemTest extends TestCase
         $drop = ['id' => 100, 'alert_key' => hash('sha256', 'indexed-quote'), 'sport' => 'soccer', 'home' => 'Torino', 'away' => 'Monza 1912',
             'sect' => 'Moneyline', 'outcome' => 'Home', 'from_price' => 2.5, 'to_price' => 2.3, 'starts' => $start, 'alerted' => time()];
         $index = ['ids' => $hasSportsApiIndex ? ['12345' => $fixture->unique_key] : [], 'matches' => [$fixture->unique_key => ['_payload_bytes' => 2000]]];
+        if ($partialIdentity) {
+            $index['matches'][$fixture->unique_key] += ['unique_key' => $fixture->unique_key, 'betfair_match_id' => '900',
+                'timestamp' => $start, 'result_status' => 'Prematch', 'team2' => null];
+        }
         $current = array_replace($fixture->payload, ['betfair_match_id' => '900', 'timeline' => ['unused' => str_repeat('x', 100000)],
             'markets' => ['main' => [['marketType' => 'MATCH_ODDS', 'runner' => 'Torino', 'currentBackOdds' => 2.35, 'layOdds' => 2.38,
                 'backSize' => 100, 'laySize' => 200, 'backOddsHistory' => [['timestamp' => time(), 'odds' => 2.35]], 'liquidity_history' => [['unused' => true]]]]]]);

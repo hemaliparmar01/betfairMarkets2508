@@ -48,7 +48,7 @@ class FootballController extends Controller
                 ], 403);
             }
 
-            return view('users.sports.Football.marketActivity', compact('checkAuthAndSubscription'));
+            return view('users.sports.football.marketActivity', compact('checkAuthAndSubscription'));
         }
 
         if ($capture || request()->routeIs('football.pinnacle-odds')) {
@@ -385,10 +385,20 @@ class FootballController extends Controller
                                 && ($fixture['result_status'] ?? null) === $status
                                 && ($mappedId !== null ? (string) $fixture['betfair_match_id'] === (string) $mappedId
                                     : ($startTimestamp > 0 && abs((int) ($fixture['timestamp'] ?? 0) - $startTimestamp) <= 3600)));
-                            $fixtures = array_values(array_replace(array_column($fixtures, null, 'unique_key'), $indexedCandidates));
+                            $fixtures = array_column($fixtures, null, 'unique_key');
+                            foreach ($indexedCandidates as $key => $fixture) {
+                                $fixture = array_filter($fixture, static fn (mixed $value, string|int $field): bool => ! in_array($field, ['team1', 'team2'], true)
+                                    || (is_string($value) && trim($value) !== ''), ARRAY_FILTER_USE_BOTH);
+                                $fixtures[$key] = array_replace($fixtures[$key] ?? [], $fixture);
+                            }
+                            $fixtures = array_values($fixtures);
                         }
                         $candidates = [];
                         foreach ($fixtures as $fixture) {
+                            if (! is_string($fixture['team1'] ?? null) || trim($fixture['team1']) === ''
+                                || ! is_string($fixture['team2'] ?? null) || trim($fixture['team2']) === '') {
+                                continue;
+                            }
                             $sameTime = $startTimestamp === 0 || abs((int) ($fixture['timestamp'] ?? 0) - $startTimestamp) <= 3600;
                             if (MatchBackup::isHidden($fixture, str_replace('_', '', $sportTable), $capture && ! $currentPinnacleQuote ? (int) ($alert['alerted'] ?? time()) : null)) {
                                 if ($sport === 'soccer' && (($mappedId !== null && (string) ($fixture['betfair_match_id'] ?? '') === $mappedId)
@@ -745,7 +755,7 @@ class FootballController extends Controller
 
             $pinnacleLeagueOptions = app(AlertService::class)->pinnacleMonitorLeagueOptions();
 
-            return view('users.sports.Football.marketActivity', compact('pinnacleSport', 'pinnacleSportCounts', 'pinnacleLeagueOptions', 'pinnacleAlerts', 'pinnacleFeedConnected', 'pinnacleFeeds', 'pinnacleArchive', 'pinnacleArchiveHasMore', 'pinnacleArchiveCursor', 'pinnacleArchiveStart', 'pinnacleArchiveEnd', 'pinnacleArchiveStats'));
+            return view('users.sports.football.marketActivity', compact('pinnacleSport', 'pinnacleSportCounts', 'pinnacleLeagueOptions', 'pinnacleAlerts', 'pinnacleFeedConnected', 'pinnacleFeeds', 'pinnacleArchive', 'pinnacleArchiveHasMore', 'pinnacleArchiveCursor', 'pinnacleArchiveStart', 'pinnacleArchiveEnd', 'pinnacleArchiveStats'));
         }
 
         $marketActivites = $this->getMarketActivites();
@@ -776,7 +786,7 @@ class FootballController extends Controller
             }
             $response = response()->json([
                 'data' => $marketActivites,
-                'html' => view('users.sports.Football.marketActivity', compact('marketActivites', 'hasMore', 'nextPage', 'checkAuthAndSubscription', 'marketRowsOnly', 'compactMarketRows', 'marketRowOrder'))->fragment('footballMarketRows'),
+                'html' => view('users.sports.football.marketActivity', compact('marketActivites', 'hasMore', 'nextPage', 'checkAuthAndSubscription', 'marketRowsOnly', 'compactMarketRows', 'marketRowOrder'))->fragment('footballMarketRows'),
                 'has_more' => $hasMore,
                 'next_page' => $nextPage,
             ] + ($compactMarketRows ? ['order' => $marketRowOrder, 'versions' => (object) $marketRowVersions, 'server_time' => time()] : []));
@@ -785,7 +795,7 @@ class FootballController extends Controller
             }
             $response->headers->set('Cache-Control', 'private, no-store');
         } else {
-            $response = response()->view('users.sports.Football.marketActivity', compact('marketActivites', 'hasMore', 'nextPage', 'checkAuthAndSubscription', 'marketRowVersions'));
+            $response = response()->view('users.sports.football.marketActivity', compact('marketActivites', 'hasMore', 'nextPage', 'checkAuthAndSubscription', 'marketRowVersions'));
         }
 
         $response->setVary('Accept-Encoding', false);
