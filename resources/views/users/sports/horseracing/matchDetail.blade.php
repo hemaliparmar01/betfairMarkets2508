@@ -3,7 +3,7 @@
 @section('title', $match['team1'].' · '.$match['team2'].' · BF Markets')
 @section('content')
     @include('users.layout.sports')
-    <section id="horseRaceDetail" data-horse-detail data-race-channel="sports.{{ $raceSport }}.live" data-race-sport="{{ $raceSport }}" data-market-chart-url="{{ env('BETFAIR_API_KEY') }}" data-horse-url="{{ route($raceSport.'.matches.show', $match['id']) }}" data-horse-payload="{{ json_encode($detail) }}" class="min-w-0 pt-4 text-[var(--text-brand-70)] dark:text-[var(--text-on-primary)]">
+    <section id="horseRaceDetail" data-horse-detail data-race-channel="sports.{{ $raceSport }}.live" data-race-sport="{{ $raceSport }}" data-market-chart-url="{{ env('CHART_API_KEY') }}" data-horse-url="{{ route($raceSport.'.matches.show', $match['id']) }}" data-horse-payload="{{ json_encode($detail) }}" class="min-w-0 pt-4 text-[var(--text-brand-70)] dark:text-[var(--text-on-primary)]">
         <a href="{{ route($raceSport.'.home') }}" class="mb-4 inline-flex items-center gap-2 text-sm font-medium text-[rgb(var(--text-muted))] hover:text-[rgb(var(--primary))]">← {{ __('Back to '.$raceTitle) }}</a>
         <div class="mb-4 rounded-lg border border-[var(--border-gray-200)] bg-[rgb(var(--surface))] p-4 shadow-sm dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--surface))]">
             <div class="flex flex-wrap items-center justify-between gap-3">
@@ -100,7 +100,7 @@
         .runner-row:last-child { border-bottom: none; }
         .runner-row:hover { background-color: var(--surface-neutral-0-18); }
 
-        
+
         .odd-box {
             display: flex;
             flex-direction: column;
@@ -119,7 +119,7 @@
         .back-box { background-color: var(--surface-brand-0); border: 1px solid var(--border-brand-10); color: rgb(var(--text-main)); }
         .lay-box { background-color: var(--surface-danger-0); border: 1px solid var(--border-accent-10); color: rgb(var(--text-main)); }
 
-        
+
         .odd-value {
             display: flex;
             align-items: center;
@@ -130,7 +130,7 @@
             font-variant-numeric: tabular-nums;
         }
 
-        
+
         .change-arrow {
             font-size: 12px;
             font-weight: 900;
@@ -142,7 +142,7 @@
             animation: arrow-pulse 0.6s ease-in-out;
         }
 
-        
+
         .odds-history {
             display: flex;
             align-items: center;
@@ -163,7 +163,7 @@
             font-weight: 700;
         }
 
-        
+
         .change-pct {
             font-size: 10px;
             font-weight: 700;
@@ -180,7 +180,7 @@
             color: var(--text-success);
         }
 
-        
+
         @keyframes flash-down {
             0% { background-color: var(--surface-success-5); border-color: var(--border-success); }
             100% { background-color: var(--surface-hover); border-color: var(--border-brand-10); }
@@ -192,13 +192,13 @@
         .flash-down { animation: flash-down 1s ease-out; }
         .flash-up { animation: flash-up 1s ease-out; }
 
-        
+
         @keyframes arrow-pulse {
             0%, 100% { transform: translateX(0); }
             50% { transform: translateX(3px); }
         }
 
-        
+
         .sharp-change {
             position: absolute;
             top: 2px;
@@ -212,7 +212,7 @@
             50% { opacity: 1; }
         }
 
-        
+
         .sparkline-container {
             display: flex;
             align-items: center;
@@ -237,7 +237,7 @@
         .sparkline-path.down { stroke: var(--text-success); }
         .sparkline-path.flat { stroke: var(--text-brand-30-2); }
 
-        
+
         .fav-badge {
             display: inline-flex;
             align-items: center;
@@ -282,7 +282,7 @@
             animation: badge-pop 0.5s ease-out;
         }
 
-        
+
         .pressure-container {
             display: flex;
             flex-direction: column;
@@ -314,7 +314,7 @@
         .pressure-bar-fill.lay { background: linear-gradient(90deg, var(--surface-danger), var(--surface-danger-5-2)); }
         .pressure-bar-fill.neutral { background: var(--surface-neutral-30); }
 
-        
+
         .legend-item {
             display: flex;
             align-items: center;
@@ -325,7 +325,7 @@
         .legend-arrow-up { color: var(--text-danger); font-weight: 900; }
         .legend-arrow-down { color: var(--text-success); font-weight: 900; }
 
-        
+
         @media (max-width: 768px) {
             .runner-header { display: none; }
             .runner-row {
@@ -374,7 +374,7 @@
             .odds-history { font-size: 9.5px; }
             .change-pct { font-size: 9px; }
         }
-    
+
 }
 .dark-mode #horseRaceDetail { .runner-header,.runner-row:hover {background:var(--surface-brand-75);color:var(--text-neutral-5)} .runner-row {background:var(--surface-brand-80);border-color:var(--border-brand-70)} .back-box {background:var(--surface-brand-65);color:var(--text-neutral-5);border-color:var(--border-brand-60)} .lay-box {background:var(--surface-accent-70);color:var(--text-neutral-5);border-color:var(--border-accent-60)} .odds-history .new-value {color:var(--text-neutral-5)} .runner-name-mobile,.runner-row {color:inherit} }
 #horseRaceDetail .runner-row > * {min-width:0}

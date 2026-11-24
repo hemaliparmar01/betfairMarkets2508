@@ -1,4 +1,5 @@
 import importlib.util
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -19,6 +20,9 @@ spec.loader.exec_module(module)
 server_spec = importlib.util.spec_from_file_location('server_service_manager', SOURCE.parent.parent / 'server/services-manager.py')
 server_module = importlib.util.module_from_spec(server_spec)
 server_spec.loader.exec_module(server_module)
+production_spec = importlib.util.spec_from_file_location('production_service_manager', SOURCE.parent.parent / 'main/services-manager.py')
+production_module = importlib.util.module_from_spec(production_spec)
+production_spec.loader.exec_module(production_module)
 
 
 class ServiceManagerTest(unittest.TestCase):
@@ -504,8 +508,8 @@ class ProductionServiceManagerTest(unittest.TestCase):
         self.environment.start()
         self.addCleanup(self.environment.stop)
         self.addCleanup(self.temporary.cleanup)
-        with patch.object(server_module.platform, 'system', return_value='Linux'), patch.object(Path, 'is_file', return_value=True):
-            self.manager = server_module.Manager()
+        with patch.object(production_module.platform, 'system', return_value='Linux'), patch.object(Path, 'is_file', return_value=True):
+            self.manager = production_module.Manager()
         self.manager.state = self.root / 'state'
         self.manager.logs = self.manager.state / 'logs'
 
@@ -532,7 +536,7 @@ class ProductionServiceManagerTest(unittest.TestCase):
                 execution = next(line.partition('=')[2] for line in definition.splitlines() if line.startswith('ExecStart='))
                 self.assertEqual(['/www/server/php/83/bin/php', '/www/wwwroot/bfmarketsanalytics.com/artisan'] + spec['command'], shlex.split(execution))
                 self.assertIn('User=www\n', definition)
-                self.assertIn('WorkingDirectory="/www/wwwroot/bfmarketsanalytics.com"', definition)
+                self.assertIn('WorkingDirectory=/www/wwwroot/bfmarketsanalytics.com\n', definition)
                 self.assertIn('KillMode=control-group', definition)
                 self.assertIn('StandardOutput=journal\nStandardError=journal', definition)
                 self.assertNotRegex(definition, r'docker|staging777|staging999|/Users/')
@@ -541,7 +545,7 @@ class ProductionServiceManagerTest(unittest.TestCase):
         self.assertIn('PATH=/www/server/php/83/bin:', environment)
 
     def test_prepare_generates_only_local_review_files_without_running_commands(self):
-        with patch.object(server_module, 'run') as commands:
+        with patch.object(production_module, 'run') as commands:
             self.manager.execute('prepare', 'betfair')
 
         commands.assert_not_called()
@@ -549,11 +553,51 @@ class ProductionServiceManagerTest(unittest.TestCase):
         self.assertEqual(['bfmarkets-production-betfair.service'], [path.name for path in prepared])
         self.assertEqual(self.manager.definition('betfair', self.manager.instances['betfair']), prepared[0].read_bytes())
 
+    def test_production_does_not_load_an_inherited_staging_configuration(self):
+        with patch.dict(os.environ, {
+            'SERVICES_CONFIG': str(self.project / 'server/services-manager.json'),
+            'SERVICES_ROOT': '/srv/staging', 'SERVICES_PREFIX': 'bfmarkets', 'SERVICES_ENV': 'local',
+        }), patch.object(production_module.platform, 'system', return_value='Linux'), \
+                patch.object(Path, 'is_file', return_value=True):
+            manager = production_module.Manager()
+
+        self.assertEqual('production', manager.environment)
+        self.assertEqual(Path('/www/wwwroot/bfmarketsanalytics.com'), manager.root)
+        self.assertEqual('bfmarkets-production', manager.prefix)
+        self.assertEqual('bfmarkets-production-betfair.service', manager.instances['betfair']['unit'])
+        self.assertEqual(manager.root / 'storage/app/service-manager', manager.state)
+
+    def test_production_rejects_container_configuration_without_running_it(self):
+        with patch.dict(os.environ, {'SERVICES_CONTAINER': 'aapanel'}), \
+                patch.object(production_module, 'run') as commands:
+            with self.assertRaisesRegex(ValueError, 'native PHP'):
+                production_module.Manager()
+        commands.assert_not_called()
+
+    def test_production_preserves_the_registry_when_an_installed_unit_hash_changes(self):
+        definition = self.manager.definition('betfair', self.manager.instances['betfair'])
+        destination = self.root / 'betfair.service'
+        destination.write_bytes(definition + b'\n# externally modified\n')
+        previous = dict(self.manager.instances['betfair'], definition_hash=hashlib.sha256(definition).hexdigest())
+        self.manager.state.mkdir()
+        registry = self.manager.state / 'managed-production.json'
+        registry.write_text(json.dumps({'betfair': previous}))
+        original_registry = registry.read_bytes()
+
+        with patch.object(self.manager, 'destination', return_value=destination), \
+                patch.object(self.manager, 'inspect', return_value=(True, 'active/running')), \
+                patch.object(self.manager, 'verify_existing'), patch.object(production_module, 'run') as commands:
+            with self.assertRaisesRegex(ValueError, 'changed externally'):
+                self.manager.execute('install', 'betfair')
+
+        commands.assert_not_called()
+        self.assertEqual(original_registry, registry.read_bytes())
+
     def test_repeat_install_does_not_start_enable_or_duplicate_services(self):
         destination = self.root / 'units'
         with patch.object(self.manager, 'destination', side_effect=lambda spec: destination / spec['unit']), \
                 patch.object(self.manager, 'inspect', return_value=(False, 'inactive/dead')), \
-                patch.object(server_module, 'run') as commands:
+                patch.object(production_module, 'run') as commands:
             self.manager.execute('install')
         installed = {path.name: path.read_bytes() for path in destination.iterdir()}
         self.assertEqual(26, len(installed))
@@ -561,7 +605,7 @@ class ProductionServiceManagerTest(unittest.TestCase):
 
         with patch.object(self.manager, 'destination', side_effect=lambda spec: destination / spec['unit']), \
                 patch.object(self.manager, 'inspect', return_value=(True, 'inactive/dead')), \
-                patch.object(self.manager, 'verify_existing'), patch.object(server_module, 'run') as commands:
+                patch.object(self.manager, 'verify_existing'), patch.object(production_module, 'run') as commands:
             self.manager.execute('install')
 
         commands.assert_not_called()
@@ -569,7 +613,7 @@ class ProductionServiceManagerTest(unittest.TestCase):
 
     def test_existing_provider_process_blocks_a_duplicate_connection(self):
         process = subprocess.CompletedProcess([], 0, '123 php /srv/other-app/artisan betfair:listen\n', '')
-        with patch.object(server_module, 'run', return_value=process):
+        with patch.object(production_module, 'run', return_value=process):
             with self.assertRaisesRegex(ValueError, 'Unmanaged matching Artisan process'):
                 self.manager.reject_unmanaged(self.manager.instances['betfair'])
 
@@ -591,7 +635,7 @@ class ProductionServiceManagerTest(unittest.TestCase):
         self.assertEqual([
             'production', '/www/wwwroot/bfmarketsanalytics.com', str(self.production / 'services-manager.json'),
             'bfmarkets-production', '/www/server/php/83/bin/php', 'www', '/etc/php/8.3/cli-custom/php.ini',
-            'unset', 'unset', str(self.production / '../server/services-manager.py'), 'status', 'betfair',
+            'unset', 'unset', str(self.production / 'services-manager.py'), 'status', 'betfair',
         ], result.stdout.splitlines())
 
     def test_phprc_file_is_used_by_native_cli_and_inherited_by_children(self):

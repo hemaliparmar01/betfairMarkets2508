@@ -118,7 +118,7 @@
 
                                 <div class="col-span-2 md:col-span-1">
                                     @if ($checkAuthAndSubscription['display_odds'])
-                                        <img src="{{ env('BETFAIR_API_KEY') . '?marketId=' . $runner['match_id'] . '&selectionId=' . $runner['runner_id'] }}" alt="{{ __('Market Chart') }}">
+                                        <img src="{{ env('CHART_API_KEY') . '?marketId=' . $runner['match_id'] . '&selectionId=' . $runner['runner_id'] }}" alt="{{ __('Market Chart') }}">
                                     @else
                                         @include('lock_icon')
                                     @endif

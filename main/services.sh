@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 MAIN_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-MANAGER="$MAIN_DIR/../server/services-manager.py"
+MANAGER="$MAIN_DIR/services-manager.py"
 if [ "$(uname -s)" != "Linux" ]; then
     echo "Production services require the native Linux host running systemd." >&2
     exit 1
