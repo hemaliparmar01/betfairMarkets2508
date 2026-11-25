@@ -27,7 +27,9 @@
         "--queue=default",
         "--sleep=1",
         "--timeout=60",
-        "--tries=3"
+        "--tries=3",
+        "--memory=256",
+        "--max-jobs=250"
       ],
       "enabled": true
     },
@@ -38,7 +40,9 @@
         "--queue=sports-statistics,sports-prematch-statistics",
         "--sleep=1",
         "--timeout=45",
-        "--tries=3"
+        "--tries=3",
+        "--memory=512",
+        "--max-jobs=100"
       ],
       "enabled": true
     },
@@ -48,7 +52,9 @@
         "--queue=sports-images",
         "--sleep=1",
         "--timeout=30",
-        "--tries=3"
+        "--tries=3",
+        "--memory=256",
+        "--max-jobs=200"
       ],
       "enabled": true,
       "unit": "bfmarkets-production-queue-images.service"
@@ -60,7 +66,9 @@
         "--queue=realtime-football",
         "--sleep=0",
         "--timeout=15",
-        "--tries=6"
+        "--tries=6",
+        "--memory=512",
+        "--max-jobs=100"
       ],
       "enabled": true,
       "unit": "bfmarkets-production-realtime@football.service"
@@ -72,7 +80,9 @@
         "--queue=realtime-cricket",
         "--sleep=0",
         "--timeout=15",
-        "--tries=6"
+        "--tries=6",
+        "--memory=384",
+        "--max-jobs=150"
       ],
       "enabled": true,
       "unit": "bfmarkets-production-realtime@cricket.service"
@@ -84,7 +94,9 @@
         "--queue=realtime-icehockey",
         "--sleep=0",
         "--timeout=15",
-        "--tries=6"
+        "--tries=6",
+        "--memory=384",
+        "--max-jobs=150"
       ],
       "enabled": true,
       "unit": "bfmarkets-production-realtime@icehockey.service"
@@ -96,7 +108,9 @@
         "--queue=realtime-americanfootball",
         "--sleep=0",
         "--timeout=15",
-        "--tries=6"
+        "--tries=6",
+        "--memory=384",
+        "--max-jobs=150"
       ],
       "enabled": true,
       "unit": "bfmarkets-production-realtime@americanfootball.service"
@@ -108,7 +122,9 @@
         "--queue=realtime-baseball",
         "--sleep=0",
         "--timeout=15",
-        "--tries=6"
+        "--tries=6",
+        "--memory=384",
+        "--max-jobs=150"
       ],
       "enabled": true,
       "unit": "bfmarkets-production-realtime@baseball.service"
@@ -120,7 +136,9 @@
         "--queue=realtime-basketball",
         "--sleep=0",
         "--timeout=15",
-        "--tries=6"
+        "--tries=6",
+        "--memory=512",
+        "--max-jobs=100"
       ],
       "enabled": true,
       "unit": "bfmarkets-production-realtime@basketball.service"
@@ -132,7 +150,9 @@
         "--queue=realtime-tennis",
         "--sleep=0",
         "--timeout=15",
-        "--tries=6"
+        "--tries=6",
+        "--memory=384",
+        "--max-jobs=150"
       ],
       "enabled": true,
       "unit": "bfmarkets-production-realtime@tennis.service"
@@ -144,7 +164,9 @@
         "--queue=realtime-greyhounds",
         "--sleep=0",
         "--timeout=15",
-        "--tries=6"
+        "--tries=6",
+        "--memory=384",
+        "--max-jobs=150"
       ],
       "enabled": true,
       "unit": "bfmarkets-production-realtime@greyhounds.service"
@@ -156,7 +178,9 @@
         "--queue=realtime-horseracing",
         "--sleep=0",
         "--timeout=15",
-        "--tries=6"
+        "--tries=6",
+        "--memory=512",
+        "--max-jobs=100"
       ],
       "enabled": true,
       "unit": "bfmarkets-production-realtime@horseracing.service"
@@ -199,7 +223,9 @@
         "--sleep=1",
         "--timeout=60",
         "--tries=3",
-        "--max-time=3600"
+        "--max-time=3600",
+        "--memory=512",
+        "--max-jobs=100"
       ],
       "enabled": true,
       "unit": "bfmarkets-production-queue-sports-recovery.service"
@@ -212,7 +238,9 @@
         "--sleep=1",
         "--timeout=60",
         "--tries=3",
-        "--max-time=3600"
+        "--max-time=3600",
+        "--memory=768",
+        "--max-jobs=75"
       ],
       "enabled": true,
       "unit": "bfmarkets-production-queue-sports-timeline.service"
@@ -225,7 +253,9 @@
         "--sleep=1",
         "--timeout=60",
         "--tries=3",
-        "--max-time=3600"
+        "--max-time=3600",
+        "--memory=512",
+        "--max-jobs=100"
       ],
       "enabled": true,
       "unit": "bfmarkets-production-queue-sports-sync-live.service"
@@ -238,7 +268,9 @@
         "--sleep=1",
         "--timeout=60",
         "--tries=3",
-        "--max-time=3600"
+        "--max-time=3600",
+        "--memory=512",
+        "--max-jobs=100"
       ],
       "enabled": true,
       "unit": "bfmarkets-production-queue-sports-sync-prematch.service"
@@ -250,7 +282,9 @@
         "--sleep=1",
         "--timeout=60",
         "--tries=3",
-        "--max-time=3600"
+        "--max-time=3600",
+        "--memory=256",
+        "--max-jobs=200"
       ],
       "enabled": true,
       "unit": "bfmarkets-production-queue-alerts.service"
@@ -262,7 +296,9 @@
         "--sleep=1",
         "--timeout=60",
         "--tries=3",
-        "--max-time=3600"
+        "--max-time=3600",
+        "--memory=256",
+        "--max-jobs=200"
       ],
       "enabled": true,
       "unit": "bfmarkets-production-queue-alerts-platform.service"
@@ -274,7 +310,9 @@
         "--sleep=1",
         "--timeout=60",
         "--tries=3",
-        "--max-time=3600"
+        "--max-time=3600",
+        "--memory=256",
+        "--max-jobs=200"
       ],
       "enabled": true,
       "unit": "bfmarkets-production-queue-alerts-telegram.service"
