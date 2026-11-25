@@ -28,8 +28,8 @@
         "--sleep=1",
         "--timeout=60",
         "--tries=3",
-        "--memory=256",
-        "--max-jobs=250"
+        "--memory=768",
+        "--max-jobs=100"
       ],
       "enabled": true
     },
@@ -254,8 +254,8 @@
         "--timeout=60",
         "--tries=3",
         "--max-time=3600",
-        "--memory=512",
-        "--max-jobs=100"
+        "--memory=1024",
+        "--max-jobs=50"
       ],
       "enabled": true,
       "unit": "bfmarkets-production-queue-sports-sync-live.service"
