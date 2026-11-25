@@ -17,3 +17,9 @@ Broadcast::channel('sports.{sport}.market-activity', function (Customer $custome
         && $customer->is_verified && ! $customer->is_blocked && ! $customer->is_suspended
         && ($customer->hasActiveSubscription() || $customer->hasActiveTrial());
 }, ['guards' => ['customers']]);
+
+Broadcast::channel('sports.horseracing.odds.{race}', function (Customer $customer, string $race): bool {
+    return preg_match('/^[0-9_]{1,40}$/', $race) === 1
+        && $customer->is_verified && ! $customer->is_blocked && ! $customer->is_suspended
+        && ($customer->hasActiveSubscription() || $customer->hasActiveTrial());
+}, ['guards' => ['customers']]);

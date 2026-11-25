@@ -1,3 +1,4 @@
+import { createHorseOddsBook, mergeHorseRunners, watchHorseOdds } from '../horseOddsStream.js';
 import { fixtureVersions, updateFixtureRows } from '../auth/dom.js';
 import { renderOddsHistory } from '../oddsHistory';
 import { watchRacingFeed } from '../racingFeed.js';
@@ -56,6 +57,47 @@ if (dashboard) {
         if (!notice) { notice = document.createElement('p'); notice.dataset.horseracingError = ''; notice.className = "p-3 text-center text-sm text-[var(--text-red-600)]"; dashboard.prepend(notice); }
         notice.textContent = message;
     };
+    const liveBook = createHorseOddsBook(id => !markets && [...dashboard.querySelectorAll('[data-match-id]')].some(row => row.dataset.matchId === id), race => {
+        const row = [...dashboard.querySelectorAll('[data-match-id]')].find(item => item.dataset.matchId === race.id);
+        if (!row) return;
+        const payload = parse(row.dataset.horseracingMarket);
+        if (payload.locked || Number(payload.version ?? 0) > race.version) return;
+        const runners = race.runners.filter(runner => runner.marketType === 'WIN');
+        payload.runners = mergeHorseRunners(payload.runners ?? [], runners, race.sent_at);
+        payload.version = race.version;
+        payload.status = race.market_status === 'SUSPENDED' ? 'Suspended' : race.status;
+        payload.indicators = { ...payload.indicators, ...race.indicators };
+        row.dataset.horseracingMarket = JSON.stringify(payload);
+        const favorite = payload.runners.find(runner => String(runner.runnerId) === String(payload.indicators?.favorite_id));
+        const favoriteBadge = row.querySelector('[data-action="open-match"] span');
+        if (favoriteBadge) favoriteBadge.title = favorite?.runner ?? '';
+        const prices = row.querySelector('[data-horse-live-prices]');
+        const sorted = [...payload.runners].sort((a, b) => (a.sortPriority ?? 0) - (b.sortPriority ?? 0));
+        if (prices) [...prices.children].forEach((cell, index) => {
+            const runner = sorted[index];
+            const value = runner && Number(runner.currentBackOdds) > 0 && race.market_status !== 'SUSPENDED' && race.status !== 'Finished' ? Number(runner.currentBackOdds).toFixed(2) : '—';
+            const changed = cell.dataset.livePrice !== value;
+            cell.replaceChildren(document.createTextNode(value));
+            if (value !== '—' && ['up', 'down'].includes(runner?.odds_direction)) {
+                const arrow = document.createElement('span');
+                arrow.textContent = runner.odds_direction === 'up' ? '↑' : '↓';
+                arrow.className = runner.odds_direction === 'up' ? 'text-[var(--text-emerald-600)]' : 'text-[var(--text-red-500)]';
+                cell.append(arrow);
+            }
+            cell.title = runner?.runner ?? '';
+            cell.dataset.livePrice = value;
+            cell.dataset.horseracingOddsTooltip = `${number(runner?.initialBackOdds)} → ${value}`;
+            if (changed) {
+                cell.classList.add('!bg-[var(--surface-amber-100)]');
+                setTimeout(() => cell.classList.remove('!bg-[var(--surface-amber-100)]'), 650);
+            }
+        });
+        row.querySelectorAll('[data-action="prediction"]').forEach(button => { button.disabled = race.status === 'Finished' || race.market_status === 'SUSPENDED' || race.timestamp <= Date.now() / 1000; });
+        if (activeModal?.matchId === race.id) renderModal();
+        dashboard.dataset.lastOddsAppliedAt = String(Date.now());
+        dashboard.dataset.lastOddsSentAt = String(race.sent_at);
+    });
+    const syncLiveRaces = watchHorseOdds(liveBook, () => markets ? [] : [...dashboard.querySelectorAll('[data-match-id]')].map(row => row.dataset.matchId));
     let refreshInterval = 100;
     document.querySelector("[data-horseracing-speeds]")?.addEventListener("click", (event) => {
         const button = event.target.closest("[data-speed]"); if (!button) return;
@@ -149,6 +191,8 @@ if (dashboard) {
                     setTimeout(() => cell.classList.remove('!bg-[var(--surface-amber-100)]', 'dark:!bg-amber-950'), 650);
                 }
             });
+            syncLiveRaces();
+            liveBook.replay();
             loader().dataset.hasMore = result.has_more ? 'true' : 'false';
             const previousNextPage = loader().dataset.nextPage;
             loader().dataset.nextPage = result.has_more ? String(loadedPages + 1) : '';
@@ -304,7 +348,7 @@ if (dashboard) {
     const paginationObserver = new IntersectionObserver((entries) => { if (entries.some((entry) => entry.isIntersecting)) load({ append: true }); }, { rootMargin: '100px' });
     paginationObserver.observe(loader());
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') scheduleRefresh(); });
-    const feedMonitor = watchRacingFeed(dashboard, scheduleRefresh, 'horseracing');
+    const feedMonitor = watchRacingFeed(dashboard, scheduleRefresh, 'horseracing', { onTick: markets ? scheduleRefresh : () => {} });
 }
 
 function analyzeHorseChange(previous, current) {
@@ -348,6 +392,21 @@ if (horseDetail) {
     const price = value => Number(value)>0 ? Number(value).toFixed(2) : '—';
     const container = horseDetail.querySelector('#runners-container');
     const status = horseDetail.querySelector('[data-horse-status]');
+    const liveBook = createHorseOddsBook(id => String(detail.race.id) === id, race => {
+        if (detail.market.locked || Number(detail.race.version ?? 0) > race.version) return;
+        const previous = detail.markets.flatMap(market => market.runners);
+        const runners = mergeHorseRunners(previous, race.runners, race.sent_at);
+        const types = [...new Set(runners.map(runner => runner.marketType))];
+        detail.markets = types.map(type => ({ type, runners: runners.filter(runner => runner.marketType === type) }));
+        detail.market.runners = runners.filter(runner => runner.marketType === 'WIN');
+        detail.market.indicators = { ...detail.market.indicators, ...race.indicators };
+        detail.race = { ...detail.race, version: race.version, status: race.status, market_status: race.market_status };
+        renderRunners();
+        horseDetail.dataset.lastOddsAppliedAt = String(Date.now());
+        horseDetail.dataset.lastOddsSentAt = String(race.sent_at);
+    });
+    watchHorseOdds(liveBook, () => [detail.race.id]);
+
     function countdown() {
         const el = horseDetail.querySelector('#countdown-timer');
         const seconds = Math.max(0, Math.floor((Date.parse(detail.race.start_time)-Date.now())/1000));
@@ -416,7 +475,7 @@ if (horseDetail) {
         try {
             const response = await fetch(horseDetail.dataset.horseUrl, {headers:{Accept:'application/json'},cache:'no-store'});
             if (!response.ok) throw new Error((globalThis.bfTranslations?.["Unable to refresh race details."] ?? "Unable to refresh race details."));
-            detail = await response.json(); feedMonitor.update(detail.feed); renderRunners(); horseDetail.querySelector('[data-horse-error]').classList.add('hidden');
+            detail = await response.json(); liveBook.replay(); feedMonitor.update(detail.feed); renderRunners(); horseDetail.querySelector('[data-horse-error]').classList.add('hidden');
         } catch (error) { feedMonitor.failed(); const el = horseDetail.querySelector('[data-horse-error]'); el.textContent = error.message; el.classList.remove('hidden'); }
         finally { loading = false; if (queued) { queued = false; scheduleDetail(); } }
     }

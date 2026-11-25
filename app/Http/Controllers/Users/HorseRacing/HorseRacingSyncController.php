@@ -4,8 +4,10 @@ namespace App\Http\Controllers\Users\HorseRacing;
 
 use App\Events\HorseRacingSportsScoreUpdated;
 use App\Http\Controllers\Controller;
+use App\Jobs\PersistHorseRacingMatches;
 use App\Models\HorseRacingMarket;
 use App\Models\HorseRacingMatch;
+use App\Services\HorseRacingOddsStream;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
@@ -42,7 +44,7 @@ class HorseRacingSyncController extends Controller
         return $includeMatches ? (getInRedis('HorseRacing:matches') ?? []) : [];
     }
 
-    public function mergeBetfairWebSocketData(array $events, bool $isLive = false, bool $isSnapshot = false, bool $deferIfBusy = false): ?bool
+    public function mergeBetfairWebSocketData(array $events, bool $isLive = false, bool $isSnapshot = false, bool $deferIfBusy = false, bool $deferPersistence = false): ?bool
     {
 
         $recordCache = sportsMatchRecordCache('HorseRacing:matches');
@@ -70,7 +72,7 @@ class HorseRacingSyncController extends Controller
             unset($index);
             $changed = false;
             foreach (array_chunk($events, 25, preserve_keys: true) as $batch) {
-                $result = $this->mergeBetfairWebSocketData($batch, $isLive, false, $deferIfBusy);
+                $result = $this->mergeBetfairWebSocketData($batch, $isLive, false, $deferIfBusy, $deferPersistence);
                 if ($result === null) {
                     return null;
                 }
@@ -80,7 +82,8 @@ class HorseRacingSyncController extends Controller
             return $changed;
         }
 
-        return withRedisLock('HorseRacing:matches', function () use ($events, $isSnapshot, $recordCache): bool {
+        $liveChanges = [];
+        $result = withRedisLock('HorseRacing:matches', function () use ($events, $isSnapshot, $recordCache, $deferPersistence, &$liveChanges): bool {
             if ($recordCache !== null && ! $isSnapshot) {
                 $keys = array_map(static fn (string|int $id): string => 'horseracing|'.$id, array_keys($events));
                 $index = ['matches' => $recordCache->metadataForKeys($keys)];
@@ -234,6 +237,7 @@ class HorseRacingSyncController extends Controller
                     $race['market_indicators'][$marketKey] = ['favorite_id' => $favorite['runnerId'] ?? null, 'favorite_back_size' => $favorite['backSize'] ?? 0, 'volatility' => $deviation > 15 ? 'high' : ($deviation > 5 ? 'medium' : 'low'), 'volatility_percent' => $deviation];
                 }
                 $race['markets'] = $markets;
+                $race['_odds_received_at'] = (float) ($event['_received_at'] ?? $now);
                 $race = prepareMatchOddsMonitoring($race, true);
                 $race['data_sync_complete'] = isset($markets[$raceId.'_WIN']);
                 if ($race !== $before) {
@@ -242,14 +246,36 @@ class HorseRacingSyncController extends Controller
                 }
             }
             if ($changed !== []) {
-                $this->storeMatchesInDatabase($changed);
+                foreach ($changed as $key => &$race) {
+                    $race['_odds_version'] = (int) Redis::incr('HorseRacing:odds:version');
+                    $matches[$key] = $race;
+                }
+                unset($race);
             }
             if ($changed !== [] || $stored->isNotEmpty()) {
                 storeInRedis('HorseRacing:matches', $matches, 60, existingData: $cachedSnapshot);
             }
+            if ($changed !== []) {
+                $liveChanges = $changed;
+                if (! $deferPersistence) {
+                    $this->storeMatchesInDatabase($changed);
+                }
+            }
 
             return $changed !== [];
         }, $deferIfBusy ? 0 : 5);
+        if ($liveChanges !== []) {
+            if ($deferPersistence) {
+                PersistHorseRacingMatches::markPending($liveChanges);
+            }
+            try {
+                app(HorseRacingOddsStream::class)->publish($liveChanges);
+            } catch (Throwable $error) {
+                Log::warning('Horse Racing direct odds broadcast failed; snapshot recovery remains available.', ['exception' => $error::class]);
+            }
+        }
+
+        return $result;
     }
 
     public function syncSportsApiProPrematchData(bool $includeMatches = true): array
@@ -368,7 +394,7 @@ class HorseRacingSyncController extends Controller
         });
     }
 
-    private function storeMatchesInDatabase(array $matches): void
+    public function storeMatchesInDatabase(array $matches): void
     {
 
         if (count($matches) > 10) {

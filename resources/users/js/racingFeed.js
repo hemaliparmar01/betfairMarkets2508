@@ -1,4 +1,4 @@
-export function watchRacingFeed(root, refresh, sport) {
+export function watchRacingFeed(root, refresh, sport, { onTick = refresh } = {}) {
     const notice = document.createElement('p');
     notice.className = 'col-span-full mb-3 text-xs text-[rgb(var(--text-muted))] dark:text-[rgb(var(--text-soft))]';
     notice.setAttribute('role', 'status');
@@ -18,7 +18,7 @@ export function watchRacingFeed(root, refresh, sport) {
     }
     function subscribe() {
         const channel = window.Echo?.channel(`sports.${sport}.live`);
-        channel?.listen('.score.updated', refresh);
+        channel?.listen('.score.updated', onTick);
         channel?.subscribed(() => { subscribed = true; render(); refresh(); });
         window.Echo?.connector?.pusher?.connection?.bind('state_change', ({ current }) => {
             if (current !== 'connected') { subscribed = false; render(); }

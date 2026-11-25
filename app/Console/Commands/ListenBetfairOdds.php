@@ -21,6 +21,7 @@ use App\Http\Controllers\Users\Greyhounds\GreyhoundsSyncController;
 use App\Http\Controllers\Users\HorseRacing\HorseRacingSyncController;
 use App\Http\Controllers\Users\IceHockey\IceHockeySyncController;
 use App\Http\Controllers\Users\Tennis\TennisSyncController;
+use App\Jobs\ProcessBetfairOdds;
 use App\Models\FootballMarket;
 use App\Models\FootballMatch;
 use App\Services\BetfairOrderBook;
@@ -28,9 +29,11 @@ use App\Services\MarketActivityStream;
 use App\Services\SportsMatchCache;
 use Illuminate\Console\Command;
 use Illuminate\Contracts\Cache\LockTimeoutException;
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Redis;
 use Revolt\EventLoop;
 use Throwable;
 
@@ -340,9 +343,7 @@ class ListenBetfairOdds extends Command
                         $terminal = $racing && (($event['removed'] ?? false) || in_array($event['win_market_status'] ?? $event['status'] ?? '', ['SUSPENDED', 'CLOSED'], true));
                         if ($terminal && isset($pendingChanges[$feed][$eventId])) {
                             try {
-                                if ($this->flushPendingChanges($pendingChanges)) {
-                                    Event::dispatch(new FootballSportsScoreUpdated);
-                                }
+                                $this->dispatchPendingChanges($pendingChanges);
                             } catch (Throwable $e) {
                                 Log::warning('Betfair race status deferred until pending odds are recorded', ['exception' => $e::class]);
                             }
@@ -370,9 +371,7 @@ class ListenBetfairOdds extends Command
                             }
 
                             try {
-                                if ($this->flushPendingChanges($pendingChanges)) {
-                                    Event::dispatch(new FootballSportsScoreUpdated);
-                                }
+                                $this->dispatchPendingChanges($pendingChanges);
                             } catch (Throwable $e) {
                                 Log::error('Betfair Odds pending update processing failed; the WebSocket remains connected.', [
                                     'exception' => $e::class,
@@ -423,9 +422,7 @@ class ListenBetfairOdds extends Command
                 }
 
                 try {
-                    if ($this->flushPendingChanges($pendingChanges)) {
-                        Event::dispatch(new FootballSportsScoreUpdated);
-                    }
+                    $this->dispatchPendingChanges($pendingChanges);
                 } catch (Throwable $e) {
                     Log::error('Betfair Odds pending update processing during reconnect failed.', [
                         'exception' => $e::class,
@@ -491,7 +488,58 @@ class ListenBetfairOdds extends Command
         return $context;
     }
 
-    private function flushPendingChanges(array &$pendingChanges): bool
+    /** @param array<string, array<string|int, array<string, mixed>>> $pendingChanges */
+    private function dispatchPendingChanges(array &$pendingChanges): void
+    {
+        foreach ($pendingChanges as $feed => $events) {
+            $groups = [];
+            foreach ($events as $id => $event) {
+                $sport = match ($feed) {
+                    'horse_prematch' => 'horseracing',
+                    'greyhounds' => 'greyhounds',
+                    default => str_replace(' ', '', strtolower((string) ($event['sport'] ?? 'soccer'))),
+                };
+                $sport = $sport === 'soccer' ? 'football' : $sport;
+                if (in_array($sport, MarketActivityStream::SPORTS, true)) {
+                    $groups[$sport][$id] = $event;
+                } else {
+                    unset($pendingChanges[$feed][$id]);
+                }
+            }
+            foreach ($groups as $sport => $entries) {
+                foreach (array_chunk($entries, 25, preserve_keys: true) as $batch) {
+                    $receivedAt = min(array_map(static fn (array $event): float => (float) ($event['_received_at'] ?? microtime(true)), $batch));
+                    Bus::dispatch(new ProcessBetfairOdds($sport, $feed, $batch,
+                        (int) Redis::incr('Betfair:processing:sequence'), $receivedAt));
+                    foreach ($batch as $id => $event) {
+                        unset($pendingChanges[$feed][$id]);
+                    }
+                }
+            }
+        }
+
+    }
+
+    /**
+     * Runs in the sport's dedicated worker, never in the provider socket callback.
+     *
+     * @param  array<string|int, array<string, mixed>>  $events
+     * @return array<string|int, array<string, mixed>>
+     */
+    public function processQueuedChanges(string $feed, array $events): array
+    {
+        $pending = [$feed => $events];
+        do {
+            $before = $pending[$feed];
+            if ($this->flushPendingChanges($pending, true)) {
+                Event::dispatch(new FootballSportsScoreUpdated);
+            }
+        } while (($pending[$feed] ?? []) !== [] && $pending[$feed] !== $before);
+
+        return $pending[$feed] ?? [];
+    }
+
+    private function flushPendingChanges(array &$pendingChanges, bool $isolated = false): bool
     {
         $updated = false;
         $busySports = [];
@@ -523,7 +571,9 @@ class ListenBetfairOdds extends Command
                         ? [GreyhoundsSyncController::class, GreyhoundsSportsScoreUpdated::class]
                         : [HorseRacingSyncController::class, HorseRacingSportsScoreUpdated::class];
                     try {
-                        $changed = app($controller)->mergeBetfairWebSocketData($events, deferIfBusy: true);
+                        $changed = $feed === 'horse_prematch' && $isolated
+                            ? app($controller)->mergeBetfairWebSocketData($events, deferIfBusy: true, deferPersistence: true)
+                            : app($controller)->mergeBetfairWebSocketData($events, deferIfBusy: true);
                     } catch (LockTimeoutException) {
                         continue;
                     }
@@ -654,6 +704,7 @@ class ListenBetfairOdds extends Command
                 $updates[$key][] = $quote;
             }
         }
+        $event['_received_at'] = $pending['_received_at'] ?? $receivedAt;
         $event['_odds_updates'] = $updates;
 
         return $event;
