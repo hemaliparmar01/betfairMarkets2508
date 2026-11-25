@@ -485,12 +485,6 @@
                         otherAnswer.inert = !expanded;
                         otherAnswer.setAttribute('aria-hidden', String(!expanded));
                     });
-
-                    // Yandex Metrika goal
-                    if (typeof ym !== 'undefined' && item.classList.contains('active')) {
-                        const qText = item.querySelector('.q-text').textContent.trim();
-                        ym(109087271, 'reachGoal', 'faq_open', { question: qText.substring(0, 60) });
-                    }
                 });
             });
         })();

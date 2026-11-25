@@ -224,36 +224,6 @@
         $initialGroups = collect($events)->filter(fn($event) => $event['status'] === 'Live')->groupBy('league')->sortKeys();
     @endphp --}}
 
-    <!-- Yandex.Metrika counter -->
-    <script type="text/javascript">
-        (function(m, e, t, r, i, k, a) {
-            m[i] = m[i] || function() {
-                (m[i].a = m[i].a || []).push(arguments)
-            };
-            m[i].l = 1 * new Date();
-            for (var j = 0; j < document.scripts.length; j++) {
-                if (document.scripts[j].src === r) {
-                    return;
-                }
-            }
-            k = e.createElement(t), a = e.getElementsByTagName(t)[0], k.async = 1, k.src = r, a.parentNode.insertBefore(
-                k, a)
-        })(window, document, 'script', 'https://mc.yandex.ru/metrika/tag.js?id=109087271', 'ym');
-
-        ym(109087271, 'init', {
-            ssr: true,
-            webvisor: true,
-            clickmap: true,
-            ecommerce: "dataLayer",
-            referrer: document.referrer,
-            url: location.href,
-            accurateTrackBounce: true,
-            trackLinks: true
-        });
-    </script>
-    <noscript>
-        <div><img src="https://mc.yandex.ru/watch/109087271" style="position:absolute; left:-9999px;" alt="" /></div>
-    </noscript>
 
     <div class="min-w-0 overflow-hidden">
         @include('users.layout.sports')

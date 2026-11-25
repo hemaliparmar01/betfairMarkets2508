@@ -1172,11 +1172,6 @@
                     const isCollapsed = document.body.classList.contains('collapsed');
                     document.getElementById('controlsWrapper').classList.toggle('hidden', isCollapsed);
                     localStorage.setItem('bf-markets-collapsed', isCollapsed ? 'true' : 'false');
-                    if (typeof ym !== 'undefined') {
-                        ym(109087271, 'reachGoal', 'market_activity_collapse_toggle', {
-                            state: isCollapsed ? 'collapsed' : 'expanded'
-                        });
-                    }
                 });
 
                 let marketSport = @json($marketActivitySport);
@@ -2054,12 +2049,6 @@
                     if (termsToggle && termsSection) {
                         termsToggle.addEventListener('click', function() {
                             termsSection.classList.toggle('collapsed');
-                        });
-                    }
-
-                    if (typeof ym !== 'undefined') {
-                        ym(109087271, 'reachGoal', 'market_activity_open_detail', {
-                            event: ev.match
                         });
                     }
                 }
