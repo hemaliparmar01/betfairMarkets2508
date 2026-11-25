@@ -4,6 +4,7 @@ use App\Http\Controllers\Users\AmericanFootball\AmericanFootballController;
 use App\Http\Controllers\Users\AuthController;
 use App\Http\Controllers\Users\Baseball\BaseballController;
 use App\Http\Controllers\Users\Basketball\BasketballController;
+use App\Http\Controllers\Users\BetfairChartController;
 use App\Http\Controllers\Users\ContactController;
 use App\Http\Controllers\Users\Cricket\CricketController;
 use App\Http\Controllers\Users\FavoriteController;
@@ -277,3 +278,5 @@ Route::get('get-cache-data/{cacheKey}', function ($cacheKey) {
         }
     }
 })->name('get-cache-data');
+
+Route::get('/open-chart', BetfairChartController::class)->name('betfair.chart');

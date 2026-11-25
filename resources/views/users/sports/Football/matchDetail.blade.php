@@ -114,7 +114,7 @@
 
                                 <div class="col-span-2 md:col-span-1">
                                     @if ($checkAuthAndSubscription['display_odds'])
-                                        <img src="{{ env('CHART_API_KEY') . '?marketId=' . $runner['match_id'] . '&selectionId=' . $runner['runner_id'] }}" alt="{{ __('Market Chart') }}">
+                                        <x-market-chart :market-id="$runner['match_id']" :selection-id="$runner['runner_id']" />
                                     @else
                                         @include('lock_icon')
                                     @endif
@@ -158,7 +158,7 @@
                         const currentMain = document.querySelector('main');
 
                         if (nextMain && currentMain) {
-                            currentMain.innerHTML = nextMain.innerHTML;
+                            window.replaceMatchDetailContent(currentMain, nextMain);
                         }
                     } catch (error) {
                         console.error((globalThis.bfTranslations?.["Match detail refresh failed:"] ?? "Match detail refresh failed:"), error);

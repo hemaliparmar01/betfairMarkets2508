@@ -1,3 +1,6 @@
+import { createMarketChartLoader } from './marketCharts.js';
+const marketCharts = createMarketChartLoader();
+window.replaceMatchDetailContent = marketCharts.replaceContent;
 import { createMarketQuoteStream, mergeMarketQuote, marketStreamKey } from './marketActivityStream.js';
 window.createMarketQuoteStream = createMarketQuoteStream;
 window.mergeMarketQuote = mergeMarketQuote;
