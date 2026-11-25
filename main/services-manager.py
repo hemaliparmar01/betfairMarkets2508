@@ -88,8 +88,8 @@ class Manager:
         args = [self.php]
         memory_limit = spec.get('php_memory_limit', self.config.get('php_memory_limit'))
         if memory_limit is not None:
-            if not re.fullmatch(r'[1-9][0-9]*[KMG]', str(memory_limit)):
-                raise ValueError('php_memory_limit must be a finite positive size, such as 512M')
+            if not re.fullmatch(r'-1|[1-9][0-9]*[KMG]', str(memory_limit)):
+                raise ValueError('php_memory_limit must be -1 or a positive size, such as 512M')
             args += ['-d', 'memory_limit=' + str(memory_limit)]
         args += [str(Path(cwd) / 'artisan')] + command
         logs = Path(spec.get('log_directory', self.logs)).resolve()

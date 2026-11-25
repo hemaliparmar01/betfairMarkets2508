@@ -28,7 +28,7 @@
         "--sleep=1",
         "--timeout=60",
         "--tries=3",
-        "--memory=768",
+        "--memory=-1",
         "--max-jobs=100"
       ],
       "enabled": true
@@ -41,7 +41,7 @@
         "--sleep=1",
         "--timeout=45",
         "--tries=3",
-        "--memory=512",
+        "--memory=-1",
         "--max-jobs=100"
       ],
       "enabled": true
@@ -53,7 +53,7 @@
         "--sleep=1",
         "--timeout=30",
         "--tries=3",
-        "--memory=256",
+        "--memory=-1",
         "--max-jobs=200"
       ],
       "enabled": true,
@@ -67,7 +67,7 @@
         "--sleep=0",
         "--timeout=15",
         "--tries=6",
-        "--memory=512",
+        "--memory=-1",
         "--max-jobs=100"
       ],
       "enabled": true,
@@ -81,7 +81,7 @@
         "--sleep=0",
         "--timeout=15",
         "--tries=6",
-        "--memory=384",
+        "--memory=-1",
         "--max-jobs=150"
       ],
       "enabled": true,
@@ -95,7 +95,7 @@
         "--sleep=0",
         "--timeout=15",
         "--tries=6",
-        "--memory=384",
+        "--memory=-1",
         "--max-jobs=150"
       ],
       "enabled": true,
@@ -109,7 +109,7 @@
         "--sleep=0",
         "--timeout=15",
         "--tries=6",
-        "--memory=384",
+        "--memory=-1",
         "--max-jobs=150"
       ],
       "enabled": true,
@@ -123,7 +123,7 @@
         "--sleep=0",
         "--timeout=15",
         "--tries=6",
-        "--memory=384",
+        "--memory=-1",
         "--max-jobs=150"
       ],
       "enabled": true,
@@ -137,7 +137,7 @@
         "--sleep=0",
         "--timeout=15",
         "--tries=6",
-        "--memory=512",
+        "--memory=-1",
         "--max-jobs=100"
       ],
       "enabled": true,
@@ -151,7 +151,7 @@
         "--sleep=0",
         "--timeout=15",
         "--tries=6",
-        "--memory=384",
+        "--memory=-1",
         "--max-jobs=150"
       ],
       "enabled": true,
@@ -165,7 +165,7 @@
         "--sleep=0",
         "--timeout=15",
         "--tries=6",
-        "--memory=384",
+        "--memory=-1",
         "--max-jobs=150"
       ],
       "enabled": true,
@@ -179,7 +179,7 @@
         "--sleep=0",
         "--timeout=15",
         "--tries=6",
-        "--memory=512",
+        "--memory=-1",
         "--max-jobs=100"
       ],
       "enabled": true,
@@ -224,7 +224,7 @@
         "--timeout=60",
         "--tries=3",
         "--max-time=3600",
-        "--memory=512",
+        "--memory=-1",
         "--max-jobs=100"
       ],
       "enabled": true,
@@ -239,7 +239,7 @@
         "--timeout=60",
         "--tries=3",
         "--max-time=3600",
-        "--memory=768",
+        "--memory=-1",
         "--max-jobs=75"
       ],
       "enabled": true,
@@ -254,7 +254,7 @@
         "--timeout=60",
         "--tries=3",
         "--max-time=3600",
-        "--memory=1024",
+        "--memory=-1",
         "--max-jobs=50"
       ],
       "enabled": true,
@@ -269,7 +269,7 @@
         "--timeout=60",
         "--tries=3",
         "--max-time=3600",
-        "--memory=512",
+        "--memory=-1",
         "--max-jobs=100"
       ],
       "enabled": true,
@@ -283,7 +283,7 @@
         "--timeout=60",
         "--tries=3",
         "--max-time=3600",
-        "--memory=256",
+        "--memory=-1",
         "--max-jobs=200"
       ],
       "enabled": true,
@@ -297,7 +297,7 @@
         "--timeout=60",
         "--tries=3",
         "--max-time=3600",
-        "--memory=256",
+        "--memory=-1",
         "--max-jobs=200"
       ],
       "enabled": true,
@@ -311,11 +311,12 @@
         "--timeout=60",
         "--tries=3",
         "--max-time=3600",
-        "--memory=256",
+        "--memory=-1",
         "--max-jobs=200"
       ],
       "enabled": true,
       "unit": "bfmarkets-production-queue-alerts-telegram.service"
     }
-  }
+  },
+  "php_memory_limit": "-1"
 }

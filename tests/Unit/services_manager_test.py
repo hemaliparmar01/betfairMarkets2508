@@ -513,7 +513,7 @@ class ProductionServiceManagerTest(unittest.TestCase):
         self.manager.state = self.root / 'state'
         self.manager.logs = self.manager.state / 'logs'
 
-    def test_production_keeps_all_staging_commands_and_uses_separate_units(self):
+    def test_production_keeps_all_service_instances_and_uses_separate_units(self):
         staging = json.loads((self.project / 'server/services-manager.json').read_text())
         self.assertEqual(set(staging['services']), set(self.manager.instances))
         self.assertEqual(26, len(self.manager.instances))
@@ -521,7 +521,6 @@ class ProductionServiceManagerTest(unittest.TestCase):
         for name, spec in self.manager.instances.items():
             with self.subTest(service=name):
                 original = staging['services'][name]
-                self.assertEqual(original['command'], spec['command'])
                 self.assertEqual(original['enabled'], spec['enabled'])
                 self.assertEqual(original.get('workers', 1), spec.get('workers', 1))
                 self.assertTrue(spec['unit'].startswith('bfmarkets-production-'))
@@ -534,7 +533,7 @@ class ProductionServiceManagerTest(unittest.TestCase):
             with self.subTest(service=name):
                 definition = self.manager.definition(name, spec).decode()
                 execution = next(line.partition('=')[2] for line in definition.splitlines() if line.startswith('ExecStart='))
-                self.assertEqual(['/www/server/php/83/bin/php', '/www/wwwroot/bfmarketsanalytics.com/artisan'] + spec['command'], shlex.split(execution))
+                self.assertEqual(['/www/server/php/83/bin/php', '-d', 'memory_limit=-1', '/www/wwwroot/bfmarketsanalytics.com/artisan'] + spec['command'], shlex.split(execution))
                 self.assertIn('User=www\n', definition)
                 self.assertIn('WorkingDirectory=/www/wwwroot/bfmarketsanalytics.com\n', definition)
                 self.assertIn('KillMode=control-group', definition)
@@ -543,6 +542,23 @@ class ProductionServiceManagerTest(unittest.TestCase):
         environment = (self.production / 'php-cli.conf').read_text()
         self.assertIn('Environment="PHPRC=/etc/php/8.3/cli-custom/php.ini"', environment)
         self.assertIn('PATH=/www/server/php/83/bin:', environment)
+
+    def test_every_production_queue_disables_memory_based_recycling(self):
+        workers = [spec for spec in self.manager.instances.values() if spec['command'][0] == 'queue:work']
+        self.assertEqual(19, len(workers))
+        for spec in workers:
+            with self.subTest(service=spec['name']):
+                self.assertEqual(['--memory=-1'], [arg for arg in spec['command'] if arg.startswith('--memory=')])
+                self.assertTrue(any(arg.startswith('--max-jobs=') for arg in spec['command']))
+        self.assertEqual('-1', self.manager.config['php_memory_limit'])
+
+    def test_production_memory_validation_accepts_unlimited_and_rejects_invalid_flags(self):
+        for limit in ['-1', '512M']:
+            definition = self.manager.definition('betfair', dict(self.manager.instances['betfair'], php_memory_limit=limit)).decode()
+            self.assertIn('memory_limit=' + limit, definition)
+        for limit in ['-2', '0', '512M --bad', '']:
+            with self.subTest(limit=limit), self.assertRaisesRegex(ValueError, '-1 or a positive size'):
+                self.manager.definition('betfair', dict(self.manager.instances['betfair'], php_memory_limit=limit))
 
     def test_prepare_generates_only_local_review_files_without_running_commands(self):
         with patch.object(production_module, 'run') as commands:
