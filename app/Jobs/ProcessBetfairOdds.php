@@ -21,7 +21,8 @@ class ProcessBetfairOdds implements ShouldQueue
     /** @param array<string|int, array<string, mixed>> $events */
     public function __construct(public string $sport, public string $feed, public array $events, public int $sequence, public float $receivedAt)
     {
-        $this->onConnection('sports-realtime')->onQueue('realtime-'.$sport);
+        $queue = $sport === 'horseracing' ? config('services.horseracing_ingestion_queue', 'realtime-horseracing') : 'realtime-'.$sport;
+        $this->onConnection('sports-realtime')->onQueue($queue);
     }
 
     public function handle(ListenBetfairOdds $listener): void
@@ -54,7 +55,7 @@ class ProcessBetfairOdds implements ShouldQueue
             $completedAt = microtime(true);
             $health = ['received_at' => $this->receivedAt, 'started_at' => $startedAt, 'completed_at' => $completedAt,
                 'queue_delay_ms' => round(($startedAt - $this->receivedAt) * 1000, 1),
-                'processing_ms' => round(($completedAt - $startedAt) * 1000, 1), 'sequence' => $this->sequence];
+                'processing_ms' => round(($completedAt - $startedAt) * 1000, 1), 'memory_mb' => round(memory_get_usage(true) / 1048576, 1), 'sequence' => $this->sequence];
             $store->put('Betfair:processing:'.$this->sport, $health, 86400);
             if ($health['queue_delay_ms'] > 2000 && $store->add('Betfair:processing-warning:'.$this->sport, true, 30)) {
                 Log::warning('Betfair sport processing is delayed.', ['sport' => $this->sport] + $health);

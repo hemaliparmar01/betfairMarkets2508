@@ -66,6 +66,9 @@ class Manager:
                 raise ValueError('workers must be between 1 and 32')
             if spec.get('restart', 'always') not in ('always', 'on-failure', 'no'):
                 raise ValueError('restart must be always, on-failure or no')
+            restart_delay = spec.get('restart_delay', self.config.get('restart_delay', 10))
+            if isinstance(restart_delay, bool) or not isinstance(restart_delay, int) or not 1 <= restart_delay <= 3600:
+                raise ValueError('restart_delay must be an integer between 1 and 3600 seconds')
             for index in range(count):
                 instance = name if count == 1 else name + '-' + str(index + 1)
                 unit = spec.get('unit', self.prefix + '-' + instance + '.service')
@@ -98,7 +101,7 @@ class Manager:
             return plistlib.dumps({
                 'Label': spec['label'], 'ProgramArguments': args, 'WorkingDirectory': cwd,
                 'RunAtLoad': True, 'KeepAlive': {'SuccessfulExit': False} if restart == 'on-failure' else restart == 'always',
-                'ThrottleInterval': self.config.get('restart_delay', 10),
+                'ThrottleInterval': spec.get('restart_delay', self.config.get('restart_delay', 10)),
                 'ExitTimeOut': spec.get('stop_timeout', self.config.get('stop_timeout', 120)),
                 'StandardOutPath': str(logs / (name + '.log')), 'StandardErrorPath': str(logs / (name + '.error.log')),
                 'EnvironmentVariables': {'PATH': str(Path(self.php).parent) + ':' + os.environ.get('PATH', '/usr/bin:/bin')},
@@ -111,7 +114,7 @@ class Manager:
         return ('[Unit]\nDescription=BF Markets ' + name + '\nAfter=network-online.target\nWants=network-online.target\n'
                 'StartLimitIntervalSec=300\nStartLimitBurst=20\n\n[Service]\nType=simple\nUser=' + user + '\n'
                 'WorkingDirectory=' + cwd + '\nExecStart=' + ' '.join(map(systemd_quote, args)) + '\n'
-                'Restart=' + restart + '\nRestartSec=' + str(self.config.get('restart_delay', 10)) + '\n'
+                'Restart=' + restart + '\nRestartSec=' + str(spec.get('restart_delay', self.config.get('restart_delay', 10))) + '\n'
                 'KillSignal=SIGTERM\nKillMode=control-group\nTimeoutStopSec=' + str(spec.get('stop_timeout', self.config.get('stop_timeout', 120))) + '\n'
                 'StandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\n').encode()
 

@@ -29,7 +29,9 @@ class MarketActivityStream
     {
         $ids = array_fill_keys(array_map('strval', array_keys($events)), true);
         $cache = sportsMatchRecordCache($prefix.':matches');
-        $index = $cache?->index(ordered: false);
+        $index = $prefix === 'HorseRacing' && $cache !== null
+            ? ['matches' => $cache->metadataForKeys(array_map(static fn (string|int $id): string => 'horseracing|'.$id, array_keys($events)))]
+            : $cache?->index(ordered: false);
         $entries = $index['matches'] ?? getInRedis($prefix.':matches', readOnly: true) ?? [];
         $keys = [];
         foreach ($entries as $key => $match) {

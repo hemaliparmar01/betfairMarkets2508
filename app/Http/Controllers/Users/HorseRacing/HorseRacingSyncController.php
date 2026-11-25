@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Users\HorseRacing;
 use App\Events\HorseRacingSportsScoreUpdated;
 use App\Http\Controllers\Controller;
 use App\Jobs\PersistHorseRacingMatches;
+use App\Jobs\PublishHorseRacingOdds;
 use App\Models\HorseRacingMarket;
 use App\Models\HorseRacingMatch;
 use App\Services\HorseRacingOddsStream;
@@ -269,7 +270,11 @@ class HorseRacingSyncController extends Controller
                 PersistHorseRacingMatches::markPending($liveChanges);
             }
             try {
-                app(HorseRacingOddsStream::class)->publish($liveChanges);
+                if ($deferPersistence) {
+                    PublishHorseRacingOdds::markPending($liveChanges);
+                } else {
+                    app(HorseRacingOddsStream::class)->publish($liveChanges);
+                }
             } catch (Throwable $error) {
                 Log::warning('Horse Racing direct odds broadcast failed; snapshot recovery remains available.', ['exception' => $error::class]);
             }

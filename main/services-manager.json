@@ -180,10 +180,27 @@
         "--timeout=15",
         "--tries=6",
         "--memory=-1",
-        "--max-jobs=100"
+        "--max-jobs=10000",
+        "--max-time=3600"
       ],
       "enabled": true,
-      "unit": "bfmarkets-production-realtime@horseracing.service"
+      "unit": "bfmarkets-production-realtime@horseracing.service",
+      "restart_delay": 1
+    },
+    "queue-ingest-horseracing": {
+      "command": [
+        "queue:work",
+        "sports-realtime",
+        "--queue=ingest-horseracing",
+        "--sleep=0",
+        "--timeout=60",
+        "--tries=6",
+        "--memory=-1",
+        "--max-jobs=10000",
+        "--max-time=3600"
+      ],
+      "enabled": true,
+      "restart_delay": 1
     },
     "pinnodds": {
       "command": [

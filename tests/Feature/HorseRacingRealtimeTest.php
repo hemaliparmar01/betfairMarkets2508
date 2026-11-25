@@ -7,11 +7,13 @@ use App\Events\HorseRacingOddsUpdated;
 use App\Http\Controllers\Users\HorseRacing\HorseRacingSyncController;
 use App\Jobs\PersistHorseRacingMatches;
 use App\Jobs\ProcessBetfairOdds;
+use App\Jobs\PublishHorseRacingOdds;
 use App\Models\HorseRacingMatch;
 use App\Services\CustomerAuthService;
 use App\Services\HorseRacingOddsStream;
 use Database\Factories\CustomerFactory;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Redis\Events\CommandExecuted;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -20,6 +22,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Redis;
 use ReflectionMethod;
+use Symfony\Component\Process\Process;
 use Tests\TestCase;
 
 class HorseRacingRealtimeTest extends TestCase
@@ -45,7 +48,7 @@ class HorseRacingRealtimeTest extends TestCase
         foreach (['default', 'cache'] as $connection) {
             config(['database.redis.'.$connection => ['url' => null, 'host' => $socket, 'port' => 0, 'database' => 0, 'password' => null, 'persistent' => false]]);
         }
-        config(['database.redis.options.prefix' => $prefix, 'cache.prefix' => $prefix, 'cache.stores.redis.driver' => 'redis', 'services.horseracing_match_cache' => false]);
+        config(['database.redis.options.prefix' => $prefix, 'cache.prefix' => $prefix, 'cache.stores.redis.driver' => 'redis', 'services.horseracing_match_cache' => false, 'services.horseracing_ingestion_queue' => 'ingest-horseracing']);
         Redis::purge();
         Redis::purge('cache');
         Cache::purge('redis');
@@ -78,7 +81,7 @@ class HorseRacingRealtimeTest extends TestCase
         (new ReflectionMethod(ListenBetfairOdds::class, 'dispatchPendingChanges'))->invokeArgs(app(ListenBetfairOdds::class), [&$pending]);
         Bus::assertDispatchedTimes(ProcessBetfairOdds::class, 4);
         foreach (['football', 'tennis', 'icehockey', 'horseracing'] as $sport) {
-            Bus::assertDispatched(ProcessBetfairOdds::class, fn ($job): bool => $job->sport === $sport && $job->queue === 'realtime-'.$sport && $job->connection === 'sports-realtime');
+            Bus::assertDispatched(ProcessBetfairOdds::class, fn ($job): bool => $job->sport === $sport && $job->queue === ($sport === 'horseracing' ? 'ingest-horseracing' : 'realtime-'.$sport) && $job->connection === 'sports-realtime');
         }
         Bus::assertDispatched(ProcessBetfairOdds::class, fn ($job): bool => $job->sport === 'horseracing' && $job->events === $horse);
         $this->assertSame(['horse_prematch' => [], 'prematch' => []], $pending);
@@ -113,6 +116,8 @@ class HorseRacingRealtimeTest extends TestCase
         $this->assertSame(2.34, array_values($this->race()['markets']['456_WIN'])[0]['currentBackOdds']);
         $this->assertDatabaseCount('horse_racing_matches', 0);
         Bus::assertDispatched(PersistHorseRacingMatches::class);
+        Event::assertNotDispatched(HorseRacingOddsUpdated::class);
+        (new PublishHorseRacingOdds)->handle(app(HorseRacingOddsStream::class));
         Event::assertDispatched(HorseRacingOddsUpdated::class, fn ($event): bool => $event->race['runners'][0]['currentBackOdds'] === 2.34
             && $event->broadcastOn()[0]->name === 'private-sports.horseracing.odds.456');
         (new PersistHorseRacingMatches)->handle(app(HorseRacingSyncController::class));
@@ -125,8 +130,9 @@ class HorseRacingRealtimeTest extends TestCase
     {
         Bus::fake()->except([ProcessBetfairOdds::class]);
         $queue = Queue::connection('sports-realtime');
-        $queue->push(new ProcessBetfairOdds('horseracing', 'horse_prematch', ['456' => $this->event(2.34)], 1, microtime(true)), '', 'realtime-horseracing');
-        $job = $queue->pop('realtime-horseracing');
+        $queue->push(new ProcessBetfairOdds('horseracing', 'horse_prematch', ['456' => $this->event(2.34)], 1, microtime(true)), '', 'ingest-horseracing');
+        $this->assertNull($queue->pop('realtime-horseracing'));
+        $job = $queue->pop('ingest-horseracing');
         $this->assertNotNull($job);
         $job->fire();
         $job->delete();
@@ -146,6 +152,103 @@ class HorseRacingRealtimeTest extends TestCase
         DB::disableQueryLog();
         $this->assertSame([], $queries);
         $this->assertSame(2.34, array_values($this->race()['markets']['456_WIN'])[0]['currentBackOdds']);
+    }
+
+    public function test_burst_ticks_keep_one_broadcast_job_and_send_only_the_latest_book(): void
+    {
+        Bus::fake()->except([PublishHorseRacingOdds::class]);
+        for ($sequence = 1; $sequence <= 20; $sequence++) {
+            $this->process($sequence, $this->event(2.4 - $sequence / 100));
+        }
+        $this->assertCount(20, array_values($this->race()['markets']['456_WIN'])[0]['backOddsHistory']);
+        $queue = Queue::connection('sports-realtime');
+        $this->assertSame(1, $queue->size('realtime-horseracing'));
+        $this->assertSame(1, Redis::zcard('HorseRacing:broadcast:pending'));
+        Event::assertNotDispatched(HorseRacingOddsUpdated::class);
+        $job = $queue->pop('realtime-horseracing');
+        $job->fire();
+        $job->delete();
+        Event::assertDispatchedTimes(HorseRacingOddsUpdated::class, 1);
+        Event::assertDispatched(HorseRacingOddsUpdated::class, fn ($event): bool => abs($event->race['runners'][0]['currentBackOdds'] - 2.2) < 0.0001);
+        $this->assertSame(0, Redis::zcard('HorseRacing:broadcast:pending'));
+    }
+
+    public function test_broadcast_failure_retains_dirty_races_and_retry_reads_the_latest_quote(): void
+    {
+        $this->process(1, $this->event());
+        $stream = \Mockery::mock(HorseRacingOddsStream::class);
+        $stream->shouldReceive('publish')->once()->andThrow(new \RuntimeException('Broadcast unavailable.'));
+        try {
+            (new PublishHorseRacingOdds)->handle($stream);
+            $this->fail('Broadcast failure must be retried.');
+        } catch (\RuntimeException $error) {
+            $this->assertSame('Broadcast unavailable.', $error->getMessage());
+        }
+        $this->assertSame(1, Redis::zcard('HorseRacing:broadcast:pending'));
+        $this->process(2, $this->event(2.34));
+        (new PublishHorseRacingOdds)->handle(app(HorseRacingOddsStream::class));
+        Event::assertDispatched(HorseRacingOddsUpdated::class, fn ($event): bool => $event->race['runners'][0]['currentBackOdds'] === 2.34);
+    }
+
+    public function test_new_tick_during_broadcast_is_not_removed_by_acknowledging_an_older_version(): void
+    {
+        $this->process(1, $this->event());
+        $stream = \Mockery::mock(HorseRacingOddsStream::class);
+        $stream->shouldReceive('publish')->once()->andReturnUsing(function (): void {
+            $this->process(2, $this->event(2.34));
+        });
+        (new PublishHorseRacingOdds)->handle($stream);
+        $this->assertSame(1, Redis::zcard('HorseRacing:broadcast:pending'));
+        (new PublishHorseRacingOdds)->handle(app(HorseRacingOddsStream::class));
+        $this->assertSame(0, Redis::zcard('HorseRacing:broadcast:pending'));
+        Event::assertDispatched(HorseRacingOddsUpdated::class, fn ($event): bool => $event->race['runners'][0]['currentBackOdds'] === 2.34);
+    }
+
+    public function test_broadcast_batches_read_only_five_requested_races_without_scanning_the_catalog(): void
+    {
+        $events = [];
+        for ($id = 456; $id < 462; $id++) {
+            $event = $this->event();
+            $event['markets'][0]['marketId'] = (string) $id;
+            $events[(string) $id] = $event;
+        }
+        (new ProcessBetfairOdds('horseracing', 'horse_prematch', $events, 1, microtime(true)))->handle(app(ListenBetfairOdds::class));
+        config(['services.horseracing_match_cache' => true]);
+        sportsMatchRecordCache('HorseRacing:matches', activeOnly: false)->migrate();
+        $commands = [];
+        Redis::enableEvents();
+        $this->app['events']->listen(CommandExecuted::class, function ($event) use (&$commands): void {
+            $commands[] = strtolower($event->command);
+        });
+        try {
+            (new PublishHorseRacingOdds)->handle(app(HorseRacingOddsStream::class));
+        } finally {
+            Redis::disableEvents();
+        }
+        $this->assertNotContains('hgetall', $commands);
+        Event::assertDispatchedTimes(HorseRacingOddsUpdated::class, 5);
+        $this->assertSame(1, Redis::zcard('HorseRacing:broadcast:pending'));
+    }
+
+    public function test_queue_configuration_is_production_specific_and_can_be_explicitly_overridden(): void
+    {
+        $code = 'require "vendor/autoload.php"; new Illuminate\Foundation\Application(getcwd()); $services = require "config/services.php"; echo $services["horseracing_ingestion_queue"];';
+        foreach (['production' => 'ingest-horseracing', 'staging' => 'realtime-horseracing', 'local' => 'realtime-horseracing', 'testing' => 'realtime-horseracing'] as $environment => $queue) {
+            $process = new Process([PHP_BINARY, '-r', $code], base_path(), ['APP_ENV' => $environment, 'HORSE_RACING_INGESTION_QUEUE' => false]);
+            $process->mustRun();
+            $this->assertSame($queue, $process->getOutput());
+        }
+        $process = new Process([PHP_BINARY, '-r', $code], base_path(), ['APP_ENV' => 'production', 'HORSE_RACING_INGESTION_QUEUE' => 'realtime-horseracing']);
+        $process->mustRun();
+        $this->assertSame('realtime-horseracing', $process->getOutput());
+    }
+
+    public function test_staging_and_local_can_keep_the_existing_queue_without_a_new_service(): void
+    {
+        config(['services.horseracing_ingestion_queue' => 'realtime-horseracing']);
+        $job = new ProcessBetfairOdds('horseracing', 'horse_prematch', [], 1, microtime(true));
+        $this->assertSame('realtime-horseracing', $job->queue);
+        $this->assertSame('realtime-football', (new ProcessBetfairOdds('football', 'prematch', [], 1, microtime(true)))->queue);
     }
 
     public function test_retried_older_batch_cannot_overwrite_newer_odds_but_other_races_are_not_skipped(): void

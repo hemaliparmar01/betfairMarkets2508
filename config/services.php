@@ -9,6 +9,7 @@ return [
     'icehockey_match_cache' => (bool) env('ICEHOCKEY_MATCH_CACHE', true),
     'americanfootball_match_cache' => (bool) env('AMERICANFOOTBALL_MATCH_CACHE', true),
     'baseball_match_cache' => (bool) env('BASEBALL_MATCH_CACHE', true),
+    'horseracing_ingestion_queue' => env('HORSE_RACING_INGESTION_QUEUE', env('APP_ENV', 'production') === 'production' ? 'ingest-horseracing' : 'realtime-horseracing'),
     'horseracing_match_cache' => (bool) env('HORSERACING_MATCH_CACHE', true),
     'greyhounds_match_cache' => (bool) env('GREYHOUNDS_MATCH_CACHE', true),
     'basketball_match_cache' => (bool) env('BASKETBALL_MATCH_CACHE', true),

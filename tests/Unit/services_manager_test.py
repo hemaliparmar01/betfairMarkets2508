@@ -515,11 +515,14 @@ class ProductionServiceManagerTest(unittest.TestCase):
 
     def test_production_keeps_all_service_instances_and_uses_separate_units(self):
         staging = json.loads((self.project / 'server/services-manager.json').read_text())
-        self.assertEqual(set(staging['services']), set(self.manager.instances))
-        self.assertEqual(26, len(self.manager.instances))
-        self.assertEqual(26, len({spec['unit'] for spec in self.manager.instances.values()}))
+        self.assertEqual(set(staging['services']) | {'queue-ingest-horseracing'}, set(self.manager.instances))
+        self.assertEqual(27, len(self.manager.instances))
+        self.assertEqual(27, len({spec['unit'] for spec in self.manager.instances.values()}))
         for name, spec in self.manager.instances.items():
             with self.subTest(service=name):
+                if name == 'queue-ingest-horseracing':
+                    self.assertTrue(spec['enabled'])
+                    continue
                 original = staging['services'][name]
                 self.assertEqual(original['enabled'], spec['enabled'])
                 self.assertEqual(original.get('workers', 1), spec.get('workers', 1))
@@ -545,12 +548,33 @@ class ProductionServiceManagerTest(unittest.TestCase):
 
     def test_every_production_queue_disables_memory_based_recycling(self):
         workers = [spec for spec in self.manager.instances.values() if spec['command'][0] == 'queue:work']
-        self.assertEqual(19, len(workers))
+        self.assertEqual(20, len(workers))
         for spec in workers:
             with self.subTest(service=spec['name']):
                 self.assertEqual(['--memory=-1'], [arg for arg in spec['command'] if arg.startswith('--memory=')])
                 self.assertTrue(any(arg.startswith('--max-jobs=') for arg in spec['command']))
         self.assertEqual('-1', self.manager.config['php_memory_limit'])
+
+    def test_horse_ingestion_and_broadcast_have_separate_queues_and_short_restart_gaps(self):
+        ingestion = self.manager.instances['queue-ingest-horseracing']
+        broadcast = self.manager.instances['queue-realtime-horseracing']
+        self.assertIn('--queue=ingest-horseracing', ingestion['command'])
+        self.assertIn('--queue=realtime-horseracing', broadcast['command'])
+        for spec in [ingestion, broadcast]:
+            self.assertIn('--sleep=0', spec['command'])
+            self.assertIn('--max-jobs=10000', spec['command'])
+            self.assertIn('--max-time=3600', spec['command'])
+            self.assertIn('RestartSec=1\n', self.manager.definition(spec['name'], spec).decode())
+        other = self.manager.instances['queue-realtime-football']
+        self.assertIn('RestartSec=10\n', self.manager.definition(other['name'], other).decode())
+
+    def test_production_rejects_invalid_per_service_restart_delay(self):
+        for delay in [0, -1, True, '1', 1.5, 3601]:
+            with self.subTest(delay=delay):
+                configuration = json.loads((self.production / 'services-manager.json').read_text())
+                configuration['services']['queue-ingest-horseracing']['restart_delay'] = delay
+                with patch.object(production_module.json, 'loads', return_value=configuration), self.assertRaises(ValueError):
+                    production_module.Manager()
 
     def test_production_memory_validation_accepts_unlimited_and_rejects_invalid_flags(self):
         for limit in ['-1', '512M']:
@@ -616,8 +640,8 @@ class ProductionServiceManagerTest(unittest.TestCase):
                 patch.object(production_module, 'run') as commands:
             self.manager.execute('install')
         installed = {path.name: path.read_bytes() for path in destination.iterdir()}
-        self.assertEqual(26, len(installed))
-        self.assertEqual([['systemctl', 'daemon-reload']] * 26, [call.args[0] for call in commands.call_args_list])
+        self.assertEqual(27, len(installed))
+        self.assertEqual([['systemctl', 'daemon-reload']] * 27, [call.args[0] for call in commands.call_args_list])
 
         with patch.object(self.manager, 'destination', side_effect=lambda spec: destination / spec['unit']), \
                 patch.object(self.manager, 'inspect', return_value=(True, 'inactive/dead')), \
