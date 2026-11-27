@@ -1,6 +1,7 @@
 @import 'tailwindcss';
 @import './auth.css';
 @import './football-alerts.css';
+@import './home.css';
 @custom-variant dark (&:where(.dark-mode, .dark-mode *));
 
 * {

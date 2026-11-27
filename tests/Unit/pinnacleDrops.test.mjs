@@ -20,6 +20,7 @@ function harness(alerts = [base], options = {}) {
     const state = { alerts, view: 'advanced', mode: 'prematch', sport: 'all', collapsedGroups: new Set(), flashes: new Map() };
     const context = vm.createContext({ AbortController, setTimeout() {}, clearTimeout() {}, state, matchStartLabels, URL, root: { dataset: { timezone: options.timezone ?? 'UTC' }, querySelectorAll: () => [], querySelector: selector => ({
         '[data-pinnacle-higher]': options.higher ? { checked: true } : null,
+        '[data-pinnacle-shock]': options.shock ? { checked: true } : null,
         '[data-pinnacle-league-picker]': {
             querySelector: selector => selector === '[data-pinnacle-leagues]' ? {
                 querySelectorAll: selector => selector === '[data-pinnacle-league]'
@@ -667,4 +668,58 @@ test('country and championship labels escape HTML from incoming alerts', () => {
     app.evaluate('render()');
     assert.match(app.output.innerHTML, /&lt;Uruguay(?:>|&gt;) - &lt;Segunda Division(?:>|&gt;)/);
     assert.doesNotMatch(app.output.innerHTML, /<Uruguay>|<Segunda Division>/);
+});
+
+
+test('Market Shock includes exactly 8% and above without rounding smaller drops or accumulating moves', () => {
+    const app = harness([], { shock: true });
+    assert.equal(app.evaluate('isMarketShock({from_price: 2.5, to_price: 2.3})'), true);
+    assert.equal(app.evaluate('isMarketShock({from_price: "3.00", to_price: "2.76"})'), true);
+    assert.equal(app.evaluate('isMarketShock({from_price: 2.5, to_price: 2.301})'), false);
+    assert.equal(app.evaluate('isMarketShock({from_price: 2.5, to_price: 2})'), true);
+    assert.equal(app.evaluate('isMarketShock({from_price: 2.5, to_price: 2.5})'), false);
+    assert.equal(app.evaluate('isMarketShock({from_price: 0, to_price: 2})'), false);
+    assert.equal(app.evaluate('isMarketShock({from_price: Infinity, to_price: 2})'), false);
+    assert.equal(app.evaluate('isMarketShock({from_price: 2.5, to_price: 1})'), false);
+});
+
+test('Market Shock checkbox filters raw current-to-new changes and combines with league and Betfair filters', () => {
+    const alerts = [
+        {...base, alert_key: 'eight', from_price: 2.5, to_price: 2.3, bf_back: 2.5, league_filter_key: 'a'},
+        {...base, alert_key: 'below', from_price: 2.5, to_price: 2.301, bf_back: 2.5, league_filter_key: 'a'},
+        {...base, alert_key: 'no-betfair', from_price: 2.5, to_price: 2, bf_back: null, league_filter_key: 'a'},
+        {...base, alert_key: 'other-league', from_price: 2.5, to_price: 2, bf_back: 2.5, league_filter_key: 'b'},
+    ];
+    const plain = harness(alerts);
+    assert.equal(plain.evaluate('filtered().length'), 4);
+    const shock = harness(alerts, {shock: true});
+    assert.equal(shock.evaluate('filtered().length'), 3);
+    const combined = harness(alerts, {shock: true, higher: true, leagues: ['a']});
+    assert.equal(combined.evaluate('filtered().length'), 1);
+    assert.equal(combined.evaluate('filtered()[0].alert_key'), 'eight');
+});
+
+test('Market Shock archive requests carry the checkbox and ignore stale responses after toggling it', async () => {
+    const app = harness([base], { shock: true });
+    Object.assign(app.state, { archive: true, sport: 'soccer' });
+    app.evaluate(`
+        globalThis.window = {location: {origin: 'https://example.test'}};
+        globalThis.requests = [];
+        root.dataset.sourceUrl = '/pinnacle';
+        globalThis.updateStatus = () => {};
+        globalThis.fetch = async url => {
+            requests.push(Object.fromEntries(url.searchParams));
+            return {ok: true, json: async () => {
+                shockOnly.checked = false;
+                return {data: [], has_more: false, next_cursor: null};
+            }};
+        };
+    `);
+    app.evaluate(source.slice(source.indexOf('                let refreshing ='), source.indexOf('                let realtimeAttempts =')));
+    await app.evaluate('refresh()');
+    assert.equal(app.evaluate('requests[0].shock'), '1');
+    assert.equal(app.state.alerts.length, 1);
+    await app.evaluate('refresh()');
+    assert.equal(app.evaluate('requests[1].shock'), '0');
+    assert.equal(app.state.alerts.length, 0);
 });

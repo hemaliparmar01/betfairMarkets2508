@@ -16,7 +16,7 @@ return [
     'name' => env('APP_NAME', 'Laravel'),
 
     'seo_pages' => [
-        'football.home' => [
+        'home' => [
             'title' => 'BF Markets Analytics | Sports Exchange Market Data & Analytics',
             'description' => 'Real-time sports exchange market data and analytics. Monitor odds movements, liquidity, market activity, momentum, volatility and automated alerts with BF Markets Analytics.',
         ],

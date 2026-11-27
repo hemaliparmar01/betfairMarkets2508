@@ -1,0 +1,200 @@
+/* Styles from the supplied landing page, scoped to protect the shared layout. */
+.market-edge-landing {
+    display: flex;
+    justify-content: center;
+    padding: 32px 0;
+    color: var(--landing-text-main);
+}
+.market-edge-landing {
+    --landing-bg-body: #f8fafc;
+    --landing-surface: #ffffff;
+    --landing-text-main: #0f172a;
+    --landing-text-muted: #64748b;
+    --landing-primary: #1e3a8a;
+    --landing-danger: #ef4444;
+    --landing-success: #10b981;
+    --landing-border: #e2e8f0;
+    --landing-brand-bg: #eff6ff;
+    --landing-brand-text: #1d4ed8;
+}
+.market-edge-landing .container {
+    max-width: 1100px;
+    width: 100%;
+    background: var(--landing-surface);
+    border-radius: 24px;
+    padding: 40px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.05);
+    border: 1px solid var(--landing-border);
+}
+.market-edge-landing .hero-section {
+    text-align: center;
+    margin-bottom: 40px;
+}
+.market-edge-landing .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--landing-brand-bg);
+    color: var(--landing-brand-text);
+    padding: 6px 16px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    margin-bottom: 16px;
+}
+.market-edge-landing h1 {
+    font-size: 36px;
+    font-weight: 800;
+    margin: 0 0 16px 0;
+    line-height: 1.2;
+}
+.market-edge-landing .subtitle {
+    font-size: 16px;
+    color: var(--landing-text-muted);
+    max-width: 700px;
+    margin: 0 auto;
+    line-height: 1.6;
+}
+.market-edge-landing .demo-card {
+    background: var(--landing-surface);
+    border: 1px solid var(--landing-border);
+    border-radius: 16px;
+    padding: 24px;
+    max-width: 700px;
+    margin: 0 auto 40px auto;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.03);
+}
+.market-edge-landing .demo-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--landing-border);
+    padding-bottom: 16px;
+    margin-bottom: 20px;
+}
+.market-edge-landing .demo-title {
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--landing-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.market-edge-landing .edge-badge {
+    background: #d1fae5;
+    color: #065f46;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-weight: 700;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.market-edge-landing .demo-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 16px;
+    align-items: center;
+    padding: 16px;
+    border-radius: 12px;
+    margin-bottom: 12px;
+    background: var(--landing-bg-body);
+}
+.market-edge-landing .demo-row.pinnacle {
+    border-left: 4px solid var(--landing-danger);
+}
+.market-edge-landing .demo-row.betfair {
+    border-left: 4px solid var(--landing-success);
+}
+.market-edge-landing .bookmaker-name {
+    font-weight: 700;
+    font-size: 15px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.market-edge-landing .odds-change {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 700;
+    font-size: 18px;
+    font-variant-numeric: tabular-nums;
+}
+.market-edge-landing .odds-old { color: var(--landing-text-muted); text-decoration: line-through; font-size: 14px; }
+.market-edge-landing .odds-new { color: var(--landing-danger); }
+.market-edge-landing .odds-current { color: var(--landing-success); }
+.market-edge-landing .row-note {
+    font-size: 13px;
+    color: var(--landing-text-muted);
+    text-align: right;
+    font-weight: 500;
+}
+.market-edge-landing .steps-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 24px;
+    margin-bottom: 40px;
+}
+.market-edge-landing .step-card {
+    text-align: center;
+    padding: 24px;
+}
+.market-edge-landing .step-icon {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: var(--landing-brand-bg);
+    color: var(--landing-brand-text);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    margin: 0 auto 16px auto;
+}
+.market-edge-landing .step-title {
+    font-weight: 700;
+    font-size: 16px;
+    margin-bottom: 8px;
+}
+.market-edge-landing .step-desc {
+    font-size: 14px;
+    color: var(--landing-text-muted);
+    line-height: 1.5;
+}
+.market-edge-landing .cta-btn {
+    display: block;
+    width: max-content;
+    margin: 0 auto;
+    background: var(--landing-primary);
+    color: white;
+    padding: 14px 32px;
+    border-radius: 12px;
+    text-decoration: none;
+    font-weight: 700;
+    font-size: 16px;
+    transition: 0.2s;
+}
+.market-edge-landing .cta-btn:hover { opacity: 0.9; }
+
+.dark-mode .market-edge-landing {
+    --landing-bg-body: rgb(var(--surface-soft));
+    --landing-surface: rgb(var(--surface));
+    --landing-text-main: rgb(var(--text-main));
+    --landing-text-muted: rgb(var(--text-muted));
+    --landing-border: rgb(var(--border));
+    --landing-brand-bg: rgb(var(--surface-elevated));
+    --landing-brand-text: rgb(var(--primary));
+}
+
+@media (max-width: 640px) {
+    .market-edge-landing .container { padding: 24px 16px; }
+    .market-edge-landing h1 { font-size: 28px; }
+    .market-edge-landing .demo-card { padding: 16px; }
+    .market-edge-landing .demo-header { flex-wrap: wrap; gap: 12px; }
+    .market-edge-landing .demo-row { grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px; }
+    .market-edge-landing .row-note { grid-column: 1 / -1; text-align: left; }
+    .market-edge-landing .steps-grid { grid-template-columns: 1fr; gap: 0; }
+    .market-edge-landing .cta-btn { width: fit-content; max-width: 100%; padding: 14px 20px; text-align: center; }
+}

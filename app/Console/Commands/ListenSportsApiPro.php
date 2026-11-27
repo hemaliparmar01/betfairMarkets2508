@@ -369,6 +369,10 @@ class ListenSportsApiPro extends Command
     {
         $pendingLock = null;
         try {
+            if ($sport === 'football' && $reason === 'startup') {
+                queueSportsSynchronization(FootballSyncController::class, 'syncSportsApiProPrematchData');
+                queueSportsSynchronization(FootballSyncController::class, 'syncBetFairPrematchData');
+            }
             $lockName = $config['prefix'].':sports-api-pro-recovery-pending';
             $pendingLock = Cache::store('redis')->lock($lockName, 3600);
             if (! $pendingLock->get()) {
@@ -399,8 +403,7 @@ class ListenSportsApiPro extends Command
                     }
                     Log::info('SportsAPI Pro live-state recovery completed', ['sport' => $sport, 'reason' => $reason, 'matches' => count($matches)]);
                 } catch (LockTimeoutException) {
-                    $job->release(2);
-                    $retrying = true;
+                    $retrying = releaseSportsJobAfterLockContention($job);
                 } catch (Throwable $e) {
                     Log::warning('SportsAPI Pro live-state recovery failed', ['sport' => $sport, 'reason' => $reason, 'exception' => $e::class, 'message' => $e->getMessage()]);
                 } finally {

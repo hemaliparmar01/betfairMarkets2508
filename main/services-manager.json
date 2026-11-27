@@ -29,9 +29,11 @@
         "--timeout=60",
         "--tries=3",
         "--memory=-1",
-        "--max-jobs=100"
+        "--max-jobs=100",
+        "--max-time=3600"
       ],
-      "enabled": true
+      "enabled": true,
+      "restart_delay": 1
     },
     "queue-sports-statistics": {
       "command": [
@@ -42,9 +44,11 @@
         "--timeout=45",
         "--tries=3",
         "--memory=-1",
-        "--max-jobs=100"
+        "--max-jobs=100",
+        "--max-time=3600"
       ],
-      "enabled": true
+      "enabled": true,
+      "restart_delay": 1
     },
     "queue-sports-images": {
       "command": [
@@ -54,10 +58,12 @@
         "--timeout=30",
         "--tries=3",
         "--memory=-1",
-        "--max-jobs=200"
+        "--max-jobs=200",
+        "--max-time=3600"
       ],
       "enabled": true,
-      "unit": "bfmarkets-production-queue-images.service"
+      "unit": "bfmarkets-production-queue-images.service",
+      "restart_delay": 1
     },
     "queue-realtime-football": {
       "command": [
@@ -68,10 +74,12 @@
         "--timeout=15",
         "--tries=6",
         "--memory=-1",
-        "--max-jobs=100"
+        "--max-jobs=10000",
+        "--max-time=3600"
       ],
       "enabled": true,
-      "unit": "bfmarkets-production-realtime@football.service"
+      "unit": "bfmarkets-production-realtime@football.service",
+      "restart_delay": 1
     },
     "queue-realtime-cricket": {
       "command": [
@@ -82,10 +90,12 @@
         "--timeout=15",
         "--tries=6",
         "--memory=-1",
-        "--max-jobs=150"
+        "--max-jobs=10000",
+        "--max-time=3600"
       ],
       "enabled": true,
-      "unit": "bfmarkets-production-realtime@cricket.service"
+      "unit": "bfmarkets-production-realtime@cricket.service",
+      "restart_delay": 1
     },
     "queue-realtime-icehockey": {
       "command": [
@@ -96,10 +106,12 @@
         "--timeout=15",
         "--tries=6",
         "--memory=-1",
-        "--max-jobs=150"
+        "--max-jobs=10000",
+        "--max-time=3600"
       ],
       "enabled": true,
-      "unit": "bfmarkets-production-realtime@icehockey.service"
+      "unit": "bfmarkets-production-realtime@icehockey.service",
+      "restart_delay": 1
     },
     "queue-realtime-americanfootball": {
       "command": [
@@ -110,10 +122,12 @@
         "--timeout=15",
         "--tries=6",
         "--memory=-1",
-        "--max-jobs=150"
+        "--max-jobs=10000",
+        "--max-time=3600"
       ],
       "enabled": true,
-      "unit": "bfmarkets-production-realtime@americanfootball.service"
+      "unit": "bfmarkets-production-realtime@americanfootball.service",
+      "restart_delay": 1
     },
     "queue-realtime-baseball": {
       "command": [
@@ -124,10 +138,12 @@
         "--timeout=15",
         "--tries=6",
         "--memory=-1",
-        "--max-jobs=150"
+        "--max-jobs=10000",
+        "--max-time=3600"
       ],
       "enabled": true,
-      "unit": "bfmarkets-production-realtime@baseball.service"
+      "unit": "bfmarkets-production-realtime@baseball.service",
+      "restart_delay": 1
     },
     "queue-realtime-basketball": {
       "command": [
@@ -138,10 +154,12 @@
         "--timeout=15",
         "--tries=6",
         "--memory=-1",
-        "--max-jobs=100"
+        "--max-jobs=10000",
+        "--max-time=3600"
       ],
       "enabled": true,
-      "unit": "bfmarkets-production-realtime@basketball.service"
+      "unit": "bfmarkets-production-realtime@basketball.service",
+      "restart_delay": 1
     },
     "queue-realtime-tennis": {
       "command": [
@@ -152,10 +170,12 @@
         "--timeout=15",
         "--tries=6",
         "--memory=-1",
-        "--max-jobs=150"
+        "--max-jobs=10000",
+        "--max-time=3600"
       ],
       "enabled": true,
-      "unit": "bfmarkets-production-realtime@tennis.service"
+      "unit": "bfmarkets-production-realtime@tennis.service",
+      "restart_delay": 1
     },
     "queue-realtime-greyhounds": {
       "command": [
@@ -166,10 +186,12 @@
         "--timeout=15",
         "--tries=6",
         "--memory=-1",
-        "--max-jobs=150"
+        "--max-jobs=10000",
+        "--max-time=3600"
       ],
       "enabled": true,
-      "unit": "bfmarkets-production-realtime@greyhounds.service"
+      "unit": "bfmarkets-production-realtime@greyhounds.service",
+      "restart_delay": 1
     },
     "queue-realtime-horseracing": {
       "command": [
@@ -245,7 +267,8 @@
         "--max-jobs=100"
       ],
       "enabled": true,
-      "unit": "bfmarkets-production-queue-sports-recovery.service"
+      "unit": "bfmarkets-production-queue-sports-recovery.service",
+      "restart_delay": 1
     },
     "queue-sports-timeline": {
       "command": [
@@ -260,7 +283,8 @@
         "--max-jobs=75"
       ],
       "enabled": true,
-      "unit": "bfmarkets-production-queue-sports-timeline.service"
+      "unit": "bfmarkets-production-queue-sports-timeline.service",
+      "restart_delay": 1
     },
     "queue-sports-sync-live": {
       "command": [
@@ -275,7 +299,8 @@
         "--max-jobs=50"
       ],
       "enabled": true,
-      "unit": "bfmarkets-production-queue-sports-sync-live.service"
+      "unit": "bfmarkets-production-queue-sports-sync-live.service",
+      "restart_delay": 1
     },
     "queue-sports-sync-prematch": {
       "command": [
@@ -290,7 +315,8 @@
         "--max-jobs=100"
       ],
       "enabled": true,
-      "unit": "bfmarkets-production-queue-sports-sync-prematch.service"
+      "unit": "bfmarkets-production-queue-sports-sync-prematch.service",
+      "restart_delay": 1
     },
     "queue-alerts": {
       "command": [
@@ -304,7 +330,8 @@
         "--max-jobs=200"
       ],
       "enabled": true,
-      "unit": "bfmarkets-production-queue-alerts.service"
+      "unit": "bfmarkets-production-queue-alerts.service",
+      "restart_delay": 1
     },
     "queue-alerts-platform": {
       "command": [
@@ -318,7 +345,8 @@
         "--max-jobs=200"
       ],
       "enabled": true,
-      "unit": "bfmarkets-production-queue-alerts-platform.service"
+      "unit": "bfmarkets-production-queue-alerts-platform.service",
+      "restart_delay": 1
     },
     "queue-alerts-telegram": {
       "command": [
@@ -332,7 +360,8 @@
         "--max-jobs=200"
       ],
       "enabled": true,
-      "unit": "bfmarkets-production-queue-alerts-telegram.service"
+      "unit": "bfmarkets-production-queue-alerts-telegram.service",
+      "restart_delay": 1
     }
   },
   "php_memory_limit": "-1"

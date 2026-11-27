@@ -342,3 +342,7 @@
 .pinnacle-filter-info[open] + .pinnacle-filter-help {
     display: block;
 }
+
+.pinnacle-shock-filter input {
+    accent-color: #dc2626;
+}

@@ -1016,7 +1016,75 @@ class AlertSystemTest extends TestCase
         $this->assertSame($starts, Carbon::parse(json_decode(DB::table('alerts')->find($id)->payload, true)['kickoff'])->timestamp);
     }
 
-    public function test_pinnacle_telegram_filters_use_selected_league_and_current_back_odds(): void
+    #[TestWith([2.5, 2.3, true])]
+    #[TestWith([3, 2.76, true])]
+    #[TestWith([2.5, 2.301, false])]
+    #[TestWith([2.5, 2, true])]
+    #[TestWith([2.5, 2.5, false])]
+    #[TestWith([0, 2, false])]
+    #[TestWith([2.5, 1, false])]
+    public function test_pinnacle_market_shock_uses_unrounded_single_price_transition(float $from, float $to, bool $expected): void
+    {
+        $this->assertSame($expected, AlertService::isPinnacleMarketShock(['from_price' => $from, 'to_price' => $to]));
+    }
+
+    public function test_pinnacle_market_shock_telegram_preference_sends_only_qualifying_drops_once(): void
+    {
+        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 99]])]);
+        $customer = $this->customer(['popup_enabled' => false]);
+        $this->actingAs($customer, 'customers')->patchJson('/notifications', [
+            'pinnacle_filters' => ['higher' => false, 'shock' => true, 'leagues' => null],
+        ])->assertOk()->assertJsonPath('pinnacle_filters.shock', true);
+        $drop = ['id' => 100, 'sport' => 'soccer', 'home' => 'Torino', 'away' => 'Monza', 'league' => 'Italy - Coppa Italia',
+            'sect' => 'Moneyline', 'outcome' => 'Home', 'starts' => time() + 3600, 'from_price' => 2.5, 'alerted' => time()];
+        $alerts = app(AlertService::class);
+        foreach (['exact-eight' => 2.3, 'rounded-eight' => 2.301] as $key => $price) {
+            $id = $alerts->process('prematch_drops', [], ['pinnacle' => [...$drop, 'alert_key' => $key, 'to_price' => $price]]);
+            $delivery = $this->delivery($id, $customer);
+            $alerts->deliver($delivery);
+            $alerts->deliver($delivery);
+            $this->assertDatabaseHas('alert_deliveries', ['id' => $delivery, 'status' => $key === 'exact-eight' ? 'sent' : 'skipped']);
+        }
+        Http::assertSentCount(1);
+        Http::assertSent(fn ($request): bool => str_contains($request['text'], 'PINNACLE MARKET SHOCK') && str_contains($request['text'], 'Market Shock (≥8%)'));
+        $this->patchJson('/notifications', [
+            'pinnacle_filters' => ['higher' => false, 'shock' => 'invalid', 'leagues' => null],
+        ])->assertUnprocessable()->assertJsonValidationErrors('pinnacle_filters.shock');
+    }
+
+    public function test_pinnacle_market_shock_archive_filters_before_pagination(): void
+    {
+        $this->travelTo(new \DateTimeImmutable('2026-11-07 12:00:00 UTC'));
+        config(['services.telegram.enabled' => false]);
+        $this->actingAs($this->customer(), 'customers');
+        Redis::shouldReceive('get')->never();
+        $drops = [];
+        for ($index = 1; $index <= 102; $index++) {
+            $drops[] = ['alert_key' => str_pad(dechex($index), 64, '0', STR_PAD_LEFT), 'id' => $index,
+                'sport' => 'soccer', 'home' => 'Home '.$index, 'away' => 'Away '.$index, 'sect' => 'Moneyline',
+                'from_price' => 2.5, 'to_price' => $index === 1 ? 2.3 : 2.301, 'alerted' => now()->timestamp - 600];
+        }
+        (new ProcessAlert('pinnacle', ['alerts' => $drops]))->handle(app(AlertService::class));
+        $this->getJson(route('football.pinnacle-odds', ['archive' => 1, 'shock' => 1]))->assertOk()
+            ->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', 1)->assertJsonPath('has_more', false);
+        $this->getJson(route('football.pinnacle-odds', ['archive' => 1, 'shock' => 0]))->assertOk()
+            ->assertJsonCount(100, 'data')->assertJsonPath('has_more', true);
+        Http::assertNothingSent();
+    }
+
+    #[TestWith(['en'])]
+    #[TestWith(['ka'])]
+    public function test_pinnacle_market_shock_tooltip_is_translated_and_checkbox_is_red(string $locale): void
+    {
+        app()->setLocale($locale);
+        $view = $this->blade('<x-pinnacle-shock-filter :checked="true" />');
+        $view->assertSee('data-pinnacle-shock', false)->assertSee('text-red-600', false)->assertSee('role="tooltip"', false)
+            ->assertSee(__('Shows only massive, sudden odds drops of 8% or more. Use this to instantly spot big market movements (Whale alerts) without scrolling through minor 1-2% changes.'));
+    }
+
+    #[TestWith([false])]
+    #[TestWith([true])]
+    public function test_pinnacle_telegram_filters_use_selected_league_and_current_back_odds(bool $shock): void
     {
         config(['services.sportsmeld.key' => null, 'services.football_fixture_index' => false]);
         Redis::shouldReceive('get')->with('Football:matches')->andReturn(null);
@@ -1034,7 +1102,7 @@ class AlertSystemTest extends TestCase
             'sect' => 'Moneyline', 'outcome' => 'Home', 'starts' => $starts, 'from_price' => 2.5, 'to_price' => 1.8, 'alerted' => time()];
         $league = AlertService::pinnacleLeague($drop)[2];
         $this->actingAs($customer, 'customers')->patchJson('/notifications', [
-            'pinnacle_filters' => ['higher' => true, 'leagues' => [$league]],
+            'pinnacle_filters' => ['higher' => true, 'shock' => $shock, 'leagues' => [$league]],
         ])->assertOk()->assertJsonPath('pinnacle_filters.leagues.0', $league);
 
         $alerts = app(AlertService::class);

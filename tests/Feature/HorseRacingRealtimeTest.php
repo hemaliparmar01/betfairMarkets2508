@@ -5,10 +5,12 @@ namespace Tests\Feature;
 use App\Console\Commands\ListenBetfairOdds;
 use App\Events\HorseRacingOddsUpdated;
 use App\Http\Controllers\Users\HorseRacing\HorseRacingSyncController;
+use App\Jobs\DrainBetfairOdds;
 use App\Jobs\PersistHorseRacingMatches;
 use App\Jobs\ProcessBetfairOdds;
 use App\Jobs\PublishHorseRacingOdds;
 use App\Models\HorseRacingMatch;
+use App\Services\BetfairPendingOdds;
 use App\Services\CustomerAuthService;
 use App\Services\HorseRacingOddsStream;
 use Database\Factories\CustomerFactory;
@@ -77,13 +79,14 @@ class HorseRacingRealtimeTest extends TestCase
     {
         $pending = ['horse_prematch' => ['456' => $this->event() + ['_next_event' => ['win_market_status' => 'SUSPENDED']]],
             'prematch' => ['10' => ['sport' => 'soccer'], '20' => ['sport' => 'tennis'], '30' => ['sport' => 'ice hockey']]];
-        $horse = $pending['horse_prematch'];
         (new ReflectionMethod(ListenBetfairOdds::class, 'dispatchPendingChanges'))->invokeArgs(app(ListenBetfairOdds::class), [&$pending]);
-        Bus::assertDispatchedTimes(ProcessBetfairOdds::class, 4);
+        Bus::assertDispatchedTimes(DrainBetfairOdds::class, 4);
         foreach (['football', 'tennis', 'icehockey', 'horseracing'] as $sport) {
-            Bus::assertDispatched(ProcessBetfairOdds::class, fn ($job): bool => $job->sport === $sport && $job->queue === ($sport === 'horseracing' ? 'ingest-horseracing' : 'realtime-'.$sport) && $job->connection === 'sports-realtime');
+            Bus::assertDispatched(DrainBetfairOdds::class, fn ($job): bool => $job->sport === $sport && $job->queue === ($sport === 'horseracing' ? 'ingest-horseracing' : 'realtime-'.$sport) && $job->connection === 'sports-realtime');
         }
-        Bus::assertDispatched(ProcessBetfairOdds::class, fn ($job): bool => $job->sport === 'horseracing' && $job->events === $horse);
+        $horse = array_values(app(BetfairPendingOdds::class)->batch('horseracing'))[0]['event'];
+        $this->assertSame('SUSPENDED', $horse['_next_event']['win_market_status']);
+        $this->assertSame($this->event()['markets'], $horse['markets']);
         $this->assertSame(['horse_prematch' => [], 'prematch' => []], $pending);
         $this->assertDatabaseCount('horse_racing_matches', 0);
     }
@@ -93,11 +96,11 @@ class HorseRacingRealtimeTest extends TestCase
         $pending = ['horse_prematch' => array_fill_keys(range(1, 80), $this->event())];
         $method = new ReflectionMethod(ListenBetfairOdds::class, 'dispatchPendingChanges');
         $method->invokeArgs(app(ListenBetfairOdds::class), [&$pending]);
-        Bus::assertDispatchedTimes(ProcessBetfairOdds::class, 4);
-        foreach (Bus::dispatched(ProcessBetfairOdds::class) as $job) {
-            $this->assertLessThanOrEqual(25, count($job->events));
-        }
-        $pending = ['horse_prematch' => ['456' => $this->event()]];
+        Bus::assertDispatchedTimes(DrainBetfairOdds::class, 1);
+        $this->assertSame(80, app(BetfairPendingOdds::class)->status('horseracing')['pending_events']);
+        $this->assertCount(5, app(BetfairPendingOdds::class)->batch('horseracing'));
+        Bus::assertDispatched(DrainBetfairOdds::class, fn ($job): bool => strlen(serialize($job)) < 2000);
+        $pending = ['prematch' => ['999' => ['sport' => 'soccer']]];
         $original = $pending;
         Bus::shouldReceive('dispatch')->once()->andThrow(new \RuntimeException('Queue unavailable.'));
         try {

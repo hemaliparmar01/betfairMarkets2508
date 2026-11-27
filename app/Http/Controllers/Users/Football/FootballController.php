@@ -72,6 +72,7 @@ class FootballController extends Controller
                     'view' => ['sometimes', 'in:simple,advanced'],
                     'market_filter' => ['sometimes', 'in:main,handicap,all'],
                     'time_filter' => ['sometimes', 'in:all,today,1h,3h,future'],
+                    'shock' => ['sometimes', 'boolean'],
                     'before_time' => ['nullable', 'required_with:before_key', 'integer', 'min:0'],
                     'before_key' => ['nullable', 'required_with:before_time', 'regex:/^[a-f0-9]{64}$/'],
                 ]);
@@ -90,6 +91,12 @@ class FootballController extends Controller
                     $query->where('expires_at', '>', $archiveNow->timestamp)
                         ->orWhere(fn ($query) => $query->whereNull('expires_at')->where('alerted_at', '>', $archiveNow->timestamp - PinnacleArchive::RETENTION_SECONDS));
                 });
+                if ($filters['shock'] ?? false) {
+                    $grammar = DB::connection()->getQueryGrammar();
+                    $from = 'CAST('.$grammar->wrap('payload->from_price').' AS DECIMAL(24,12))';
+                    $to = 'CAST('.$grammar->wrap('payload->to_price').' AS DECIMAL(24,12))';
+                    $archiveQuery->whereRaw("$from > 1 AND $to > 1 AND $to < $from AND ($from - $to) * 100 >= $from * 8");
+                }
                 $query = clone $archiveQuery;
                 if (! isset($filters['before_key'])) {
                     $pinnacleArchiveStats = app(PinnacleArchive::class)->summary($pinnacleArchiveStart->timestamp);

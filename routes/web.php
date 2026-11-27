@@ -76,7 +76,8 @@ Route::get('my-profile', [AuthController::class, 'profile'])->middleware('auth:c
 Route::put('my-profile', [AuthController::class, 'updateProfile'])->middleware('auth:customers')->name('customers.profile.update');
 Route::get('my-profile/avatar', [AuthController::class, 'avatar'])->middleware('auth:customers')->name('customers.avatar');
 
-Route::get('/', [FootballController::class, 'football'])->name('football.home');
+Route::get('/', [StaticPageController::class, 'home'])->name('home');
+Route::get('football', [FootballController::class, 'football'])->name('football.home');
 Route::get('market-activity/quote', MarketActivityQuoteController::class)->middleware('auth:customers')->name('market-activity.quote');
 Route::post('favorites/toggle', [FavoriteController::class, 'toggle'])->middleware('auth:customers')->name('favorites.toggle');
 Route::prefix('football')->name('football.')->group(function () {

@@ -3,16 +3,18 @@
 namespace App\Jobs;
 
 use App\Console\Commands\ListenBetfairOdds;
+use App\Exceptions\BetfairCacheBusy;
 use App\Services\SportsMatchCache;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
-use RuntimeException;
 
 class ProcessBetfairOdds implements ShouldQueue
 {
     use Queueable;
+
+    public bool $completed = false;
 
     public int $tries = 60;
 
@@ -27,6 +29,7 @@ class ProcessBetfairOdds implements ShouldQueue
 
     public function handle(ListenBetfairOdds $listener): void
     {
+        $this->completed = false;
         $store = Cache::store('redis');
         $lock = $store->lock('Betfair:processor:'.$this->sport, 75);
         if (! $lock->get()) {
@@ -38,6 +41,8 @@ class ProcessBetfairOdds implements ShouldQueue
         try {
             $events = array_filter($this->events, fn (array $event, string|int $id): bool => (int) $store->get($this->cursor((string) $id), 0) < $this->sequence || $this->terminalRace($event), ARRAY_FILTER_USE_BOTH);
             if ($events === []) {
+                $this->completed = true;
+
                 return;
             }
             foreach ($events as $id => $event) {
@@ -50,8 +55,9 @@ class ProcessBetfairOdds implements ShouldQueue
                 $store->put($this->cursor((string) $id), max($this->sequence, (int) $store->get($this->cursor((string) $id), 0)), 86400);
             }
             if ($remaining !== []) {
-                throw new RuntimeException('Betfair cache write is busy; pending updates will be retried.');
+                throw new BetfairCacheBusy('Betfair cache write is busy; pending updates will be retried.');
             }
+            $this->completed = true;
             $completedAt = microtime(true);
             $health = ['received_at' => $this->receivedAt, 'started_at' => $startedAt, 'completed_at' => $completedAt,
                 'queue_delay_ms' => round(($startedAt - $this->receivedAt) * 1000, 1),

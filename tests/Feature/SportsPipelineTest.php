@@ -33,6 +33,7 @@ use GuzzleHttp\Psr7\Response;
 use Illuminate\Bus\Dispatcher;
 use Illuminate\Contracts\Cache\Lock;
 use Illuminate\Contracts\Cache\LockTimeoutException;
+use Illuminate\Contracts\Queue\Job;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Request;
 use Illuminate\Queue\CallQueuedClosure;
@@ -1358,6 +1359,53 @@ class SportsPipelineTest extends TestCase
         $lock->release();
         $method->invoke($listener, strtolower($sport), $config, 'disconnect');
         Bus::assertDispatchedTimes(CallQueuedClosure::class, 1);
+    }
+
+    public function test_football_startup_queues_fresh_prematch_sources_without_waiting_for_schedule(): void
+    {
+        $listener = app(ListenSportsApiPro::class);
+        $config = (new ReflectionClass($listener))->getConstant('SPORTS')['football'];
+        $method = new ReflectionMethod($listener, 'queueLiveRecovery');
+        $method->invoke($listener, 'football', $config, 'startup', true);
+        $method->invoke($listener, 'football', $config, 'startup', true);
+        $jobs = Bus::dispatched(CallQueuedClosure::class);
+        $this->assertCount(3, $jobs);
+        $this->assertCount(2, $jobs->filter(static fn ($job): bool => $job->queue === 'sports-sync-prematch'));
+        $this->assertCount(1, $jobs->filter(static fn ($job): bool => $job->queue === 'sports-recovery'));
+        Http::assertNothingSent();
+    }
+
+    public function test_recovery_busy_lock_finishes_at_attempt_limit_and_releases_deduplication_lock(): void
+    {
+        $listener = app(ListenSportsApiPro::class);
+        $config = (new ReflectionClass($listener))->getConstant('SPORTS')['football'];
+        $controller = Mockery::mock(FootballSyncController::class);
+        $controller->shouldReceive('syncSportsApiProLiveData')->times(3)->andThrow(new LockTimeoutException);
+        $controller->shouldReceive('syncSportsApiProLiveData')->once()->andReturn([]);
+        $this->app->instance(FootballSyncController::class, $controller);
+        $method = new ReflectionMethod($listener, 'queueLiveRecovery');
+        $method->invoke($listener, 'football', $config, 'disconnect');
+        $job = Bus::dispatched(CallQueuedClosure::class)->first();
+        foreach ([1, 2, 3] as $attempt) {
+            $underlying = Mockery::mock(Job::class);
+            $underlying->shouldReceive('attempts')->once()->andReturn($attempt);
+            if ($attempt < 3) {
+                $underlying->shouldReceive('release')->once()->with($attempt * 10);
+            } else {
+                $underlying->shouldNotReceive('release');
+            }
+            $job->setJob($underlying);
+            $job->handle($this->app);
+            $lock = Cache::store('redis')->lock('Football:sports-api-pro-recovery-pending', 3600);
+            $this->assertSame($attempt === 3, $lock->get());
+            if ($attempt === 3) {
+                $lock->release();
+            }
+        }
+        $method->invoke($listener, 'football', $config, 'disconnect', true);
+        Bus::assertDispatchedTimes(CallQueuedClosure::class, 2);
+        Bus::dispatched(CallQueuedClosure::class)->last()->handle($this->app);
+        Event::assertDispatched($config['event']);
     }
 
     #[DataProvider('allSports')]

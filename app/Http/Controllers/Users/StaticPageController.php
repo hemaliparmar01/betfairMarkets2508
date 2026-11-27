@@ -3,9 +3,15 @@
 namespace App\Http\Controllers\Users;
 
 use App\Http\Controllers\Controller;
+use Illuminate\Contracts\View\View;
 
 class StaticPageController extends Controller
 {
+    public function home(): View
+    {
+        return view('users.home');
+    }
+
     public function disclaimer()
     {
         return view('users.staticPages.disclaimer');

@@ -57,7 +57,7 @@ class AppServiceProvider extends ServiceProvider
             $route = request()->route()?->getName();
             $page = config('app.seo_pages')[$route] ?? null;
             $fixtureSport = match ($route) {
-                'tennis.home' => 'Tennis', 'basketball.home' => 'Basketball', 'cricket.home' => 'Cricket',
+                'football.home' => 'Football', 'tennis.home' => 'Tennis', 'basketball.home' => 'Basketball', 'cricket.home' => 'Cricket',
                 'icehockey.home' => 'Ice Hockey', 'americanfootball.home' => 'American Football',
                 'baseball.home' => 'Baseball', 'horseracing.home' => 'Horse Racing', 'greyhounds.home' => 'Greyhounds',
                 default => null,
@@ -84,7 +84,7 @@ class AppServiceProvider extends ServiceProvider
                 'image' => $view->getData()['branding']['assets']['logo_'.app()->getLocale().'_light'] ?? asset('logo.png'),
                 'schema' => [],
             ];
-            if ($route === 'football.home') {
+            if ($route === 'home') {
                 $seo['schema'] = [
                     ['@type' => 'Organization', '@id' => $canonical.'#organization', 'name' => 'BF Markets Analytics', 'url' => $canonical, 'logo' => $seo['image'], 'parentOrganization' => ['@type' => 'Organization', 'name' => 'Digital Analytics Group LLC']],
                     ['@type' => 'WebSite', 'name' => 'BF Markets Analytics', 'url' => $canonical, 'inLanguage' => app()->getLocale(), 'publisher' => ['@id' => $canonical.'#organization']],

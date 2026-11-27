@@ -21,19 +21,20 @@ use App\Http\Controllers\Users\Greyhounds\GreyhoundsSyncController;
 use App\Http\Controllers\Users\HorseRacing\HorseRacingSyncController;
 use App\Http\Controllers\Users\IceHockey\IceHockeySyncController;
 use App\Http\Controllers\Users\Tennis\TennisSyncController;
-use App\Jobs\ProcessBetfairOdds;
+use App\Jobs\DrainBetfairOdds;
 use App\Models\FootballMarket;
 use App\Models\FootballMatch;
 use App\Services\BetfairOrderBook;
+use App\Services\BetfairPendingOdds;
 use App\Services\MarketActivityStream;
 use App\Services\SportsMatchCache;
 use Illuminate\Console\Command;
 use Illuminate\Contracts\Cache\LockTimeoutException;
-use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
+use OverflowException;
 use Revolt\EventLoop;
 use Throwable;
 
@@ -47,6 +48,8 @@ class ListenBetfairOdds extends Command
     protected $aliases = ['football:odds-listen'];
 
     protected $description = 'Listen to Betfair odds updates for all supported sports';
+
+    private bool $ingestionBackpressured = false;
 
     private float $lastHealthHeartbeat = 0;
 
@@ -161,6 +164,13 @@ class ListenBetfairOdds extends Command
                 $this->info('Connected to Betfair Odds WebSocket; authenticating.');
 
                 foreach ($socket as $message) {
+                    while ($this->ingestionBackpressured) {
+                        try {
+                            $this->dispatchPendingChanges($pendingChanges);
+                        } catch (OverflowException) {
+                            delay(0.05);
+                        }
+                    }
                     unset($frame, $changedEvents, $event, $eventDelta, $rows, $row, $race);
                     $frame = json_decode($message->buffer(), true);
 
@@ -507,17 +517,27 @@ class ListenBetfairOdds extends Command
                 }
             }
             foreach ($groups as $sport => $entries) {
-                foreach (array_chunk($entries, 25, preserve_keys: true) as $batch) {
-                    $receivedAt = min(array_map(static fn (array $event): float => (float) ($event['_received_at'] ?? microtime(true)), $batch));
-                    Bus::dispatch(new ProcessBetfairOdds($sport, $feed, $batch,
-                        (int) Redis::incr('Betfair:processing:sequence'), $receivedAt));
-                    foreach ($batch as $id => $event) {
+                try {
+                    $pending = app(BetfairPendingOdds::class);
+                    $sequence = (int) Redis::incr('Betfair:processing:sequence');
+                    foreach ($entries as $id => $event) {
+                        $pending->put($sport, $feed, (string) $id, $event, $sequence, (float) ($event['_received_at'] ?? microtime(true)));
+                    }
+                    DrainBetfairOdds::dispatch($sport);
+                    foreach ($entries as $id => $event) {
                         unset($pendingChanges[$feed][$id]);
                     }
+                } catch (OverflowException $error) {
+                    $this->ingestionBackpressured = true;
+                    DrainBetfairOdds::dispatch($sport);
+                    if (Cache::store('redis')->add('Betfair:capacity-warning:'.$sport, true, 30)) {
+                        Log::warning($error->getMessage(), ['sport' => $sport, 'buffer' => $pending->status($sport)]);
+                    }
+                    throw $error;
                 }
             }
         }
-
+        $this->ingestionBackpressured = false;
     }
 
     /**

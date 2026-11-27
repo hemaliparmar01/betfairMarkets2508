@@ -200,6 +200,7 @@ const updateNotificationStatus = (state, preferences = false) => {
         const filters = state.pinnacle_filters;
         const picker = notificationPage.querySelector('[data-pinnacle-league-picker]');
         notificationPage.querySelector('[data-pinnacle-higher]').checked = filters.higher;
+        notificationPage.querySelector('[data-pinnacle-shock]').checked = Boolean(filters.shock);
         picker.querySelectorAll('[data-pinnacle-league]').forEach(input => { input.checked = filters.leagues?.includes(input.value) ?? false; });
         syncPinnacleCountries(picker);
     }
@@ -258,6 +259,7 @@ if (notificationPage && notificationState) {
                 const leagues = Array.from(picker.querySelectorAll('[data-pinnacle-league]:checked'), input => input.value);
                 const pinnacle_filters = {
                     higher: notificationPage.querySelector('[data-pinnacle-higher]').checked,
+                    shock: notificationPage.querySelector('[data-pinnacle-shock]').checked,
                     leagues: leagues.length ? leagues : null,
                 };
                 updateNotificationStatus(await notificationRequest(alertContainer.dataset.preferencesUrl, 'PATCH', {

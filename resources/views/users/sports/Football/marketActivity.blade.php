@@ -221,6 +221,7 @@
                 @endforelse
             </div>
         </details>
+        <x-pinnacle-shock-filter :checked="request()->boolean('shock')" />
         </div>
 
         <div class="overflow-hidden rounded-2xl border border-[var(--border-neutral-5-6)] bg-[rgb(var(--surface))] dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--surface))]">
@@ -295,6 +296,7 @@
                 const matchKey = alert => `${sportKey(alert.sport)}|${alert.parent_id ?? alert.id ?? ''}|${alert.home ?? ''}|${alert.away ?? ''}|${isLive(alert)}`;
                 const escapeHtml = value => { const el = document.createElement('div'); el.textContent = String(value ?? ''); return el.innerHTML; };
                 const drop = alert => { const from = number(alert.from_price); const to = number(alert.to_price); return from > 0 && to > 0 ? ((from - to) / from) * 100 : 0; };
+                const isMarketShock = alert => { const from = number(alert.from_price); const to = number(alert.to_price); return Number.isFinite(from) && Number.isFinite(to) && from > 1 && to > 1 && to < from && to <= from * 0.92 + Number.EPSILON * Math.max(from, to) * 8; };
                 const fairPrice = alert => {
                     const provided = number(alert.nvp);
                     if (provided > 1 && Number.isFinite(provided)) return provided;
@@ -366,6 +368,7 @@
                 const matchesMarketFilter = alert => state.marketFilter === 'all' || (state.marketFilter === 'handicap' ? marketPriority(alert) === 3 : marketPriority(alert) < 3);
                 const leaguePicker = root.querySelector('[data-pinnacle-league-picker]');
                 const higherOnly = root.querySelector('[data-pinnacle-higher]');
+                const shockOnly = root.querySelector('[data-pinnacle-shock]');
                 const leagueList = leaguePicker.querySelector('[data-pinnacle-leagues]');
                 const knownLeagues = new Set(Array.from(leagueList.querySelectorAll('[data-pinnacle-league]'), input => input.value));
                 const countryInputs = new Map(Array.from(leagueList.querySelectorAll('[data-pinnacle-country]'), input => [input.dataset.pinnacleCountry, input]));
@@ -404,6 +407,7 @@
                         if (isLive(alert) || (number(alert.start_timestamp) > 0 && number(alert.start_timestamp) * 1000 <= now)) return false;
                         if (state.archive && (!Number.isFinite(archiveExpiresAt(alert)) || archiveExpiresAt(alert) <= now)) return false;
                         if (leagues.size && !leagues.has(alert.league_filter_key)) return false;
+                        if (shockOnly?.checked && !isMarketShock(alert)) return false;
                         if (state.archive && higherOnly?.checked && !(betfairPrice(alert) > number(alert.to_price) && number(alert.to_price) > 1)) return false;
                         if (!state.archive && Math.round(drop(alert) * 1e8) / 1e8 < (state.minDrop ?? 1)) return false;
                         const received = monitorTimestamp(alert);
@@ -453,7 +457,7 @@
                         button.querySelector('[data-count]').textContent = state.sportCounts?.[button.dataset.sport] ?? sportCounts.get(button.dataset.sport) ?? 0;
                         button.querySelector('[data-count]').hidden = Boolean(state.archive);
                     });
-                    root.querySelector('[data-alert-meta]').textContent = `${state.archive ? (globalThis.bfTranslations?.['Daily Archive'] ?? 'Daily Archive') + ' · ' : ''}${modeLabels[state.mode]} ${state.archive ? '· ODDS-DROP' : `· ODDS-DROP · ≥${state.minDrop ?? 1}%`}`;
+                    root.querySelector('[data-alert-meta]').textContent = `${state.archive ? (globalThis.bfTranslations?.['Daily Archive'] ?? 'Daily Archive') + ' · ' : ''}${modeLabels[state.mode]} ${state.archive ? '· ODDS-DROP' : `· ODDS-DROP · ≥${shockOnly?.checked ? Math.max(8, state.minDrop ?? 1) : state.minDrop ?? 1}%`}`;
 
                     if (!groups.size) {
                         root.querySelector('[data-alerts]').innerHTML = `<div class="px-5 py-14 text-center text-sm font-semibold text-[var(--text-muted-soft)]"><div class="mb-2 text-4xl opacity-50">🔍</div>{{ __('No alerts match the current filters.') }}</div>`;
@@ -637,9 +641,11 @@
                     try {
                         const url = new URL(root.dataset.sourceUrl, window.location.origin);
                         const requestedSport = state.sport;
+                        const requestedShock = Boolean(shockOnly?.checked);
                         url.searchParams.set('sport', requestedSport);
                         url.searchParams.set('mode', 'prematch');
                         if (state.archive) {
+                            url.searchParams.set('shock', requestedShock ? '1' : '0');
                             for (const [key, value] of Object.entries({ archive: '1', sport: state.sport, mode: 'prematch', view: state.view, market_filter: state.marketFilter, time_filter: state.timeFilter })) url.searchParams.set(key, value);
                             if (append && state.archiveCursor) {
                                 url.searchParams.set('before_time', state.archiveCursor.time);
@@ -649,7 +655,7 @@
                         const response = await fetch(url, { headers: { Accept: 'application/json' }, cache: 'no-store', signal: request.signal });
                         if (!response.ok) throw new Error(`HTTP ${response.status}`);
                         const payload = await response.json();
-                        if (requestedSport !== state.sport) { refreshAgain = true; return; }
+                        if (requestedSport !== state.sport || (state.archive && requestedShock !== Boolean(shockOnly?.checked))) { refreshAgain = true; return; }
                         state.sportCounts = payload.counts ?? {};
                         receiveAlerts(state.archive && append ? [...state.alerts, ...(payload.data ?? [])] : (payload.data ?? []));
                         if (state.archive) {
@@ -689,7 +695,10 @@
                     window.Echo.channel('sports.pinnacle.drops').listen('.drops.updated', scheduleRefresh);
                 };
                 root.addEventListener('change', event => {
-                    if (event.target === higherOnly || leaguePicker?.contains(event.target)) render();
+                    if (event.target === shockOnly) {
+                        render();
+                        if (state.archive) { state.archiveCursor = null; scheduleRefresh(); }
+                    } else if (event.target === higherOnly || leaguePicker?.contains(event.target)) render();
                 });
                 root.addEventListener('click', event => { if (event.target.closest('[data-mode]')) updateStatus(); });
                 updateStatus();

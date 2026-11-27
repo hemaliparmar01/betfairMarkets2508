@@ -185,6 +185,7 @@
                 @endforelse
             </div>
         </details>
+        <x-pinnacle-shock-filter help-id="notification-pinnacle-shock-help" />
             </div>
 
         </div>

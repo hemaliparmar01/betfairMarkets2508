@@ -56,7 +56,7 @@ class AlertService
     {
         $stored = DB::table('site_settings')->where('key', 'customer.pinnacle_filters.'.$customer->id)->value('value');
 
-        return (json_decode($stored ?? '', true) ?? []) + ['higher' => false, 'leagues' => null];
+        return (json_decode($stored ?? '', true) ?? []) + ['higher' => false, 'shock' => false, 'leagues' => null];
     }
 
     /** @param array<string, mixed> $drop */
@@ -223,7 +223,7 @@ class AlertService
 
     private function allowsTelegramFilter(Customer $customer, string $type, array $pinnacleFilters): bool
     {
-        $pinnacleSelected = ! empty($pinnacleFilters['higher']) || ! empty($pinnacleFilters['leagues']);
+        $pinnacleSelected = ! empty($pinnacleFilters['higher']) || ! empty($pinnacleFilters['shock']) || ! empty($pinnacleFilters['leagues']);
         $selected = $type === 'prematch_drops' ? $pinnacleSelected : $customer->{'tg_'.($type === 'goal' ? 'ltd' : $type)};
         if ($selected) {
             return true;
@@ -232,9 +232,24 @@ class AlertService
         return ! $pinnacleSelected && ! array_any(self::FILTERS, fn (string $filter): bool => (bool) $customer->{'tg_'.$filter});
     }
 
+    /** A single existing-to-new Pinnacle quote change; never a sum of separate drops.
+     * @param  array<string, mixed>  $drop
+     */
+    public static function isPinnacleMarketShock(array $drop): bool
+    {
+        $from = $drop['from_price'] ?? null;
+        $to = $drop['to_price'] ?? null;
+        if (! is_numeric($from) || ! is_numeric($to) || ! is_finite((float) $from) || ! is_finite((float) $to)
+            || (float) $from <= 1 || (float) $to <= 1 || (float) $to >= (float) $from) {
+            return false;
+        }
+
+        return (float) $to <= (float) $from * 0.92 + PHP_FLOAT_EPSILON * max((float) $from, (float) $to) * 8;
+    }
+
     private function allowsPinnacleDrop(array $filters, array $context, ?float &$betfairBack): bool
     {
-        if (empty($filters['higher']) && empty($filters['leagues'])) {
+        if (empty($filters['higher']) && empty($filters['shock']) && empty($filters['leagues'])) {
             return true;
         }
         $drop = $context['pinnacle_drop'] ?? [];
@@ -243,6 +258,12 @@ class AlertService
             $drop = array_find($feed['signals'] ?? $feed['alerts'] ?? [], fn (array $item): bool => ($item['alert_key'] ?? null) === $context['movement']['pinnacle_alert_key']) ?? [];
         }
         if (! empty($filters['leagues']) && ($drop === [] || ! in_array(self::pinnacleLeague($drop)[2], $filters['leagues'], true))) {
+            return false;
+        }
+        if (! empty($filters['shock']) && ! self::isPinnacleMarketShock([
+            'from_price' => $context['movement']['from'] ?? null,
+            'to_price' => $context['movement']['to'] ?? null,
+        ])) {
             return false;
         }
         if (empty($filters['higher'])) {
@@ -1193,6 +1214,9 @@ class AlertService
                     return 0;
                 }
                 if ($delivery->channel === 'telegram') {
+                    if ($alert->type === 'prematch_drops' && ! empty($pinnacleFilters['shock'])) {
+                        $payload['context']['pinnacle_market_shock'] = true;
+                    }
                     if ($alert->type === 'ltd' && isset($payload['context']['signal'], $payload['context']['betfair_match_id'])) {
                         $fixtures = FootballMatch::query()->where('betfair_match_id', $payload['context']['betfair_match_id'])->get();
                         $payload['context']['betfair_back'] = $fixtures->count() === 1 ? $this->sourceSignalBack($fixtures->first(), $payload['context']['signal']) : null;
@@ -1356,9 +1380,10 @@ class AlertService
                 $zone = new \DateTimeZone('UTC');
             }
             $kickoff = isset($payload['kickoff']) ? Carbon::parse($payload['kickoff'])->timezone($zone)->format('d M H:i') : '—';
+            $pinnacleShock = (bool) ($payload['context']['pinnacle_market_shock'] ?? false);
             $shock = $type === 'market_shock';
             $line = is_numeric($m['point'] ?? null) ? ' '.$m['point'] : '';
-            $text = ($shock ? "⚡️ BF MARKETS | MARKET SHOCK DETECTED\n\n🎯 Filter: Market Shock Detector" : "🟡 BF MARKETS | PREMATCH DROP ALERT 📉\n🟡 Filter: Betfair > Pinnacle Drop")
+            $text = ($pinnacleShock ? "⚡️ BF MARKETS | PINNACLE MARKET SHOCK\n🎯 Filter: Market Shock (≥8%)" : ($shock ? "⚡️ BF MARKETS | MARKET SHOCK DETECTED\n\n🎯 Filter: Market Shock Detector" : "🟡 BF MARKETS | PREMATCH DROP ALERT 📉\n🟡 Filter: Betfair > Pinnacle Drop"))
                 ."\n{$base}\n⏰ Kickoff: {$kickoff}\n\n📊 Market: ".str_replace('_', ' ', $m['market']).$line.' ('.$m['selection'].")\n📈 Odds Movement: {$from} 📉 {$to}".($drop === null ? '' : " (-{$drop}% Drop)");
 
             if (! $shock && $betfairBack !== null) {

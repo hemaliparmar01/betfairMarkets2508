@@ -1,6 +1,8 @@
 <?php
 
 return [
+    'betfair_pending_max_bytes' => (int) env('BETFAIR_PENDING_MAX_BYTES', 134217728),
+    'betfair_pending_max_events' => (int) env('BETFAIR_PENDING_MAX_EVENTS', 4096),
     'subscriptions' => [
         'expiry_timezone' => env('SUBSCRIPTION_EXPIRY_TIMEZONE', 'Asia/Tbilisi'),
     ],

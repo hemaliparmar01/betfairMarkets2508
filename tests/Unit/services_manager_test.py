@@ -566,7 +566,19 @@ class ProductionServiceManagerTest(unittest.TestCase):
             self.assertIn('--max-time=3600', spec['command'])
             self.assertIn('RestartSec=1\n', self.manager.definition(spec['name'], spec).decode())
         other = self.manager.instances['queue-realtime-football']
-        self.assertIn('RestartSec=10\n', self.manager.definition(other['name'], other).decode())
+        self.assertIn('RestartSec=1\n', self.manager.definition(other['name'], other).decode())
+
+    def test_production_workers_avoid_frequent_job_count_restarts(self):
+        workers = [spec for name, spec in self.manager.instances.items() if name.startswith('queue-')]
+        self.assertEqual(20, len(workers))
+        for spec in workers:
+            with self.subTest(service=spec['name']):
+                if spec['name'].startswith('queue-realtime-') or spec['name'] == 'queue-ingest-horseracing':
+                    self.assertIn('--max-jobs=10000', spec['command'])
+                else:
+                    self.assertLessEqual(int(next(arg.split('=')[1] for arg in spec['command'] if arg.startswith('--max-jobs='))), 200)
+                self.assertIn('--max-time=3600', spec['command'])
+                self.assertIn('RestartSec=1\n', self.manager.definition(spec['name'], spec).decode())
 
     def test_production_rejects_invalid_per_service_restart_delay(self):
         for delay in [0, -1, True, '1', 1.5, 3601]:
