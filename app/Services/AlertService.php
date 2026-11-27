@@ -767,6 +767,7 @@ class AlertService
             $match = ['team1' => $pinnacle['home'], 'team2' => $pinnacle['away'], 'tournament' => $pinnacle['league'] ?? null,
                 'timestamp' => $starts > 0 ? $starts : null, 'result_status' => 'Prematch'];
             $context = ['provider' => 'pinnacle', 'sport' => $sport, 'pinnacle_event_id' => $pinnacle['id'],
+                'pinnacle_nvp' => PinnacleEdge::fairPrice($pinnacle),
                 'pinnacle_drop' => array_intersect_key($pinnacle, array_flip(['id', 'sport', 'home', 'away', 'country', 'league', 'starts', 'start', 'parent_id', 'archive_parent', 'pinnacle_competition', 'sect', 'outcome', 'point', 'points', 'hdp', 'period', 'to_price'])),
                 'movement' => [
                     'market' => $pinnacle['sect'] ?? '', 'selection' => $pinnacle['outcome'] ?? '',
@@ -1214,6 +1215,15 @@ class AlertService
                     return 0;
                 }
                 if ($delivery->channel === 'telegram') {
+                    if ($alert->type === 'prematch_drops' && $betfairBack === null && ($payload['context']['pinnacle_nvp'] ?? null) !== null) {
+                        $drop = $payload['context']['pinnacle_drop'] ?? [];
+                        $betfairBack = Cache::remember('pinnacle:edge-back:'.hash('sha256', json_encode($drop)), 2, static function () use ($drop): ?float {
+                            $quotes = app(FootballController::class)->marketActivity(['alerts' => [$drop]], currentPinnacleQuote: true, localQuotesOnly: true);
+                            $back = $quotes[0]['bf_back'] ?? null;
+
+                            return is_numeric($back) && is_finite((float) $back) && (float) $back > 1 ? (float) $back : null;
+                        });
+                    }
                     if ($alert->type === 'prematch_drops' && ! empty($pinnacleFilters['shock'])) {
                         $payload['context']['pinnacle_market_shock'] = true;
                     }
@@ -1388,6 +1398,14 @@ class AlertService
 
             if (! $shock && $betfairBack !== null) {
                 $text .= "\n🟨 Betfair Back Odds: ".number_format($betfairBack, 2);
+            }
+
+            if (($payload['context']['provider'] ?? null) === 'pinnacle') {
+                $nvp = $payload['context']['pinnacle_nvp'] ?? PinnacleEdge::fairPrice($payload['context']['pinnacle_drop'] ?? []);
+                $edge = PinnacleEdge::calculate($betfairBack, $nvp);
+                $rounded = $edge === null ? null : round($edge, 1);
+                $indicator = $rounded > 0 ? '🟢' : ($rounded < 0 ? '🔴' : '⚪');
+                $text .= "\n📐 NVP: ".(is_numeric($nvp) ? number_format((float) $nvp, 2, '.', '') : 'N/A')."\n{$indicator} Edge %: ".PinnacleEdge::format($edge);
             }
 
             return $text.($shock ? "\n💥 Volume Surge: ".($m['volume'] ?? 'No data available') : "\n🔥 Price Drop: ".($drop === null ? '—' : "-{$drop}%"));

@@ -212,7 +212,7 @@ class AppServiceProvider extends ServiceProvider
                 'Earlier movements may be missing from the previously limited history.',
                 'Edge',
                 'Edge %',
-                'Edge % represents the percentage difference between the current odds (Pinnacle or Betfair) and the fair NVP odds. A positive (+) Edge % means you are getting better odds than the fair price (Value Bet). A negative (-) Edge % means the odds are lower than the fair price.',
+                'Edge % = (current Betfair Back odds / Pinnacle NVP - 1) × 100. Positive values are green, negative values are red, and zero is neutral. Unavailable current Betfair odds or NVP are shown as unavailable.',
                 'Expected goals (xG)',
                 'Expired',
                 'Expires in',

@@ -9,6 +9,7 @@ use App\Services\AlertService;
 use App\Services\FootballFixtureNames;
 use App\Services\MatchBackup;
 use App\Services\PinnacleArchive;
+use App\Services\PinnacleEdge;
 use App\Traits\FootballTrait;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\Client\ConnectionException;
@@ -35,7 +36,7 @@ class FootballController extends Controller
     }
 
     /** @param array{alerts: list<array<string, mixed>>, signals?: list<array<string, mixed>>}|null $pinnacleSnapshot */
-    public function marketActivity(?array $pinnacleSnapshot = null, bool $currentPinnacleQuote = false): View|JsonResponse|Response|array
+    public function marketActivity(?array $pinnacleSnapshot = null, bool $currentPinnacleQuote = false, bool $localQuotesOnly = false): View|JsonResponse|Response|array
     {
         $capture = $pinnacleSnapshot !== null;
         $checkAuthAndSubscription = $capture ? null : checkAuthAndSubscription();
@@ -230,7 +231,7 @@ class FootballController extends Controller
                     }
                 }
             }
-            $sportsmeldKey = $pinnacleArchive || ($capture && ! $currentPinnacleQuote) ? '' : (string) config('services.sportsmeld.key');
+            $sportsmeldKey = $localQuotesOnly || $pinnacleArchive || ($capture && ! $currentPinnacleQuote) ? '' : (string) config('services.sportsmeld.key');
             $sportKeys = ['soccer' => 'football', 'tennis' => 'tennis', 'basketball' => 'basketball', 'ice-hockey' => 'ice_hockey', 'american-football' => 'american_football', 'baseball' => 'baseball', 'cricket' => 'cricket'];
             $eventIds = [];
             foreach ($pinnacleAlerts as $alert) {
@@ -736,6 +737,13 @@ class FootballController extends Controller
                     }
                 } else {
                     $alert['full_market'][] = ['outcome' => $alert['outcome'] ?? '', 'to_price' => $alert['to_price'] ?? null, 'nvp' => $alert['nvp'] ?? null, 'bf_back' => $alert['bf_back']];
+                }
+            }
+            unset($alert);
+            foreach ($pinnacleAlerts as &$alert) {
+                $alert['edge_percent'] = PinnacleEdge::calculate($alert['bf_back'] ?? null, PinnacleEdge::fairPrice($alert));
+                foreach ($alert['full_market'] ?? [] as $index => $selection) {
+                    $alert['full_market'][$index]['edge_percent'] = PinnacleEdge::calculate($selection['bf_back'] ?? null, PinnacleEdge::fairPrice($selection));
                 }
             }
             unset($alert);

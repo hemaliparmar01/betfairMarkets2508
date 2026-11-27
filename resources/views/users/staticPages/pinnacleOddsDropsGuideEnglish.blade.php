@@ -121,25 +121,19 @@
         </div>
 
         <div class="market-activity-subsection [margin-bottom:24px] [padding-left:8px]">
-            <div class="market-activity-subsection-title [font-size:16px] font-semibold [color:var(--text-brand-60)] [margin-bottom:10px] [transition:color_0.3s] dark:[color:rgb(var(--text-soft))]">4.3 Pinnacle Edge — Pinnacle Value</div>
-            <p><strong>Definition:</strong> Pinnacle Edge shows Pinnacle&#039;s price deviation from the fair price.</p>
-            <div class="market-activity-example-block my-3 max-w-full overflow-x-auto rounded-xl border border-[var(--border-neutral-5-4)] bg-[var(--surface-neutral-0-10)] p-4 font-mono text-[13px] leading-relaxed whitespace-pre-line text-[var(--text-secondary-strong)] dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--bg))] dark:text-[rgb(var(--text-soft))]">Example: <span class="hl-blue font-semibold text-[rgb(var(--primary))] dark:text-[rgb(var(--primary))]">Pinnacle Edge</span> = (1.95 / 2.02 - 1) × 100 = <span class="hl-red font-semibold text-[var(--text-danger-15)] dark:text-[rgb(var(--danger))]">-3.47%</span></div>
-        </div>
-
-        <div class="market-activity-subsection [margin-bottom:24px] [padding-left:8px]">
-            <div class="market-activity-subsection-title [font-size:16px] font-semibold [color:var(--text-brand-60)] [margin-bottom:10px] [transition:color_0.3s] dark:[color:rgb(var(--text-soft))]">4.4 Betfair Edge — Betfair Value</div>
-            <p><strong>Definition:</strong> Betfair Edge shows Betfair&#039;s Back price deviation from the fair price.</p>
-            <div class="market-activity-example-block my-3 max-w-full overflow-x-auto rounded-xl border border-[var(--border-neutral-5-4)] bg-[var(--surface-neutral-0-10)] p-4 font-mono text-[13px] leading-relaxed whitespace-pre-line text-[var(--text-secondary-strong)] dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--bg))] dark:text-[rgb(var(--text-soft))]">Example: <span class="hl-green font-semibold text-[var(--text-success-35)] dark:text-[rgb(var(--success))]">Betfair Edge</span> = (2.14 / 2.02 - 1) × 100 = <span class="hl-green font-semibold text-[var(--text-success-35)] dark:text-[rgb(var(--success))]">+5.94%</span></div>
+            <div class="market-activity-subsection-title [font-size:16px] font-semibold [color:var(--text-brand-60)] [margin-bottom:10px] [transition:color_0.3s] dark:[color:rgb(var(--text-soft))]">4.3 Edge % — Betfair vs Pinnacle NVP</div>
+            <p><strong>Definition:</strong> Edge % shows Betfair&#039;s Back price deviation from the fair price.</p>
+            <div class="market-activity-example-block my-3 max-w-full overflow-x-auto rounded-xl border border-[var(--border-neutral-5-4)] bg-[var(--surface-neutral-0-10)] p-4 font-mono text-[13px] leading-relaxed whitespace-pre-line text-[var(--text-secondary-strong)] dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--bg))] dark:text-[rgb(var(--text-soft))]">Example: <span class="hl-green font-semibold text-[var(--text-success-35)] dark:text-[rgb(var(--success))]">Edge %</span> = (2.14 / 2.02 - 1) × 100 = <span class="hl-green font-semibold text-[var(--text-success-35)] dark:text-[rgb(var(--success))]">+5.94%</span></div>
             <div class="market-activity-info-card [background:linear-gradient(135deg,_var(--surface-panel),_var(--surface-hover))] [border-left:4px_solid_var(--border-primary)] [border-radius:0_12px_12px_0] [padding:16px_20px] [margin:14px_0_18px] [transition:0.3s] dark:[background:linear-gradient(135deg,_rgb(var(--surface-soft)),_rgb(var(--surface-soft)))] dark:[border-left-color:rgb(var(--border))] [&_p]:[margin-bottom:6px]! [&_p]:[font-size:14px]! [&_.label]:[font-size:11px] [&_.label]:[font-weight:700] [&_.label]:[text-transform:uppercase] [&_.label]:[color:rgb(var(--primary))] [&_.label]:[letter-spacing:0.5px] [&_.label]:[margin-bottom:6px] dark:[&_.label]:[color:rgb(var(--primary))]">
                 <div class="label">Interpretation</div>
-                <p><span class="hl-green font-semibold text-[var(--text-success-35)] dark:text-[rgb(var(--success))]">> +3%</span> → Green (value)</p>
-                <p><span class="hl-orange font-semibold text-[var(--text-warning-25)] dark:text-[rgb(var(--warning))]">0% - +3%</span> → Yellow (borderline)</p>
-                <p><span class="hl-muted text-[rgb(var(--text-muted))] dark:text-[rgb(var(--text-soft))]">< 0%</span> → Grey (no value)</p>
+                <p><span class="hl-green font-semibold text-[var(--text-success-35)] dark:text-[rgb(var(--success))]">> 0%</span> → Green (value)</p>
+                <p><span class="hl-orange font-semibold text-[var(--text-warning-25)] dark:text-[rgb(var(--warning))]">0%</span> → Neutral (equal price)</p>
+                <p><span class="hl-muted text-[rgb(var(--text-muted))] dark:text-[rgb(var(--text-soft))]">< 0%</span> → Red (below fair price)</p>
             </div>
         </div>
 
         <div class="market-activity-subsection [margin-bottom:24px] [padding-left:8px]">
-            <div class="market-activity-subsection-title [font-size:16px] font-semibold [color:var(--text-brand-60)] [margin-bottom:10px] [transition:color_0.3s] dark:[color:rgb(var(--text-soft))]">4.5 Live vs Prematch Modes</div>
+            <div class="market-activity-subsection-title [font-size:16px] font-semibold [color:var(--text-brand-60)] [margin-bottom:10px] [transition:color_0.3s] dark:[color:rgb(var(--text-soft))]">4.4 Live vs Prematch Modes</div>
             <div class="w-full min-w-0 overflow-x-auto overscroll-x-contain rounded-xl" role="region" aria-label="Scrollable guide table" tabindex="0"><table class="market-activity-guide-table min-w-[480px] w-full [border-collapse:collapse] [margin:12px_0_16px] [font-size:13px] [border-radius:12px] overflow-hidden [box-shadow:0_2px_8px_var(--shadow-neutral-100)] [&_thead_th]:[background:var(--surface-control)]! [&_thead_th]:[color:var(--text-brand-60)]! [&_thead_th]:[font-weight:600]! [&_thead_th]:[font-size:11px]! [&_thead_th]:[text-transform:uppercase]! [&_thead_th]:[letter-spacing:0.3px]! [&_thead_th]:[padding:10px_14px]! [&_thead_th]:[text-align:left]! [&_thead_th]:[border-bottom:2px_solid_var(--border-neutral-5-2)]! [&_thead_th]:[transition:0.3s]! dark:[&_thead_th]:[background:rgb(var(--surface-soft))]! dark:[&_thead_th]:[color:rgb(var(--text-soft))]! dark:[&_thead_th]:[border-bottom-color:rgb(var(--border))]! [&_tbody_td]:[padding:9px_14px]! [&_tbody_td]:[border-bottom:1px_solid_var(--border-neutral-5-3)]! [&_tbody_td]:[color:var(--text-secondary-strong)]! [&_tbody_td]:[transition:0.3s]! [&_tbody_td]:[vertical-align:top]! dark:[&_tbody_td]:[border-bottom-color:rgb(var(--border))]! dark:[&_tbody_td]:[color:rgb(var(--text-soft))]! [&_.value-col]:[font-weight:600]! [&_.value-col]:[color:rgb(var(--text-main))]! dark:[&_.value-col]:[color:var(--text-on-primary)]! [&_tbody_tr:hover_td]:[background:var(--surface-row)] dark:[&_tbody_tr:hover_td]:[background:rgb(var(--surface-soft))]">
                 <thead>
                     <tr>
@@ -161,7 +155,7 @@
         </div>
 
         <div class="market-activity-subsection [margin-bottom:24px] [padding-left:8px]">
-            <div class="market-activity-subsection-title [font-size:16px] font-semibold [color:var(--text-brand-60)] [margin-bottom:10px] [transition:color_0.3s] dark:[color:rgb(var(--text-soft))]">4.6 Sport Filters</div>
+            <div class="market-activity-subsection-title [font-size:16px] font-semibold [color:var(--text-brand-60)] [margin-bottom:10px] [transition:color_0.3s] dark:[color:rgb(var(--text-soft))]">4.5 Sport Filters</div>
             <p>The page supports the following sports:</p>
             <ul class="guide-list [&_li::before]:content-['▸'] list-none p-0 [margin:8px_0_14px] [&_li]:[padding:5px_0_5px_22px] [&_li]:[position:relative] [&_li]:[font-size:13px] [&_li::before]:[position:absolute] [&_li::before]:[left:4px] [&_li::before]:[color:rgb(var(--primary))] [&_li::before]:[font-weight:700] dark:[&_li::before]:[color:rgb(var(--primary))]">
                 <li>⚽ Football</li>
@@ -175,7 +169,7 @@
         </div>
 
         <div class="market-activity-subsection [margin-bottom:24px] [padding-left:8px]">
-            <div class="market-activity-subsection-title [font-size:16px] font-semibold [color:var(--text-brand-60)] [margin-bottom:10px] [transition:color_0.3s] dark:[color:rgb(var(--text-soft))]">4.7 Simple vs Advanced View</div>
+            <div class="market-activity-subsection-title [font-size:16px] font-semibold [color:var(--text-brand-60)] [margin-bottom:10px] [transition:color_0.3s] dark:[color:rgb(var(--text-soft))]">4.6 Simple vs Advanced View</div>
             <div class="w-full min-w-0 overflow-x-auto overscroll-x-contain rounded-xl" role="region" aria-label="Scrollable guide table" tabindex="0"><table class="market-activity-guide-table min-w-[480px] w-full [border-collapse:collapse] [margin:12px_0_16px] [font-size:13px] [border-radius:12px] overflow-hidden [box-shadow:0_2px_8px_var(--shadow-neutral-100)] [&_thead_th]:[background:var(--surface-control)]! [&_thead_th]:[color:var(--text-brand-60)]! [&_thead_th]:[font-weight:600]! [&_thead_th]:[font-size:11px]! [&_thead_th]:[text-transform:uppercase]! [&_thead_th]:[letter-spacing:0.3px]! [&_thead_th]:[padding:10px_14px]! [&_thead_th]:[text-align:left]! [&_thead_th]:[border-bottom:2px_solid_var(--border-neutral-5-2)]! [&_thead_th]:[transition:0.3s]! dark:[&_thead_th]:[background:rgb(var(--surface-soft))]! dark:[&_thead_th]:[color:rgb(var(--text-soft))]! dark:[&_thead_th]:[border-bottom-color:rgb(var(--border))]! [&_tbody_td]:[padding:9px_14px]! [&_tbody_td]:[border-bottom:1px_solid_var(--border-neutral-5-3)]! [&_tbody_td]:[color:var(--text-secondary-strong)]! [&_tbody_td]:[transition:0.3s]! [&_tbody_td]:[vertical-align:top]! dark:[&_tbody_td]:[border-bottom-color:rgb(var(--border))]! dark:[&_tbody_td]:[color:rgb(var(--text-soft))]! [&_.value-col]:[font-weight:600]! [&_.value-col]:[color:rgb(var(--text-main))]! dark:[&_.value-col]:[color:var(--text-on-primary)]! [&_tbody_tr:hover_td]:[background:var(--surface-row)] dark:[&_tbody_tr:hover_td]:[background:rgb(var(--surface-soft))]">
                 <thead>
                     <tr>
@@ -190,14 +184,14 @@
                     </tr>
                     <tr>
                         <td class="value-col">Advanced</td>
-                        <td>Detailed view — more info (NVP, Pinnacle Edge, Betfair sizes)</td>
+                        <td>Detailed view — more info (NVP, Edge %, Betfair sizes)</td>
                     </tr>
                 </tbody>
             </table></div>
         </div>
 
         <div class="market-activity-subsection [margin-bottom:24px] [padding-left:8px]">
-            <div class="market-activity-subsection-title [font-size:16px] font-semibold [color:var(--text-brand-60)] [margin-bottom:10px] [transition:color_0.3s] dark:[color:rgb(var(--text-soft))]">4.8 Group by Match</div>
+            <div class="market-activity-subsection-title [font-size:16px] font-semibold [color:var(--text-brand-60)] [margin-bottom:10px] [transition:color_0.3s] dark:[color:rgb(var(--text-soft))]">4.7 Group by Match</div>
             <p>If a match has multiple alerts (e.g. 4 different totals), they are grouped into one card:</p>
             <ul class="guide-list [&_li::before]:content-['▸'] list-none p-0 [margin:8px_0_14px] [&_li]:[padding:5px_0_5px_22px] [&_li]:[position:relative] [&_li]:[font-size:13px] [&_li::before]:[position:absolute] [&_li::before]:[left:4px] [&_li::before]:[color:rgb(var(--primary))] [&_li::before]:[font-weight:700] dark:[&_li::before]:[color:rgb(var(--primary))]">
                 <li><strong>Header:</strong> Match + sport + league + alert count</li>
@@ -207,7 +201,7 @@
         </div>
 
         <div class="market-activity-subsection [margin-bottom:24px] [padding-left:8px]">
-            <div class="market-activity-subsection-title [font-size:16px] font-semibold [color:var(--text-brand-60)] [margin-bottom:10px] [transition:color_0.3s] dark:[color:rgb(var(--text-soft))]">4.9 Detail Overlay</div>
+            <div class="market-activity-subsection-title [font-size:16px] font-semibold [color:var(--text-brand-60)] [margin-bottom:10px] [transition:color_0.3s] dark:[color:rgb(var(--text-soft))]">4.8 Detail Overlay</div>
             <p>Clicking any alert opens a detailed popup:</p>
             <div class="w-full min-w-0 overflow-x-auto overscroll-x-contain rounded-xl" role="region" aria-label="Scrollable guide table" tabindex="0"><table class="market-activity-guide-table min-w-[480px] w-full [border-collapse:collapse] [margin:12px_0_16px] [font-size:13px] [border-radius:12px] overflow-hidden [box-shadow:0_2px_8px_var(--shadow-neutral-100)] [&_thead_th]:[background:var(--surface-control)]! [&_thead_th]:[color:var(--text-brand-60)]! [&_thead_th]:[font-weight:600]! [&_thead_th]:[font-size:11px]! [&_thead_th]:[text-transform:uppercase]! [&_thead_th]:[letter-spacing:0.3px]! [&_thead_th]:[padding:10px_14px]! [&_thead_th]:[text-align:left]! [&_thead_th]:[border-bottom:2px_solid_var(--border-neutral-5-2)]! [&_thead_th]:[transition:0.3s]! dark:[&_thead_th]:[background:rgb(var(--surface-soft))]! dark:[&_thead_th]:[color:rgb(var(--text-soft))]! dark:[&_thead_th]:[border-bottom-color:rgb(var(--border))]! [&_tbody_td]:[padding:9px_14px]! [&_tbody_td]:[border-bottom:1px_solid_var(--border-neutral-5-3)]! [&_tbody_td]:[color:var(--text-secondary-strong)]! [&_tbody_td]:[transition:0.3s]! [&_tbody_td]:[vertical-align:top]! dark:[&_tbody_td]:[border-bottom-color:rgb(var(--border))]! dark:[&_tbody_td]:[color:rgb(var(--text-soft))]! [&_.value-col]:[font-weight:600]! [&_.value-col]:[color:rgb(var(--text-main))]! dark:[&_.value-col]:[color:var(--text-on-primary)]! [&_tbody_tr:hover_td]:[background:var(--surface-row)] dark:[&_tbody_tr:hover_td]:[background:rgb(var(--surface-soft))]">
                 <thead>
@@ -219,7 +213,7 @@
                 <tbody>
                     <tr>
                         <td class="value-col">Top Block</td>
-                        <td>Drop, Pinnacle, NVP, Pinnacle Edge, Betfair Back/Lay, Sizes, Betfair Edge, Time</td>
+                        <td>Drop, Pinnacle, NVP, Betfair Back/Lay, Sizes, Edge %, Time</td>
                     </tr>
                     <tr>
                         <td class="value-col">Full Market</td>
@@ -433,8 +427,8 @@
 
         <div class="market-activity-subsection [margin-bottom:24px] [padding-left:8px]">
             <div class="market-activity-subsection-title [font-size:16px] font-semibold [color:var(--text-brand-60)] [margin-bottom:10px] [transition:color_0.3s] dark:[color:rgb(var(--text-soft))]">8.2 Example: Comparing Pinnacle and Betfair</div>
-            <p>Using the same outcome, suppose Betfair shows a Back price of <strong>2.14</strong>. The page calculates Betfair Edge as:</p>
-            <div class="market-activity-example-block my-3 max-w-full overflow-x-auto rounded-xl border border-[var(--border-neutral-5-4)] bg-[var(--surface-neutral-0-10)] p-4 font-mono text-[13px] leading-relaxed whitespace-pre-line text-[var(--text-secondary-strong)] dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--bg))] dark:text-[rgb(var(--text-soft))]">Betfair Edge = (2.14 / 2.02 - 1) × 100 ≈ <span class="hl-green font-semibold text-[var(--text-success-35)] dark:text-[rgb(var(--success))]">+5.9%</span></div>
+            <p>Using the same outcome, suppose Betfair shows a Back price of <strong>2.14</strong>. The page calculates Edge % as:</p>
+            <div class="market-activity-example-block my-3 max-w-full overflow-x-auto rounded-xl border border-[var(--border-neutral-5-4)] bg-[var(--surface-neutral-0-10)] p-4 font-mono text-[13px] leading-relaxed whitespace-pre-line text-[var(--text-secondary-strong)] dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--bg))] dark:text-[rgb(var(--text-soft))]">Edge % = (2.14 / 2.02 - 1) × 100 ≈ <span class="hl-green font-semibold text-[var(--text-success-35)] dark:text-[rgb(var(--success))]">+5.9%</span></div>
             <p>A positive Edge % means the Betfair price is higher than the estimated fair price. This is a signal worth investigating, not a guarantee of profitability.</p>
         </div>
 
@@ -447,7 +441,7 @@
             <div class="market-activity-subsection-title [font-size:16px] font-semibold [color:var(--text-brand-60)] [margin-bottom:10px] [transition:color_0.3s] dark:[color:rgb(var(--text-soft))]">8.4 Example: Using the Detail Overlay</div>
             <p>Clicking an alert opens a detail overlay containing:</p>
             <ul class="guide-list [&_li::before]:content-['▸'] list-none p-0 [margin:8px_0_14px] [&_li]:[padding:5px_0_5px_22px] [&_li]:[position:relative] [&_li]:[font-size:13px] [&_li::before]:[position:absolute] [&_li::before]:[left:4px] [&_li::before]:[color:rgb(var(--primary))] [&_li::before]:[font-weight:700] dark:[&_li::before]:[color:rgb(var(--primary))]">
-                <li>Top block: Drop, Pinnacle price, NVP, Pinnacle Edge, Betfair Back/Lay, sizes, Betfair Edge, and time</li>
+                <li>Top block: Drop, Pinnacle price, NVP, Edge %, Betfair Back/Lay, sizes, Edge %, and time</li>
                 <li>Full market table: all outcomes with Pinnacle, NVP, Betfair, and Edge values</li>
                 <li>Recent alerts: the last five alerts for the same match</li>
             </ul>

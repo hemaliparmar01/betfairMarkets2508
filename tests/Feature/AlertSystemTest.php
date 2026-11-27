@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Console\Commands\ListenBetfairOdds;
 use App\Console\Commands\ListenPinnodds;
+use App\Http\Controllers\Users\Football\FootballController;
 use App\Http\Controllers\Users\Football\FootballSyncController;
 use App\Http\Controllers\Users\Tennis\TennisController;
 use App\Http\Controllers\Users\Tennis\TennisSyncController;
@@ -1118,6 +1119,42 @@ class AlertSystemTest extends TestCase
         }
 
         Http::assertSentCount(1);
+    }
+
+    public function test_pinnacle_unified_edge_is_preserved_in_alerts_and_sent_using_local_current_quotes(): void
+    {
+        config(['services.sportsmeld.key' => 'must-not-be-used', 'services.football_fixture_index' => false]);
+        Redis::shouldReceive('get')->with('Football:matches')->andReturn(null);
+        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true, 'result' => ['message_id' => 99]])]);
+        $customer = $this->customer(['popup_enabled' => false]);
+        $starts = time() + 3600;
+        $fixture = $this->fixture(['result_status' => 'Prematch', 'timestamp' => $starts]);
+        $fixture->forceFill(['betfair_match_id' => '900', 'data_sync_complete' => true])->save();
+        FootballMarket::query()->create([
+            'selection_key' => hash('sha256', 'unified-edge'), 'football_match_unique_key' => $fixture->unique_key,
+            'market_id' => 'main', 'market_type' => 'MATCH_ODDS', 'runner' => 'Torino',
+            'payload' => ['marketType' => 'MATCH_ODDS', 'runner' => 'Torino', 'currentBackOdds' => 2.6, 'market_status' => 'OPEN'],
+        ]);
+        $drop = ['id' => 100, 'sport' => 'soccer', 'home' => 'Torino', 'away' => 'Monza 1912', 'league' => 'Italy - Coppa Italia',
+            'sect' => 'Moneyline', 'outcome' => 'Home', 'starts' => $starts, 'from_price' => 2.5, 'to_price' => 2.3, 'nvp' => 2.4,
+            'alert_key' => 'unified-edge', 'alerted' => time()];
+        $this->actingAs($customer, 'customers')->patchJson('/notifications', [
+            'pinnacle_filters' => ['higher' => false, 'shock' => true, 'leagues' => null],
+        ])->assertOk();
+        $alerts = app(AlertService::class);
+        $id = $alerts->process('prematch_drops', [], ['pinnacle' => $drop]);
+        $payload = json_decode(DB::table('alerts')->where('id', $id)->value('payload'), true);
+        $this->assertSame(2.4, $payload['context']['pinnacle_nvp']);
+        $alerts->deliver($this->delivery($id, $customer));
+        Http::assertSentCount(1);
+        Http::assertSent(fn ($request): bool => str_contains($request['text'], '🟢 Edge %: +8.3%') && str_contains($request['text'], 'NVP: 2.4'));
+
+        $rows = app(FootballController::class)->marketActivity(['alerts' => [$drop]], currentPinnacleQuote: true, localQuotesOnly: true);
+        $this->assertEqualsWithDelta(8.33333333, $rows[0]['edge_percent'], 0.000001);
+        $payload['context']['pinnacle_nvp'] = 2.8;
+        $this->assertStringContainsString('🔴 Edge %: -7.1%', $alerts->text($payload, 2.6));
+        $payload['context']['pinnacle_nvp'] = null;
+        $this->assertStringContainsString('Edge %: N/A', $alerts->text($payload, 2.6));
     }
 
     public function test_pinnacle_drops_respect_saved_preferences_access_and_disconnect_at_delivery(): void
