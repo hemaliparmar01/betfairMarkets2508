@@ -4,13 +4,13 @@ namespace App\Services;
 
 class PinnacleEdge
 {
-    public static function calculate(mixed $betfairPrice, mixed $fairPrice): ?float
+    public static function calculate(mixed $betfairPrice, mixed $pinnaclePrice): ?float
     {
-        if (! self::validPrice($betfairPrice) || ! self::validPrice($fairPrice)) {
+        if (! self::validPrice($betfairPrice) || ! self::validPrice($pinnaclePrice)) {
             return null;
         }
 
-        $edge = ((float) $betfairPrice / (float) $fairPrice - 1) * 100;
+        $edge = (((float) $betfairPrice - (float) $pinnaclePrice) / (float) $pinnaclePrice) * 100;
 
         return is_finite($edge) ? $edge : null;
     }
@@ -37,8 +37,8 @@ class PinnacleEdge
             return 'N/A';
         }
         $rounded = round($edge, 1);
-        if ($rounded == 0.0) {
-            $rounded = 0.0;
+        if ($rounded == 0.0 && $edge != 0.0) {
+            return ($edge > 0 ? '+' : '-').'<0.1%';
         }
 
         return ($rounded > 0 ? '+' : '').number_format($rounded, 1, '.', '').'%';

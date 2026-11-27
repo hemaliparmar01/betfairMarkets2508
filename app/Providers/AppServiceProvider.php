@@ -212,7 +212,7 @@ class AppServiceProvider extends ServiceProvider
                 'Earlier movements may be missing from the previously limited history.',
                 'Edge',
                 'Edge %',
-                'Edge % = (current Betfair Back odds / Pinnacle NVP - 1) × 100. Positive values are green, negative values are red, and zero is neutral. Unavailable current Betfair odds or NVP are shown as unavailable.',
+                'Edge % = ((current Betfair Back odds - new Pinnacle odds) / new Pinnacle odds) × 100. Green means Betfair is higher, red means lower, and zero means equal. NVP is separate information and is not used in this price comparison. Missing current prices are shown as unavailable.',
                 'Expected goals (xG)',
                 'Expired',
                 'Expires in',

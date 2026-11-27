@@ -1,3 +1,19 @@
+export function marketHasActiveLiquidity(event, now = Date.now() / 1000, limits = {}) {
+    if (event.stale !== false || event.removed || event.streamRemoved || event.active === false
+        || event.liquidityValid === false || !Number.isFinite(event.freshUntil) || event.freshUntil <= now
+        || !Array.isArray(event.runners) || !event.runners.length) return false;
+    let favorite = null;
+    for (const runner of event.runners) {
+        if (![runner.back, runner.lay, runner.backSize, runner.laySize].every(Number.isFinite)
+            || runner.back <= 1 || runner.lay <= 1 || runner.lay < runner.back
+            || runner.backSize <= 0 || runner.laySize <= 0) return false;
+        if (!favorite || runner.back < favorite.back) favorite = runner;
+    }
+    const minimum = Math.min(favorite.backSize, favorite.laySize);
+    return minimum >= (limits.minimum_size ?? 25)
+        && Math.max(favorite.backSize, favorite.laySize) / minimum > (limits.minimum_size_ratio ?? 5);
+}
+
 const speeds = [140, 1000, 2000, 3000, 5000, 8000, 10000];
 export const marketStreamKey = market => JSON.stringify([String(market.streamMatchKey ?? market.matchKey), String(market.streamMarketKey ?? market.marketKey)]);
 

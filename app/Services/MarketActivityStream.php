@@ -141,6 +141,11 @@ class MarketActivityStream
                 'freshUntil' => $indicator['fresh_until'] ?? null, 'stale' => $indicator['stale'] ?? true,
                 'active' => $indicator['active'] ?? false, 'liquidityValid' => ($indicator['favorite_back_percent'] ?? null) !== null,
             ];
+            $last = array_key_last($rows);
+            if (! MarketActivityLiquidity::visible($rows[$last])) {
+                $rows[$last]['removed'] = true;
+                $rows[$last]['runners'] = [];
+            }
         }
 
         return $rows;

@@ -34,14 +34,14 @@ function harness(alerts = [base], options = {}) {
     return { state, output, evaluate: code => vm.runInContext(code, context), advance: ms => { now += ms; } };
 }
 
-test('Betfair edge uses displayed valid odds and fair price without suppressing positive or negative values', () => {
+test('Betfair edge uses displayed valid odds and new Pinnacle price without suppressing positive or negative values', () => {
     const app = harness();
-    assert.equal(app.evaluate('betfairEdgeText(state.alerts[0])'), '+1.3%');
-    assert.equal(app.evaluate('betfairEdgeText({...state.alerts[0], bf_back: 1.47})'), '-3.3%');
+    assert.equal(app.evaluate('betfairEdgeText(state.alerts[0])'), '+4.8%');
+    assert.equal(app.evaluate('betfairEdgeText({...state.alerts[0], bf_back: 1.47})'), '0.0%');
     assert.equal(app.evaluate('betfairEdgeText({...state.alerts[0], bf_back: null})'), 'N/A');
     assert.equal(app.evaluate('betfairEdgeText({...state.alerts[0], bf_back: 0})'), 'N/A');
-    assert.equal(app.evaluate('betfairEdgeText({...state.alerts[0], bf_back: 4})'), '+163.2%');
-    assert.equal(app.evaluate('betfairEdgeText({...state.alerts[0], nvp: null})'), '— (fair price pending)');
+    assert.equal(app.evaluate('betfairEdgeText({...state.alerts[0], bf_back: 4})'), '+172.1%');
+    assert.equal(app.evaluate('betfairEdgeText({...state.alerts[0], nvp: null})'), '+4.8%');
     assert.equal(app.evaluate('edgeClass(-1)'), 'text-[var(--text-danger-edge)] dark:text-[var(--text-red-400)]');
     assert.equal(app.evaluate('edgeClass(1)'), 'text-[var(--text-emerald-600)] dark:text-[var(--text-emerald-400)]');
 });
@@ -60,7 +60,7 @@ test('both table views display one unified edge and advanced adds fair price and
     assert.equal((app.output.innerHTML.match(/scope="col"/g) || []).length, 8);
     assert.match(app.output.innerHTML, /<th scope="col">Limit/);
     assert.match(app.output.innerHTML, /<td>2,500\.5<\/td>/);
-    assert.match(app.output.innerHTML, /data-edge-percent[^>]*>\+1.3%<\/td>/);
+    assert.match(app.output.innerHTML, /data-edge-percent[^>]*>\+4.8%<\/td>/);
     assert.match(app.output.innerHTML, /About NVP/);
     assert.match(app.output.innerHTML, /aria-expanded="true"/);
     assert.doesNotMatch(app.output.innerHTML, /min-w-\[/);
@@ -724,11 +724,11 @@ test('Market Shock archive requests carry the checkbox and ignore stale response
     assert.equal(app.state.alerts.length, 0);
 });
 
-test('unified Edge % uses the same NVP comparison, sign and color across both languages and views', () => {
+test('unified Edge % uses the new Pinnacle price consistently across both languages and views', () => {
     for (const locale of ['en', 'ka']) {
         for (const view of ['simple', 'advanced']) {
-            for (const [bf, nvp, expected, color] of [[4, 3.67, '+9.0%', 'emerald'], [7.2, 6.5, '+10.8%', 'emerald'], [7.2, 7.21, '-0.1%', 'danger-edge'], [3.67, 3.67, '0.0%', 'slate-500']]) {
-                const app = harness([{...base, from_price: 3.82, to_price: 3.48, bf_back: bf, nvp}], {locale});
+            for (const [bf, pinnacle, expected, color] of [[1.64, 1.58, '+3.8%', 'emerald'], [5.2, 4.96, '+4.8%', 'emerald'], [4.6, 4.53, '+1.5%', 'emerald'], [4, 3.48, '+14.9%', 'emerald'], [3.2, 3.48, '-8.0%', 'danger-edge'], [3.48, 3.48, '0.0%', 'slate-500']]) {
+                const app = harness([{...base, from_price: pinnacle * 1.1, to_price: pinnacle, bf_back: bf, nvp: 10}], {locale});
                 app.state.view = view;
                 app.evaluate('render()');
                 assert.equal(app.evaluate('betfairEdgeText(state.alerts[0])'), expected);
@@ -740,12 +740,15 @@ test('unified Edge % uses the same NVP comparison, sign and color across both la
     }
 });
 
-test('unified Edge % never substitutes raw Pinnacle odds or stale Betfair display quotes for missing inputs', () => {
+test('unified Edge % ignores NVP and never substitutes stale Betfair quotes for missing current prices', () => {
     const app = harness([{...base, to_price:3.48, nvp:null, bf_back:4, bf_last_back:4}]);
-    assert.equal(app.evaluate('edge(state.alerts[0])'), null);
+    assert.equal(app.evaluate('edge(state.alerts[0])').toFixed(6), '14.942529');
+    assert.equal(app.evaluate('edge({...state.alerts[0], to_price:null, nvp:3.67})'), null);
     assert.equal(app.evaluate('edge({...state.alerts[0], nvp:3.67, bf_back:null})'), null);
     assert.equal(app.evaluate('edge({...state.alerts[0], nvp:3.67, bf_back:Infinity})'), null);
-    assert.equal(app.evaluate('edgeText(-0.00001)'), '0.0%');
-    assert.match(app.evaluate('edgeClass(-0.00001)'), /slate-500/);
-    assert.equal(app.evaluate('edge({...state.alerts[0], full_market:[{outcome:"Over", nvp:3.67}]})').toFixed(6), '8.991826');
+    assert.equal(app.evaluate('edgeText(-0.00001)'), '-<0.1%');
+    assert.equal(app.evaluate('edgeText(0.00001)'), '+<0.1%');
+    assert.match(app.evaluate('edgeClass(0.00001)'), /emerald/);
+    assert.match(app.evaluate('edgeClass(-0.00001)'), /danger-edge/);
+    assert.equal(app.evaluate('edge({...state.alerts[0], full_market:[{outcome:"Over", nvp:3.67}]})').toFixed(6), '14.942529');
 });

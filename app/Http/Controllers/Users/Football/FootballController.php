@@ -741,9 +741,9 @@ class FootballController extends Controller
             }
             unset($alert);
             foreach ($pinnacleAlerts as &$alert) {
-                $alert['edge_percent'] = PinnacleEdge::calculate($alert['bf_back'] ?? null, PinnacleEdge::fairPrice($alert));
+                $alert['edge_percent'] = PinnacleEdge::calculate($alert['bf_back'] ?? null, $alert['to_price'] ?? null);
                 foreach ($alert['full_market'] ?? [] as $index => $selection) {
-                    $alert['full_market'][$index]['edge_percent'] = PinnacleEdge::calculate($selection['bf_back'] ?? null, PinnacleEdge::fairPrice($selection));
+                    $alert['full_market'][$index]['edge_percent'] = PinnacleEdge::calculate($selection['bf_back'] ?? null, $selection['to_price'] ?? null);
                 }
             }
             unset($alert);

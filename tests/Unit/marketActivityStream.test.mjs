@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createMarketQuoteStream, mergeMarketQuote } from '../../resources/users/js/marketActivityStream.js';
+import { createMarketQuoteStream, mergeMarketQuote, marketHasActiveLiquidity } from '../../resources/users/js/marketActivityStream.js';
 
 const event = () => ({ id: 7, streamMatchKey: 'a', streamMarketKey: '123_WIN', lastMarketUpdate: 1, runners: [{ id: 1, name: 'Favorite', back: 1.8, backSize: 1, laySize: 1 }], locked: false });
 const quote = (at = 2) => ({ matchKey: 'a', marketKey: '123_WIN', lastMarketUpdate: at, deltaValue: 1.25, balance: 'lay', runners: [
@@ -149,7 +149,7 @@ for (const onPage of [true, false]) test(`an open market keeps updating ${onPage
     const acceptEnd = source.indexOf(',\n                    });', acceptStart);
     const drawn = [];
     const selected = event();
-    const context = { selectedMarket: selected, events: onPage ? [selected] : [], currentEventId: 7, streamEventIndexes: new Map(), displayOdds: true,
+    const context = { hasActiveLiquidity: market => marketHasActiveLiquidity(market, 0), selectedMarket: selected, events: onPage ? [selected] : [], currentEventId: 7, streamEventIndexes: new Map(), displayOdds: true,
         detailPanel: { classList: { contains: () => true } },
         window: { marketStreamKey: (await import('../../resources/users/js/marketActivityStream.js')).marketStreamKey, mergeMarketQuote, closeDetail() { throw new Error('An off-page market must stay open'); } },
         paintMarketDetail: market => drawn.push(market), applyStartFilter() {}, scheduleAvailability() {} };
@@ -160,16 +160,16 @@ for (const onPage of [true, false]) test(`an open market keeps updating ${onPage
     const timer = clock();
     const stream = createMarketQuoteStream(context.applyMarketQuotes, { ...timer, visible: () => true, accepts, interval: 1000 });
     stream.start(); stream.retain([context.selectedMarket]);
-    const first = quote(); first.runners[0].backSize = 400; first.runners[0].laySize = 100;
+    const first = { ...quote(), stale: false, freshUntil: 100 }; first.runners[0].backSize = 600; first.runners[0].laySize = 100;
     stream.receive({ sent_at: 2, markets: [first] }); timer.advance(0);
-    assert.equal(drawn.at(-1).runners[0].backSize, 400);
-    assert.equal(drawn.at(-1).backPercent, 20);
-    assert.equal(drawn.at(-1).layPercent, 80);
-    const second = quote(3); second.runners[0].backSize = 100; second.runners[0].laySize = 400;
+    assert.equal(drawn.at(-1).runners[0].backSize, 600);
+    assert.equal(drawn.at(-1).backPercent, 100 / 700 * 100);
+    assert.equal(drawn.at(-1).layPercent, 100 - 100 / 700 * 100);
+    const second = { ...quote(3), stale: false, freshUntil: 100 }; second.runners[0].backSize = 100; second.runners[0].laySize = 600;
     stream.receive({ sent_at: 3, markets: [second] }); timer.advance(1000);
     assert.equal(drawn.at(-1).runners[0].backSize, 100);
-    assert.equal(drawn.at(-1).backPercent, 80);
-    assert.equal(drawn.at(-1).layPercent, 20);
+    assert.equal(drawn.at(-1).backPercent, 600 / 700 * 100);
+    assert.equal(drawn.at(-1).layPercent, 100 - 600 / 700 * 100);
     assert.equal(context.events.length, onPage ? 1 : 0);
 });
 
@@ -316,7 +316,7 @@ test('All stays within 48 hours and rejects started matches during live updates'
     const source = readFileSync(new URL('../../resources/views/users/sports/Football/marketActivity.blade.php', import.meta.url), 'utf8');
     const start = source.indexOf('function matchesStartWindow(');
     const end = source.indexOf('function applyStartFilter(', start);
-    const context = { activeStartSeconds: 0 };
+    const context = { activeStartSeconds: 0, hasActiveLiquidity: () => true };
     vm.createContext(context);
     vm.runInContext(source.slice(start, end), context);
     const row = { status: 'PREMATCH', timestamp: 1000 + 172800 };
@@ -335,7 +335,7 @@ test('live interval filtering excludes earlier windows and has no overlapping bo
     const source = readFileSync(new URL('../../resources/views/users/sports/Football/marketActivity.blade.php', import.meta.url), 'utf8');
     const start = source.indexOf('function matchesStartWindow(');
     const end = source.indexOf('function applyStartFilter(', start);
-    const context = { activeStartSeconds: 0 };
+    const context = { activeStartSeconds: 0, hasActiveLiquidity: () => true };
     vm.createContext(context);
     vm.runInContext(source.slice(start, end), context);
     for (const [minimum, maximum] of [[0, 600], [600, 1200], [1200, 1800], [1800, 3600], [3600, 7200], [7200, 10800], [10800, 21600]]) {
@@ -344,4 +344,47 @@ test('live interval filtering excludes earlier windows and has no overlapping bo
             assert.equal(context.matchesStartWindow({ status: 'PREMATCH', timestamp: 1000 + remaining }, 1000), visible);
         }
     }
+});
+
+test('liquidity visibility excludes thin, one-sided, stale and expired books and recovers', async () => {
+    const { marketHasActiveLiquidity } = await import('../../resources/users/js/marketActivityStream.js');
+    const valid = { stale: false, freshUntil: 1075, runners: [{ back: 1.8, lay: 1.82, backSize: 25, laySize: 250 }] };
+    assert.equal(marketHasActiveLiquidity(valid, 1000), true);
+    for (const override of [{ stale: true }, { freshUntil: 1000 }, { removed: true }, { streamRemoved: true }, { active: false }, { liquidityValid: false }]) {
+        assert.equal(marketHasActiveLiquidity({ ...valid, ...override }, 1000), false);
+    }
+    for (const override of [{ back: 380, lay: 0, backSize: 4.03, laySize: 0 }, { backSize: 24.99 }, { laySize: 125 }, { back: 0 }, { lay: 1.7 }, { laySize: NaN }]) {
+        assert.equal(marketHasActiveLiquidity({ ...valid, runners: [{ ...valid.runners[0], ...override }] }, 1000), false);
+    }
+    assert.equal(marketHasActiveLiquidity(valid, 1000, { minimum_size: 50 }), false);
+    assert.equal(marketHasActiveLiquidity(valid, 1000, { minimum_size_ratio: 10 }), false);
+    const missingSide = { back: 3, lay: 0, backSize: 1000, laySize: 0 };
+    assert.equal(marketHasActiveLiquidity({ ...valid, runners: [...valid.runners, missingSide] }, 1000), false);
+    assert.equal(marketHasActiveLiquidity(valid, 1000), true);
+});
+
+test('the real page filter hides unhealthy rows and closes stale open details', async () => {
+    const { readFileSync } = await import('node:fs');
+    const vm = await import('node:vm');
+    const source = readFileSync(new URL('../../resources/views/users/sports/Football/marketActivity.blade.php', import.meta.url), 'utf8');
+    const valid = { id: 7, status: 'PREMATCH', timestamp: 1100, stale: false, freshUntil: 1075,
+        runners: [{ back: 1.8, lay: 1.82, backSize: 100, laySize: 600 }] };
+    let closed = 0, painted = 0;
+    const context = { activeStartSeconds: 0, hasActiveLiquidity: market => marketHasActiveLiquidity(market, 1000),
+        currentEventId: 7, selectedMarket: valid, events: [valid], detailPanel: { classList: { contains: () => true } },
+        window: { closeDetail: () => closed++ }, paintMarketDetail: () => painted++ };
+    vm.createContext(context);
+    vm.runInContext(source.slice(source.indexOf('function matchesStartWindow('), source.indexOf('function applyStartFilter(')), context);
+    vm.runInContext(source.slice(source.indexOf('function refreshOpenMarketDetail()'), source.indexOf('function paintMarketDetail(event)')), context);
+    assert.equal(context.matchesStartWindow(valid, 1000), true);
+    context.refreshOpenMarketDetail(); assert.equal(painted, 1);
+    for (const override of [{ stale: true }, { freshUntil: 999 }, { runners: [{ ...valid.runners[0], laySize: 0 }] }]) {
+        context.events = [{ ...valid, ...override }];
+        assert.equal(context.matchesStartWindow(context.events[0], 1000), false);
+        context.refreshOpenMarketDetail();
+    }
+    assert.equal(closed, 3);
+    context.events = [valid];
+    assert.equal(context.matchesStartWindow(valid, 1000), true);
+    context.refreshOpenMarketDetail(); assert.equal(painted, 2);
 });

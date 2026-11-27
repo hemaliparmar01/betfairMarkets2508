@@ -1,10 +1,11 @@
 import { createMarketChartLoader } from './marketCharts.js';
 const marketCharts = createMarketChartLoader();
 window.replaceMatchDetailContent = marketCharts.replaceContent;
-import { createMarketQuoteStream, mergeMarketQuote, marketStreamKey } from './marketActivityStream.js';
+import { createMarketQuoteStream, mergeMarketQuote, marketStreamKey, marketHasActiveLiquidity } from './marketActivityStream.js';
 window.createMarketQuoteStream = createMarketQuoteStream;
 window.mergeMarketQuote = mergeMarketQuote;
 window.marketStreamKey = marketStreamKey;
+window.marketHasActiveLiquidity = marketHasActiveLiquidity;
 import { updateFixtureRows } from './auth/dom.js';
 import { watchSubscriptionStatus } from './subscriptionStatus.js';
 import { bindCheckoutConsent } from './checkoutConsent.js';

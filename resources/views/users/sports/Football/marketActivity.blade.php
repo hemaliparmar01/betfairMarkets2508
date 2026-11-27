@@ -312,10 +312,10 @@
                     const first = !state.archive ? number(alert.bf_first_back) : null;
                     return first > 1 && current !== null && first !== current ? `${price(first)} → ${price(current)}` : price(current);
                 };
-                const edge = alert => { const bf = betfairPrice(alert); const nvp = fairPrice(alert); const value = bf !== null && nvp > 1 ? ((bf / nvp) - 1) * 100 : null; return Number.isFinite(value) ? value : null; };
-                const edgeText = value => { if (value === null || !Number.isFinite(value)) return '—'; const rounded = Number(value.toFixed(1)); return `${rounded > 0 ? '+' : ''}${rounded.toFixed(1)}%`; };
-                const edgeClass = value => value === null || !Number.isFinite(value) ? 'text-[var(--text-slate-400)]' : Number(value.toFixed(1)) > 0 ? 'text-[var(--text-emerald-600)] dark:text-[var(--text-emerald-400)]' : Number(value.toFixed(1)) < 0 ? 'text-[var(--text-danger-edge)] dark:text-[var(--text-red-400)]' : 'text-[var(--text-slate-500)]';
-                const betfairEdgeText = alert => betfairPrice(alert) === null ? 'N/A' : edge(alert) === null ? (globalThis.bfTranslations?.["— (fair price pending)"] ?? "— (fair price pending)") : edgeText(edge(alert));
+                const edge = alert => { const bf = betfairPrice(alert); const pinnacle = number(alert.to_price); const value = bf !== null && Number.isFinite(pinnacle) && pinnacle > 1 ? ((bf - pinnacle) / pinnacle) * 100 : null; return Number.isFinite(value) ? value : null; };
+                const edgeText = value => { if (value === null || !Number.isFinite(value)) return '—'; const rounded = Number(value.toFixed(1)); if (rounded === 0 && value !== 0) return `${value > 0 ? '+' : '-'}<0.1%`; return `${rounded > 0 ? '+' : ''}${rounded.toFixed(1)}%`; };
+                const edgeClass = value => value === null || !Number.isFinite(value) ? 'text-[var(--text-slate-400)]' : value > 0 ? 'text-[var(--text-emerald-600)] dark:text-[var(--text-emerald-400)]' : value < 0 ? 'text-[var(--text-danger-edge)] dark:text-[var(--text-red-400)]' : 'text-[var(--text-slate-500)]';
+                const betfairEdgeText = alert => { const value = edge(alert); return value === null ? 'N/A' : edgeText(value); };
                 const alertIdentity = alert => alert.alert_key || [matchKey(alert), alert.sect, marketLine(alert), alert.period, alert.outcome, alert.alerted, alert.from_price, alert.to_price].join('|');
                 const monitorTimestamp = alert => {
                     const timestamp = number(alert.monitor_received_at ?? alert.alerted);
@@ -720,7 +720,7 @@
                     moneyline: @json(__('Pinnacle: Moneyline = Betfair: Match Odds')),
                     nvp: (globalThis.bfTranslations?.["NVP (No-Vig Price) is the 'fair' or 'true' odds for an outcome. It is calculated by removing the bookmaker's margin (vigorish) from the Pinnacle odds. It represents the true probability of the event without the bookmaker's built-in profit."] ?? "NVP (No-Vig Price) is the 'fair' or 'true' odds for an outcome. It is calculated by removing the bookmaker's margin (vigorish) from the Pinnacle odds. It represents the true probability of the event without the bookmaker's built-in profit."),
 
-                    edge: (globalThis.bfTranslations?.["Edge % = (current Betfair Back odds / Pinnacle NVP - 1) × 100. Positive values are green, negative values are red, and zero is neutral. Unavailable current Betfair odds or NVP are shown as unavailable."] ?? "Edge % = (current Betfair Back odds / Pinnacle NVP - 1) × 100. Positive values are green, negative values are red, and zero is neutral. Unavailable current Betfair odds or NVP are shown as unavailable.")
+                    edge: (globalThis.bfTranslations?.["Edge % = ((current Betfair Back odds - new Pinnacle odds) / new Pinnacle odds) × 100. Green means Betfair is higher, red means lower, and zero means equal. NVP is separate information and is not used in this price comparison. Missing current prices are shown as unavailable."] ?? "Edge % = ((current Betfair Back odds - new Pinnacle odds) / new Pinnacle odds) × 100. Green means Betfair is higher, red means lower, and zero means equal. NVP is separate information and is not used in this price comparison. Missing current prices are shown as unavailable.")
                 };
 
                 window.showOddsTooltip = function(event, type) {
@@ -818,7 +818,7 @@
                 'runners' => $runners ?: [['name' => '—', 'back' => 0, 'lay' => 0, 'backSize' => 0, 'laySize' => 0]], 'favIdx' => $favoriteIndex,
                 'totalBackSize' => array_sum(array_column($runners, 'backSize')), 'totalLaySize' => array_sum(array_column($runners, 'laySize')),
                 'backPercent' => $indicator['favorite_back_percent'] ?? null, 'layPercent' => $indicator['favorite_lay_percent'] ?? null,
-                'deltaWindows' => $indicator['delta_windows'] ?? [], 'lastMarketUpdate' => $indicator['updated_at'] ?? null, 'freshUntil' => $indicator['fresh_until'] ?? null, 'stale' => $indicator['stale'] ?? true,
+                'active' => $indicator['active'] ?? false, 'deltaWindows' => $indicator['delta_windows'] ?? [], 'lastMarketUpdate' => $indicator['updated_at'] ?? null, 'freshUntil' => $indicator['fresh_until'] ?? null, 'stale' => $indicator['stale'] ?? true,
                 'balance' => $indicator['balance'] ?? 'unknown', 'momentum' => $indicator['momentum'] ?? 'unknown',
                 'delta' => isset($indicator['delta']) && ! $locked ? (($indicator['delta'] > 0 ? '+' : '').number_format((float) $indicator['delta'], 1).' pp') : '—', 'volatility' => $indicator['volatility'] ?? 'unknown',
                 'locked' => $locked, 'available' => $available,
@@ -827,6 +827,7 @@
             ];
         }, $marketActivites);
     }
+    $marketActivites = array_values(array_filter($marketActivites, static fn (array $event): bool => \App\Services\MarketActivityLiquidity::visible($event)));
     if (! $checkAuthAndSubscription['display_odds']) {
         $marketActivites = array_map(static function (array $event): array {
             $event['locked'] = true;
@@ -1293,7 +1294,11 @@
                 let serverClockOffset = Number(eventsBody.querySelector('[data-market-server-time]').textContent) * 1000 - Date.now();
                 const serverNow = () => (Date.now() + serverClockOffset) / 1000;
 
+                const liquidityLimits = @json(\App\Services\MarketActivityLiquidity::limits());
+                const hasActiveLiquidity = event => window.marketHasActiveLiquidity(event, serverNow(), liquidityLimits);
+
                 function matchesStartWindow(event, now) {
+                    if (!event.locked && !hasActiveLiquidity(event)) return false;
                     if (event.streamRemoved) return false;
                     if (event.internal_backup || event.hidden || event.status === 'FINISHED') return false;
                     const remaining = Number(event.timestamp) - now;
@@ -1326,6 +1331,7 @@
                         eventsBody.append(empty);
                     }
                     if (empty) empty.hidden = visibleIds.size > 0;
+                    if (selectedMarket && !hasActiveLiquidity(selectedMarket)) window.closeDetail();
                 }
 
                 document.getElementById('timeToStart').addEventListener('click', event => {
@@ -1665,7 +1671,7 @@
                 function refreshOpenMarketDetail() {
                     if (currentEventId === null || !detailPanel.classList.contains('open')) return;
                     selectedMarket = events.find(event => String(event.id) === String(currentEventId)) ?? selectedMarket;
-                    if (!selectedMarket || selectedMarket.locked || selectedMarket.streamRemoved) { window.closeDetail(); return; }
+                    if (!selectedMarket || selectedMarket.locked || !hasActiveLiquidity(selectedMarket)) { window.closeDetail(); return; }
                     paintMarketDetail(selectedMarket);
                 }
                 function paintMarketDetail(event) {
@@ -1927,7 +1933,7 @@
                     const ev = events.find(function(e) {
                         return String(e.id) === String(id);
                     }) ?? (String(selectedMarket?.id) === String(id) ? selectedMarket : null);
-                    if (!ev || ev.locked) return;
+                    if (!ev || ev.locked || !hasActiveLiquidity(ev)) { window.closeDetail(); return; }
                     const updating = String(currentEventId) === String(id) && detailPanel.classList.contains('open');
                     if (!updating) { selectedQuoteRequest?.abort(); selectedQuoteRequest = null; }
                     currentEventId = id;
@@ -2124,6 +2130,9 @@
         </script>
     @endpush
     @endunless
+@endif
+@if (request()->routeIs('football.pinnacle-odds'))
+    <p data-pinnacle-disclaimer class="mt-6 text-xs leading-relaxed text-[rgb(var(--text-muted))] dark:text-[rgb(var(--text-soft))]">{{ __('Note: Odds movements are based on market trends and are not 100% guaranteed. Always use proper risk management (Stop-Loss).') }}</p>
 @endif
 @endsection
 

@@ -40,6 +40,7 @@ class MarketActivityStreamTest extends TestCase
     #[DataProvider('teamSports')]
     public function test_real_rolling_quotes_keep_one_and_five_minute_indicators_consistent_across_sports(string $prefix): void
     {
+        config(['services.market_activity_liquidity.minimum_size_ratio' => 1]);
         $now = microtime(true);
         $match = $this->match();
         foreach ($match['markets']['123_WIN'] as &$runner) {
@@ -95,7 +96,7 @@ class MarketActivityStreamTest extends TestCase
             $this->assertSame('123_WIN', $row['marketKey']);
             $this->assertSame(1.8, $row['runners'][0]['back']);
             $this->assertSame(1600.0, $row['runners'][0]['backSize']);
-            $this->assertSame(40.72, $row['runners'][0]['laySize']);
+            $this->assertSame(100.0, $row['runners'][0]['laySize']);
             $this->assertSame($expected['balance'], $row['balance']);
             $this->assertSame($expected['momentum'], $row['momentum']);
             $this->assertSame($expected['delta'], $row['deltaValue']);
@@ -426,12 +427,32 @@ class MarketActivityStreamTest extends TestCase
         $this->assertSame(['soon'], array_column($rows, 'streamMatchKey'));
     }
 
+    public function test_football_rows_exclude_thin_stale_one_sided_and_balanced_markets(): void
+    {
+        config(['services.football_fixture_index' => false, 'services.football_match_cache' => false]);
+        $base = $this->match() + ['team1' => 'Home', 'team2' => 'Away', 'tournament' => 'Regional Cup', 'data_sync_complete' => true];
+        $matches = ['valid' => $base, 'thin' => $base, 'one-sided' => $base, 'stale' => $base, 'balanced' => $base];
+        $matches['thin']['markets']['123_WIN'][0]['laySize'] = 2;
+        $matches['one-sided']['markets']['123_WIN'][0]['layOdds'] = 0;
+        $matches['balanced']['markets']['123_WIN'][0]['backSize'] = 100;
+        foreach ($matches['stale']['markets']['123_WIN'] as &$runner) {
+            $runner['liquidity_updated_at'] = microtime(true) - 90;
+        }
+        unset($runner);
+        Redis::shouldReceive('get')->andReturnUsing(static fn (string $key): ?string => $key === 'Football:matches' ? json_encode($matches) : null);
+        $this->app->instance('request', Request::create('/football/market-activity', 'GET'));
+
+        $rows = app(FootballController::class)->getMarketActivites();
+
+        $this->assertSame(['valid'], array_column($rows, 'streamMatchKey'));
+    }
+
     private function match(): array
     {
         return ['unique_key' => 'match-a', 'betfair_match_id' => 123, 'result_status' => 'Prematch', 'timestamp' => time() + 120,
             'markets' => ['123_WIN' => [
                 ['runnerId' => 1, 'runner' => 'Favorite', 'marketType' => 'WIN', 'backOdds' => 1.8, 'layOdds' => 1.82,
-                    'backSize' => 1600.0, 'laySize' => 40.72, 'liquidity_updated_at' => microtime(true),
+                    'backSize' => 1600.0, 'laySize' => 100.0, 'liquidity_updated_at' => microtime(true),
                     'backOddsHistory' => [['odds' => 2.0, 'timestamp' => time() - 600]],
                     'liquidity_history' => [['back' => 30, 'lay' => 10, 'timestamp' => time() - 310], ['back' => 40, 'lay' => 10, 'timestamp' => time() - 70]]],
                 ['runnerId' => 2, 'runner' => 'Away', 'marketType' => 'WIN', 'backOdds' => 3.0, 'layOdds' => 3.1,

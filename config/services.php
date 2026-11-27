@@ -1,6 +1,10 @@
 <?php
 
 return [
+    'market_activity_liquidity' => [
+        'minimum_size' => (float) env('MARKET_ACTIVITY_MINIMUM_SIZE', 25),
+        'minimum_size_ratio' => (float) env('MARKET_ACTIVITY_MINIMUM_SIZE_RATIO', 5),
+    ],
     'betfair_pending_max_bytes' => (int) env('BETFAIR_PENDING_MAX_BYTES', 134217728),
     'betfair_pending_max_events' => (int) env('BETFAIR_PENDING_MAX_EVENTS', 4096),
     'subscriptions' => [

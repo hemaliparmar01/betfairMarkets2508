@@ -51,6 +51,7 @@ class AlertSystemTest extends TestCase
     {
         parent::setUp();
         $this->withoutVite();
+        Redis::shouldReceive('get')->byDefault()->andReturn(null);
         Redis::shouldReceive('getrange')->byDefault()->andReturnUsing(static fn (string $key, int $start, int $end): string => substr(Redis::get($key) ?? '', $start, $end < 0 ? null : $end - $start + 1));
         $auth = \Mockery::mock(CustomerAuthService::class, [app(CustomerRepository::class)])->makePartial();
         $auth->shouldReceive('handle')->andReturnUsing(fn ($request, $next) => $next($request));
@@ -1121,7 +1122,9 @@ class AlertSystemTest extends TestCase
         Http::assertSentCount(1);
     }
 
-    public function test_pinnacle_unified_edge_is_preserved_in_alerts_and_sent_using_local_current_quotes(): void
+    #[TestWith([true])]
+    #[TestWith([false])]
+    public function test_pinnacle_unified_edge_is_preserved_in_alerts_and_sent_using_local_current_quotes(bool $withNvp): void
     {
         config(['services.sportsmeld.key' => 'must-not-be-used', 'services.football_fixture_index' => false]);
         Redis::shouldReceive('get')->with('Football:matches')->andReturn(null);
@@ -1136,7 +1139,7 @@ class AlertSystemTest extends TestCase
             'payload' => ['marketType' => 'MATCH_ODDS', 'runner' => 'Torino', 'currentBackOdds' => 2.6, 'market_status' => 'OPEN'],
         ]);
         $drop = ['id' => 100, 'sport' => 'soccer', 'home' => 'Torino', 'away' => 'Monza 1912', 'league' => 'Italy - Coppa Italia',
-            'sect' => 'Moneyline', 'outcome' => 'Home', 'starts' => $starts, 'from_price' => 2.5, 'to_price' => 2.3, 'nvp' => 2.4,
+            'sect' => 'Moneyline', 'outcome' => 'Home', 'starts' => $starts, 'from_price' => 2.5, 'to_price' => 2.3, 'nvp' => $withNvp ? 2.4 : null,
             'alert_key' => 'unified-edge', 'alerted' => time()];
         $this->actingAs($customer, 'customers')->patchJson('/notifications', [
             'pinnacle_filters' => ['higher' => false, 'shock' => true, 'leagues' => null],
@@ -1144,17 +1147,19 @@ class AlertSystemTest extends TestCase
         $alerts = app(AlertService::class);
         $id = $alerts->process('prematch_drops', [], ['pinnacle' => $drop]);
         $payload = json_decode(DB::table('alerts')->where('id', $id)->value('payload'), true);
-        $this->assertSame(2.4, $payload['context']['pinnacle_nvp']);
+        $this->assertSame($withNvp ? 2.4 : null, $payload['context']['pinnacle_nvp']);
         $alerts->deliver($this->delivery($id, $customer));
         Http::assertSentCount(1);
-        Http::assertSent(fn ($request): bool => str_contains($request['text'], '🟢 Edge %: +8.3%') && str_contains($request['text'], 'NVP: 2.4'));
+        Http::assertSent(fn ($request): bool => str_contains($request['text'], '🟢 Edge %: +13.0%'));
 
         $rows = app(FootballController::class)->marketActivity(['alerts' => [$drop]], currentPinnacleQuote: true, localQuotesOnly: true);
-        $this->assertEqualsWithDelta(8.33333333, $rows[0]['edge_percent'], 0.000001);
+        $this->assertEqualsWithDelta(13.04347826, $rows[0]['edge_percent'], 0.000001);
         $payload['context']['pinnacle_nvp'] = 2.8;
-        $this->assertStringContainsString('🔴 Edge %: -7.1%', $alerts->text($payload, 2.6));
+        $this->assertStringContainsString('🟢 Edge %: +13.0%', $alerts->text($payload, 2.6));
+        $this->assertStringContainsString('🔴 Edge %: -4.3%', $alerts->text($payload, 2.2));
         $payload['context']['pinnacle_nvp'] = null;
-        $this->assertStringContainsString('Edge %: N/A', $alerts->text($payload, 2.6));
+        $this->assertStringContainsString('🟢 Edge %: +13.0%', $alerts->text($payload, 2.6));
+        $this->assertStringContainsString('Edge %: N/A', $alerts->text($payload, null));
     }
 
     public function test_pinnacle_drops_respect_saved_preferences_access_and_disconnect_at_delivery(): void

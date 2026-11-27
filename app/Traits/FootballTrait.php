@@ -6,6 +6,7 @@ use App\Http\Controllers\Users\Football\FootballSyncController;
 use App\Models\Favorite;
 use App\Models\FootballMatch;
 use App\Models\PredictionVote;
+use App\Services\MarketActivityLiquidity;
 use App\Services\MarketActivityTiming;
 use App\Services\MatchBackup;
 use Carbon\Carbon;
@@ -1523,6 +1524,12 @@ trait FootballTrait
                     : 0.0;
                 $absoluteOddsChange = abs($oddsChangePercent);
                 $indicator = $data['market_indicators'][$marketKey] ?? [];
+                if (! MarketActivityLiquidity::visible([
+                    'runners' => $runners, 'stale' => $indicator['stale'] ?? true,
+                    'active' => $indicator['active'] ?? false, 'freshUntil' => $indicator['fresh_until'] ?? null,
+                ])) {
+                    continue;
+                }
                 $balance = $indicator['balance'] ?? 'unknown';
                 $momentum = $indicator['momentum'] ?? 'unknown';
                 $volatility = $absoluteOddsChange >= 10
