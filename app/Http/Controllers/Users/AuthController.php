@@ -60,14 +60,14 @@ class AuthController extends Controller
             return redirect()->route($request->session()->has('customer_verification') && ! $request->session()->has('customer_pending_login') ? 'customers.verification' : 'login');
         }
 
-        return redirect()->intended(route('football.home'));
+        return redirect()->intended(route('home'));
     }
 
     public function confirmLogin(CustomerAuthRequest $request): RedirectResponse
     {
         $this->auth->confirmLogin($request);
 
-        return redirect()->intended(route('football.home'));
+        return redirect()->intended(route('home'));
     }
 
     public function cancelLogin(Request $request): RedirectResponse
@@ -120,7 +120,7 @@ class AuthController extends Controller
     {
         $this->auth->verifyEmail($request, $request->validated('code'));
 
-        return redirect()->intended(route('football.home'));
+        return redirect()->intended(route('home'));
     }
 
     public function resendVerification(Request $request): RedirectResponse
@@ -152,7 +152,7 @@ class AuthController extends Controller
             return redirect()->route('login');
         }
 
-        return redirect()->intended(route('football.home'));
+        return redirect()->intended(route('home'));
     }
 
     public function resendLoginCode(Request $request): RedirectResponse

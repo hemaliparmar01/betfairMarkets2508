@@ -34,9 +34,15 @@ class HomePageTest extends TestCase
             ->assertDontSee($locale === 'ka' ? 'Catch the market edge with' : 'დაიჭირე ბაზარზე უპირატესობა')
             ->assertSee('content="index, follow"', false)->assertDontSee('id="sportSelector"', false)
             ->assertDontSee('data-football-lazy-loader', false);
+        if ($signedIn) {
+            $response->assertDontSee('id="subscriptionModal"', false);
+        } else {
+            $response->assertSee('data-homepage-intro', false)->assertSee('data-close-subscription', false);
+        }
         $document = new \DOMDocument;
         $document->loadHTML($response->getContent(), LIBXML_NOERROR | LIBXML_NOWARNING);
         $xpath = new \DOMXPath($document);
+        $this->assertSame($signedIn ? 0 : 1, $xpath->query('//*[@id="subscriptionModal"][@data-homepage-intro]')->length);
         $this->assertSame(route('home'), $xpath->evaluate('string(//a[img[@data-branding="logo"]]/@href)'));
         $this->assertSame(route('football.pinnacle-odds'), $xpath->evaluate('string(//*[@data-homepage]//a/@href)'));
         $this->assertSame(1, $xpath->query('//header')->length);
@@ -55,6 +61,10 @@ class HomePageTest extends TestCase
         Http::preventStrayRequests();
         Redis::shouldReceive('get')->andReturn(null);
         Redis::shouldReceive('mget')->andReturn([]);
+
+        $this->withSession(['locale' => $locale]);
+        $customer = CustomerFactory::new()->create(['active_session_id' => session()->getId(), 'trial_ends_at' => now()->addDays(2)]);
+        $this->actingAs($customer, 'customers')->withCookie(config('session.cookie'), session()->getId());
 
         $this->assertSame('/football', route('football.home', [], false));
         $this->withSession(['locale' => $locale])->get(route('football.home', ['type' => 'upcoming']))->assertOk()

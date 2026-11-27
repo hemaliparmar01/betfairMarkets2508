@@ -6,7 +6,9 @@
                 'football.market-activity', 'cricket.market-activity', 'icehockey.market-activity',
                 'americanfootball.market-activity', 'baseball.market-activity', 'basketball.market-activity',
                 'tennis.market-activity', 'greyhounds.market-activity', 'horseracing.market-activity',
-                'football.pinnacle-odds', 'horseracing.home', 'greyhounds.home',
+                'football.pinnacle-odds',
+                'football.home', 'cricket.home', 'icehockey.home', 'americanfootball.home', 'baseball.home',
+                'basketball.home', 'tennis.home', 'greyhounds.home', 'horseracing.home',
             ];
             $restrictedPremiumUrls = array_map(static fn (string $name): string => route($name), $premiumRoutes);
         @endphp
@@ -17,7 +19,7 @@
             </form>
             <i class="fas fa-lock mb-3 text-2xl text-[#1a6b9c]" aria-hidden="true"></i>
             <h2 id="premiumAccessTitle" class="pr-8 text-lg font-bold">{{ __('Registration and subscription required') }}</h2>
-            <p id="premiumAccessMessage" class="mt-3 text-sm leading-relaxed text-[#5a7d99] dark:text-[#b0c8dd]">{{ __('Register and activate your 7-day free trial (first-time users), or purchase a paid subscription to access Market Activity, Pinnacle Drops, Horse Racing and Greyhounds.') }}</p>
+            <p id="premiumAccessMessage" class="mt-3 text-sm leading-relaxed text-[#5a7d99] dark:text-[#b0c8dd]">{{ __('Register and activate your 7-day free trial (first-time users), or purchase a paid subscription to access Fixtures, Market Activity, Pinnacle Drops, Horse Racing and Greyhounds.') }}</p>
             <div class="mt-5 flex flex-wrap gap-2">
                 <a href="{{ route('register') }}" class="rounded-xl bg-[#0b2a40] px-4 py-2 text-sm font-semibold text-white hover:bg-[#1a6b9c] dark:bg-[#4a8ab5]">{{ __('Register · 7-day free trial') }}</a>
                 <a href="{{ route('subscriptions') }}" class="rounded-xl border border-[#d4e0ec] px-4 py-2 text-sm font-semibold text-[#1f4b66] hover:bg-[#edf6fc] dark:border-[#3a5568] dark:text-[#b0c8dd] dark:hover:bg-[#29465b]">{{ __('View subscriptions') }}</a>
@@ -53,7 +55,7 @@
         </script>
     @endif
 @elseif ($checkAuthAndSubscription['is_authenticated'] === false || $checkAuthAndSubscription['has_active_subscription'] === false)
-    @php $showHomepageIntro = request()->routeIs('football.home') && $checkAuthAndSubscription['is_authenticated'] === false; @endphp
+    @php $showHomepageIntro = request()->routeIs('home') && $checkAuthAndSubscription['is_authenticated'] === false; @endphp
     <!DOCTYPE html>
     <html>
 

@@ -19,6 +19,7 @@ use App\Http\Controllers\Users\StaticPageController;
 use App\Http\Controllers\Users\SubscriptionController;
 use App\Http\Controllers\Users\SubscriptionPaymentController;
 use App\Http\Controllers\Users\Tennis\TennisController;
+use App\Http\Middleware\EnsureFixtureAccess;
 use App\Services\CustomerAuthService;
 use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
 use Illuminate\Http\RedirectResponse;
@@ -77,7 +78,7 @@ Route::put('my-profile', [AuthController::class, 'updateProfile'])->middleware('
 Route::get('my-profile/avatar', [AuthController::class, 'avatar'])->middleware('auth:customers')->name('customers.avatar');
 
 Route::get('/', [StaticPageController::class, 'home'])->name('home');
-Route::get('football', [FootballController::class, 'football'])->name('football.home');
+Route::get('football', [FootballController::class, 'football'])->name('football.home')->middleware(EnsureFixtureAccess::class);
 Route::get('market-activity/quote', MarketActivityQuoteController::class)->middleware('auth:customers')->name('market-activity.quote');
 Route::post('favorites/toggle', [FavoriteController::class, 'toggle'])->middleware('auth:customers')->name('favorites.toggle');
 Route::prefix('football')->name('football.')->group(function () {
@@ -86,73 +87,73 @@ Route::prefix('football')->name('football.')->group(function () {
     Route::get('/matches/{matchId}/statistics', [FootballController::class, 'statistics'])->whereNumber('matchId')->name('matches.statistics');
     Route::get('/market-activity', [FootballController::class, 'marketActivity'])->name('market-activity');
     Route::get('/pinnacle-odds', [FootballController::class, 'marketActivity'])->name('pinnacle-odds');
-    Route::post('filter-football', [FootballController::class, 'filterFootball'])->name('filter-football');
-    Route::post('websocket-football', [FootballController::class, 'websocketFootball']);
+    Route::post('filter-football', [FootballController::class, 'filterFootball'])->name('filter-football')->middleware(EnsureFixtureAccess::class);
+    Route::post('websocket-football', [FootballController::class, 'websocketFootball'])->middleware(EnsureFixtureAccess::class);
 });
 
 Route::prefix('cricket')->name('cricket.')->group(function () {
-    Route::get('/', [CricketController::class, 'cricket'])->name('home');
+    Route::get('/', [CricketController::class, 'cricket'])->name('home')->middleware(EnsureFixtureAccess::class);
     Route::get('matches/{matchId}', [CricketController::class, 'matchDetail'])->name('matches.show');
     Route::get('market-activity', [CricketController::class, 'marketActivity'])->name('market-activity');
-    Route::post('filter-cricket', [CricketController::class, 'filterCricket'])->name('filter-cricket');
-    Route::post('websocket-cricket', [CricketController::class, 'websocketCricket'])->name('websocket-cricket');
+    Route::post('filter-cricket', [CricketController::class, 'filterCricket'])->name('filter-cricket')->middleware(EnsureFixtureAccess::class);
+    Route::post('websocket-cricket', [CricketController::class, 'websocketCricket'])->name('websocket-cricket')->middleware(EnsureFixtureAccess::class);
 });
 
 Route::prefix('icehockey')->name('icehockey.')->group(function () {
-    Route::get('/', [IceHockeyController::class, 'icehockey'])->name('home');
+    Route::get('/', [IceHockeyController::class, 'icehockey'])->name('home')->middleware(EnsureFixtureAccess::class);
     Route::get('matches/{matchId}', [IceHockeyController::class, 'matchDetail'])->name('matches.show');
     Route::get('market-activity', [IceHockeyController::class, 'marketActivity'])->name('market-activity');
-    Route::post('filter-icehockey', [IceHockeyController::class, 'filterIceHockey'])->name('filter-icehockey');
-    Route::post('websocket-icehockey', [IceHockeyController::class, 'websocketIceHockey'])->name('websocket-icehockey');
+    Route::post('filter-icehockey', [IceHockeyController::class, 'filterIceHockey'])->name('filter-icehockey')->middleware(EnsureFixtureAccess::class);
+    Route::post('websocket-icehockey', [IceHockeyController::class, 'websocketIceHockey'])->name('websocket-icehockey')->middleware(EnsureFixtureAccess::class);
 });
 
 Route::prefix('americanfootball')->name('americanfootball.')->group(function () {
-    Route::get('/', [AmericanFootballController::class, 'americanfootball'])->name('home');
+    Route::get('/', [AmericanFootballController::class, 'americanfootball'])->name('home')->middleware(EnsureFixtureAccess::class);
     Route::get('matches/{matchId}', [AmericanFootballController::class, 'matchDetail'])->name('matches.show');
     Route::get('market-activity', [AmericanFootballController::class, 'marketActivity'])->name('market-activity');
-    Route::post('filter-americanfootball', [AmericanFootballController::class, 'filterAmericanFootball'])->name('filter-americanfootball');
-    Route::post('websocket-americanfootball', [AmericanFootballController::class, 'websocketAmericanFootball'])->name('websocket-americanfootball');
+    Route::post('filter-americanfootball', [AmericanFootballController::class, 'filterAmericanFootball'])->name('filter-americanfootball')->middleware(EnsureFixtureAccess::class);
+    Route::post('websocket-americanfootball', [AmericanFootballController::class, 'websocketAmericanFootball'])->name('websocket-americanfootball')->middleware(EnsureFixtureAccess::class);
 });
 
 Route::prefix('basketball')->name('basketball.')->group(function () {
-    Route::get('/', [BasketballController::class, 'basketball'])->name('home');
+    Route::get('/', [BasketballController::class, 'basketball'])->name('home')->middleware(EnsureFixtureAccess::class);
     Route::get('matches/{matchId}', [BasketballController::class, 'matchDetail'])->name('matches.show');
     Route::get('market-activity', [BasketballController::class, 'marketActivity'])->name('market-activity');
-    Route::post('filter-basketball', [BasketballController::class, 'filterBasketball'])->name('filter-basketball');
-    Route::post('websocket-basketball', [BasketballController::class, 'websocketBasketball'])->name('websocket-basketball');
+    Route::post('filter-basketball', [BasketballController::class, 'filterBasketball'])->name('filter-basketball')->middleware(EnsureFixtureAccess::class);
+    Route::post('websocket-basketball', [BasketballController::class, 'websocketBasketball'])->name('websocket-basketball')->middleware(EnsureFixtureAccess::class);
 });
 
 Route::prefix('tennis')->name('tennis.')->group(function () {
-    Route::get('/', [TennisController::class, 'tennis'])->name('home');
+    Route::get('/', [TennisController::class, 'tennis'])->name('home')->middleware(EnsureFixtureAccess::class);
     Route::get('matches/{matchId}', [TennisController::class, 'matchDetail'])->name('matches.show');
     Route::get('market-activity', [TennisController::class, 'marketActivity'])->name('market-activity');
-    Route::post('filter-tennis', [TennisController::class, 'filterTennis'])->name('filter-tennis');
-    Route::post('websocket-tennis', [TennisController::class, 'websocketTennis'])->name('websocket-tennis');
-    Route::get('get-cache-store-data', [TennisController::class, 'getCacheStoreData']);
+    Route::post('filter-tennis', [TennisController::class, 'filterTennis'])->name('filter-tennis')->middleware(EnsureFixtureAccess::class);
+    Route::post('websocket-tennis', [TennisController::class, 'websocketTennis'])->name('websocket-tennis')->middleware(EnsureFixtureAccess::class);
+    Route::get('get-cache-store-data', [TennisController::class, 'getCacheStoreData'])->middleware(EnsureFixtureAccess::class);
 });
 
 Route::prefix('greyhounds')->name('greyhounds.')->group(function () {
-    Route::get('/', [GreyhoundsController::class, 'greyhounds'])->name('home');
+    Route::get('/', [GreyhoundsController::class, 'greyhounds'])->name('home')->middleware(EnsureFixtureAccess::class);
     Route::get('matches/{matchId}', [GreyhoundsController::class, 'matchDetail'])->name('matches.show');
     Route::get('market-activity', [GreyhoundsController::class, 'marketActivity'])->name('market-activity');
-    Route::post('filter-greyhounds', [GreyhoundsController::class, 'filterGreyhounds'])->name('filter-greyhounds');
-    Route::post('websocket-greyhounds', [GreyhoundsController::class, 'websocketGreyhounds'])->name('websocket-greyhounds');
+    Route::post('filter-greyhounds', [GreyhoundsController::class, 'filterGreyhounds'])->name('filter-greyhounds')->middleware(EnsureFixtureAccess::class);
+    Route::post('websocket-greyhounds', [GreyhoundsController::class, 'websocketGreyhounds'])->name('websocket-greyhounds')->middleware(EnsureFixtureAccess::class);
 });
 
 Route::prefix('horse-racing')->name('horseracing.')->group(function () {
-    Route::get('/', [HorseRacingController::class, 'horseracing'])->name('home');
+    Route::get('/', [HorseRacingController::class, 'horseracing'])->name('home')->middleware(EnsureFixtureAccess::class);
     Route::get('matches/{matchId}', [HorseRacingController::class, 'matchDetail'])->name('matches.show');
     Route::get('market-activity', [HorseRacingController::class, 'marketActivity'])->name('market-activity');
-    Route::post('filter-horseracing', [HorseRacingController::class, 'filterHorseRacing'])->name('filter-horseracing');
-    Route::post('websocket-horseracing', [HorseRacingController::class, 'websocketHorseRacing'])->name('websocket-horseracing');
+    Route::post('filter-horseracing', [HorseRacingController::class, 'filterHorseRacing'])->name('filter-horseracing')->middleware(EnsureFixtureAccess::class);
+    Route::post('websocket-horseracing', [HorseRacingController::class, 'websocketHorseRacing'])->name('websocket-horseracing')->middleware(EnsureFixtureAccess::class);
 });
 
 Route::prefix('baseball')->name('baseball.')->group(function () {
-    Route::get('/', [BaseballController::class, 'baseball'])->name('home');
+    Route::get('/', [BaseballController::class, 'baseball'])->name('home')->middleware(EnsureFixtureAccess::class);
     Route::get('matches/{matchId}', [BaseballController::class, 'matchDetail'])->name('matches.show');
     Route::get('market-activity', [BaseballController::class, 'marketActivity'])->name('market-activity');
-    Route::post('filter-baseball', [BaseballController::class, 'filterBaseball'])->name('filter-baseball');
-    Route::post('websocket-baseball', [BaseballController::class, 'websocketBaseball'])->name('websocket-baseball');
+    Route::post('filter-baseball', [BaseballController::class, 'filterBaseball'])->name('filter-baseball')->middleware(EnsureFixtureAccess::class);
+    Route::post('websocket-baseball', [BaseballController::class, 'websocketBaseball'])->name('websocket-baseball')->middleware(EnsureFixtureAccess::class);
 });
 
 Route::post('/set-timezone', function (Request $request) {

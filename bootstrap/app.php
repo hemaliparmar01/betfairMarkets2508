@@ -19,7 +19,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->preventRequestForgery(except: ['subscriptions/payments/webhooks/*', 'subscriptions/payment/return']);
         $middleware->web(append: [CustomerAuthService::class]);
         $middleware->redirectGuestsTo(fn (Request $request): string => route('login'));
-        $middleware->redirectUsersTo(fn (Request $request): string => route('football.home'));
+        $middleware->redirectUsersTo(fn (Request $request): string => route('home'));
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->dontFlash(['code']);

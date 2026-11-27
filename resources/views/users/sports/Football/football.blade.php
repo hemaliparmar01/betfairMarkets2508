@@ -250,6 +250,5 @@
             <span data-lazy-loader-text>{{ __('?~F~S') }} {{ __('Scroll for more matches') }} {{ __('?~F~S') }}</span>
         </div>
     </div>
-    @include('popup')
 @endsection
 

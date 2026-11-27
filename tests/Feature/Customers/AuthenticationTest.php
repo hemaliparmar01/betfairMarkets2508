@@ -65,7 +65,7 @@ class AuthenticationTest extends TestCase
         $this->assertStringNotContainsString($this->messages[0]['code'], $customer->code);
         $this->get('/verify-email')->assertOk()->assertSee('maxlength="6"', false);
         $previousSessionId = session()->getId();
-        $this->post('/verify-email', ['code' => $this->messages[0]['code']])->assertSessionHasNoErrors()->assertRedirect(route('football.home'))
+        $this->post('/verify-email', ['code' => $this->messages[0]['code']])->assertSessionHasNoErrors()->assertRedirect(route('home'))
             ->assertSessionMissing('customer_verification');
         $this->assertTrue($customer->fresh()->is_verified);
         $this->assertAuthenticatedAs($customer, 'customers');
@@ -90,7 +90,7 @@ class AuthenticationTest extends TestCase
     public function test_password_login_preserves_session_tracking_and_guard_isolation(): void
     {
         $customer = CustomerFactory::new()->create(['username' => 'customer', 'password' => 'Secret@123']);
-        $this->post('/login', ['identity' => 'CUSTOMER', 'password' => 'Secret@123'])->assertRedirect(route('football.home'));
+        $this->post('/login', ['identity' => 'CUSTOMER', 'password' => 'Secret@123'])->assertRedirect(route('home'));
         $this->assertAuthenticatedAs($customer, 'customers');
         $this->assertGuest('web');
         $this->assertDatabaseHas('customers_login_sessions', ['customer_id' => $customer->id, 'logged_out_at' => null]);
@@ -101,7 +101,7 @@ class AuthenticationTest extends TestCase
     {
         $customer = CustomerFactory::new()->create(['password' => 'Secret@123']);
         $this->post('/login', ['identity' => $customer->email, 'password' => 'Secret@123'])
-            ->assertRedirect(route('football.home'));
+            ->assertRedirect(route('home'));
         $this->withCookie(config('session.cookie'), session()->getId());
         $this->post('/logout')->assertRedirect(route('login'));
         $this->assertGuest('customers');
@@ -116,7 +116,7 @@ class AuthenticationTest extends TestCase
             ->assertRedirect(route('customers.verification'));
         $this->assertGuest('customers');
         $this->assertSame($customer->email, $this->messages[0]['recipient']);
-        $this->post('/verify-email', ['code' => $this->messages[0]['code']])->assertSessionHasNoErrors()->assertRedirect(route('football.home'));
+        $this->post('/verify-email', ['code' => $this->messages[0]['code']])->assertSessionHasNoErrors()->assertRedirect(route('home'));
         $this->assertAuthenticatedAs($customer, 'customers');
         $this->assertSame(1, $customer->fresh()->login_count);
     }
@@ -155,7 +155,7 @@ class AuthenticationTest extends TestCase
         $this->post('/login', ['identity' => $customer->email, 'password' => 'Secret@123'])->assertRedirect(route('login'));
         $this->assertGuest('customers');
         $this->get('/login')->assertOk()->assertSee('Log out previous device and continue');
-        $this->post('/login/logout-previous-sessions', ['confirm' => 1])->assertRedirect(route('football.home'));
+        $this->post('/login/logout-previous-sessions', ['confirm' => 1])->assertRedirect(route('home'));
         $this->assertAuthenticatedAs($customer, 'customers');
         $this->assertNotNull(CustomerLoginSession::query()->where('session_id', 'old-device')->value('logged_out_at'));
     }
@@ -172,7 +172,7 @@ class AuthenticationTest extends TestCase
         $this->assertStringContainsString('10 minutes', $this->messages[0]['html'] ?? '');
         $this->assertStringNotContainsString($this->messages[0]['code'], $customer->fresh()->login_otp);
         $this->get('/login/mobile/verification')->assertOk()->assertSee('maxlength="6"', false);
-        $this->post('/login/mobile/verify-code', ['code' => $this->messages[0]['code']])->assertRedirect(route('football.home'));
+        $this->post('/login/mobile/verify-code', ['code' => $this->messages[0]['code']])->assertRedirect(route('home'));
         $this->assertAuthenticatedAs($customer, 'customers');
         $this->assertNull($customer->fresh()->login_otp);
         $this->assertSame(1, $customer->fresh()->login_count);
@@ -206,7 +206,7 @@ class AuthenticationTest extends TestCase
         if ($oldCode !== $this->messages[1]['code']) {
             $this->post('/login/mobile/verify-code', ['code' => $oldCode])->assertSessionHasErrors('code');
         }
-        $this->post('/login/mobile/verify-code', ['code' => $this->messages[1]['code']])->assertRedirect(route('football.home'));
+        $this->post('/login/mobile/verify-code', ['code' => $this->messages[1]['code']])->assertRedirect(route('home'));
     }
 
     public function test_otp_login_keeps_device_switch_confirmation(): void
@@ -216,7 +216,7 @@ class AuthenticationTest extends TestCase
         $this->sendOtp($customer);
         $this->post('/login/mobile/verify-code', ['code' => $this->messages[0]['code']])->assertRedirect(route('login'));
         $this->assertGuest('customers');
-        $this->post('/login/logout-previous-sessions', ['confirm' => 1])->assertRedirect(route('football.home'));
+        $this->post('/login/logout-previous-sessions', ['confirm' => 1])->assertRedirect(route('home'));
         $this->assertAuthenticatedAs($customer, 'customers');
         $this->assertSame('email', $customer->fresh()->login_channel_via);
     }
@@ -335,7 +335,7 @@ class AuthenticationTest extends TestCase
         $this->assertCount(1, $this->messages);
         $this->assertSame('email', $customer->fresh()->login_channel_via);
         $this->assertSame(0, $customer->fresh()->login_sms_count);
-        $this->post('/login/mobile/verify-code', ['code' => $this->messages[0]['code']])->assertRedirect(route('football.home'));
+        $this->post('/login/mobile/verify-code', ['code' => $this->messages[0]['code']])->assertRedirect(route('home'));
         $this->assertAuthenticatedAs($customer, 'customers');
     }
 
@@ -394,7 +394,7 @@ class AuthenticationTest extends TestCase
             $this->sendOtp($customer)->assertSessionHasNoErrors();
         } elseif ($condition === 'used') {
             preg_match('/\b([0-9]{6})\b/', $sms['text'], $match);
-            $this->post('/login/mobile/verify-code', ['code' => $match[1]])->assertRedirect(route('football.home'));
+            $this->post('/login/mobile/verify-code', ['code' => $match[1]])->assertRedirect(route('home'));
         } elseif ($condition === 'blocked') {
             Customer::query()->whereKey($customer->id)->update(['is_blocked' => true]);
         } elseif ($condition === 'password_changed') {
