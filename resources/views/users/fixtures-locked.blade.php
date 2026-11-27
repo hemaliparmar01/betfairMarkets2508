@@ -4,10 +4,26 @@
 
 @section('content')
     @include('users.layout.sports')
-    <section class="my-8 rounded-2xl border border-[var(--border-neutral-5-5)] bg-[var(--surface-neutral-0-10)] p-6 text-center dark:border-[rgb(var(--border))] dark:bg-[rgb(var(--surface-soft))]" aria-labelledby="premiumHeading">
-        <i class="fas fa-lock mb-3 text-2xl text-[rgb(var(--primary))]" aria-hidden="true"></i>
-        <h1 id="premiumHeading" class="text-xl font-bold text-[rgb(var(--text-main))] dark:text-[var(--text-on-primary)]">{{ __('Registration and subscription required') }}</h1>
-        <p class="mx-auto mt-3 max-w-xl text-sm text-[rgb(var(--text-muted))] dark:text-[rgb(var(--text-soft))]">{{ __('Register and activate your 7-day free trial (first-time users), or purchase a paid subscription to access Fixtures, Market Activity, Pinnacle Drops, Horse Racing and Greyhounds.') }}</p>
-        <button type="button" data-premium-required class="mt-5 cursor-pointer rounded-xl bg-[var(--surface-heading)] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[var(--surface-primary)] dark:bg-[var(--button-primary)]">{{ __('View access options') }}</button>
+    <section class="my-4 min-w-0" data-fixtures-locked aria-labelledby="fixturesHeading">
+        <h1 id="fixturesHeading" class="mb-3 text-xl font-extrabold text-[var(--text-brand-70)] dark:text-[var(--text-on-primary)]">{{ __('Fixtures') }}</h1>
+        <div class="mb-4 rounded-xl border border-[var(--border-control)] bg-[var(--surface-control)] p-4 text-sm text-[rgb(var(--text-main))] dark:bg-[rgb(var(--surface-soft))]" role="status">
+            <p>{{ __('Log in with an active trial or subscription to view fixtures and odds.') }}</p>
+            <div class="mt-3 flex flex-wrap gap-3 font-semibold">
+                <a href="{{ route('login') }}" class="text-[rgb(var(--primary))] underline">{{ __('Log in') }}</a>
+                <a href="{{ route('register') }}" class="text-[rgb(var(--primary))] underline">{{ __('Register') }}</a>
+                <a href="{{ route('subscriptions') }}" class="text-[rgb(var(--primary))] underline">{{ __('View subscriptions') }}</a>
+            </div>
+        </div>
+        <div class="fixtures-container min-w-0 rounded-xl border border-[var(--border-control)] p-4" id="fixturesContainer" aria-label="{{ __('Fixtures') }}">
+            <div class="grid grid-cols-3 gap-3 text-center text-xs font-semibold text-[rgb(var(--text-muted))] sm:grid-cols-5">
+                <span>{{ __('Time') }}</span><span>{{ __('Match') }}</span><span>{{ __('Score') }}</span>
+                <span class="hidden sm:block">{{ __('Back') }}</span><span class="hidden sm:block">{{ __('Lay') }}</span>
+            </div>
+            <div class="mt-3 grid grid-cols-3 items-center gap-3 rounded-xl border border-[var(--border-control)] bg-[var(--surface-control)] p-5 sm:grid-cols-5 dark:bg-[rgb(var(--surface-soft))]" data-locked-fixture-row>
+                @foreach (['Time', 'Match', 'Score', 'Back', 'Lay'] as $field)
+                    <span @class(['flex justify-center', 'hidden sm:flex' => in_array($field, ['Back', 'Lay'], true)]) role="img" aria-label="{{ __('Registration and subscription required') }}">@include('lock_icon')</span>
+                @endforeach
+            </div>
+        </div>
     </section>
 @endsection

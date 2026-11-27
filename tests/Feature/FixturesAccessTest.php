@@ -36,9 +36,16 @@ class FixturesAccessTest extends TestCase
 
         foreach (self::SPORTS as $sport) {
             $url = route($sport.'.home');
-            $this->get($url)->assertOk()->assertViewIs('users.fixtures-locked')
-                ->assertSee('id="premiumAccess"', false)->assertSee('data-premium-required', false)
+            $response = $this->get($url)->assertOk()->assertViewIs('users.fixtures-locked')
+                ->assertSee('data-fixtures-locked', false)->assertSee('data-locked-fixture-row', false)
+                ->assertSee('id="fixturesContainer"', false)
                 ->assertDontSee('id="subscriptionModal"', false)->assertDontSee('data-football-lazy-loader', false);
+            $this->assertSame(1, substr_count($response->getContent(), 'openPremiumDialog();'));
+            preg_match('/const restrictedUrls = (.*);/', $response->getContent(), $restricted);
+            $this->assertNotContains($url, json_decode($restricted[1], true));
+            $document = new \DOMDocument;
+            $document->loadHTML($response->getContent(), LIBXML_NOERROR | LIBXML_NOWARNING);
+            $this->assertSame(0, (new \DOMXPath($document))->query('//*[@id="sportSelector"]//a[@data-premium-required]')->length);
             $this->getJson($url)->assertForbidden()->assertJsonPath('access_required', true)->assertJsonPath('data', []);
             $path = $sport === 'horseracing' ? '/horse-racing' : '/'.$sport;
             foreach (['filter-', 'websocket-'] as $action) {

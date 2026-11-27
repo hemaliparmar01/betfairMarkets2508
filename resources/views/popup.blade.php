@@ -7,8 +7,6 @@
                 'americanfootball.market-activity', 'baseball.market-activity', 'basketball.market-activity',
                 'tennis.market-activity', 'greyhounds.market-activity', 'horseracing.market-activity',
                 'football.pinnacle-odds',
-                'football.home', 'cricket.home', 'icehockey.home', 'americanfootball.home', 'baseball.home',
-                'basketball.home', 'tennis.home', 'greyhounds.home', 'horseracing.home',
             ];
             $restrictedPremiumUrls = array_map(static fn (string $name): string => route($name), $premiumRoutes);
         @endphp
@@ -148,12 +146,20 @@
                     return;
                 }
 
+                try {
+                    if (sessionStorage.getItem('bf-home-intro-dismissed') === '1') {
+                        closeModal();
+                        return;
+                    }
+                } catch {}
+
                 modal.addEventListener('click', async (event) => {
                     const closeButton = event.target.closest('[data-close-subscription]');
                     const link = event.target.closest('a[href]');
                     if (!closeButton && (!link || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey)) return;
                     event.preventDefault();
                     if (modal.inert) return;
+                    try { sessionStorage.setItem('bf-home-intro-dismissed', '1'); } catch {}
                     modal.inert = true;
                     modal.classList.add('opacity-0');
                     await Promise.allSettled(modal.getAnimations().map(animation => animation.finished));
